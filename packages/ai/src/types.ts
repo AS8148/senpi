@@ -23,6 +23,13 @@ import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 export type { Model } from "./model.ts";
 export type { SessionAffinityFormat } from "./openai-responses-compat.ts";
 export type OpenAIResponsesCompat = BaseOpenAIResponsesCompat & {
+	/**
+	 * Exact native search type for a compatible Responses endpoint.
+	 * OpenAI supports both names; xAI documents only web_search.
+	 * https://developers.openai.com/api/docs/guides/tools-web-search
+	 * https://docs.x.ai/developers/tools/web-search
+	 */
+	webSearchToolType?: "web_search" | "web_search_preview";
 	/** Whether the model supports message-anchored `additional_tools` input items. Default: false. */
 	supportsAdditionalTools?: boolean;
 	/** Whether the exact model accepts developer or system messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false; the generated model catalog enables it for verified models. */
@@ -50,7 +57,7 @@ export type KnownImageApi = "openrouter-images" | "openai-images";
 
 export type ImageApi = KnownImageApi | (string & {});
 
-export type KnownClassifierApi = "typesafe-system-one" | "cloudflare-workers-ai-system-one" | "llama-cpp-classify";
+export type KnownClassifierApi = "typesafe-system-one" | "cloudflare-workers-ai-system-one";
 
 export type ClassifierApi = KnownClassifierApi | (string & {});
 
@@ -562,6 +569,13 @@ export interface ProviderNativeContent {
 }
 
 export interface Usage {
+	/**
+	 * Latest request's context when billing covers multiple internal requests.
+	 * Input includes cached reads and writes; output belongs to that request only.
+	 * Null means no request measurement is available (estimate from the transcript).
+	 * Absent preserves the legacy contract: the billing counters describe one request.
+	 */
+	contextUsage?: { readonly input: number; readonly output: number } | null;
 	input: number;
 	output: number;
 	cacheRead: number;
@@ -582,6 +596,8 @@ export interface Usage {
 		cacheWrite: number;
 		total: number;
 	};
+	/** The model has no known price, so `cost` is not a real amount; consumers must not report it as $0. */
+	costUnknown?: true;
 }
 
 /**
@@ -705,6 +721,31 @@ export interface ConfigurationUpdateMessage {
 	timestamp: number;
 }
 
+/**
+ * When the agent loop asked for a response and when it streamed, as Unix timestamps in milliseconds (senpi#3879).
+ * Stamped by the agent loop on the final message, so it is persisted with the session.
+ */
+export interface AssistantMessageTiming {
+	/**
+	 * Just before the stream function was called. A stream function that throws or never starts still gets it, so it
+	 * marks the attempt, not proof that a request reached the provider. An empty-response recovery retry keeps the
+	 * first attempt's value, so time to first token then spans the retries.
+	 */
+	requestedAt: number;
+	/** First streamed text, thinking or tool-call delta. Absent when nothing streamed. */
+	firstTokenAt?: number;
+	/** Last streamed text, thinking or tool-call delta. Absent when nothing streamed. */
+	lastTokenAt?: number;
+	/** When the response settled: done, error or abort. */
+	endedAt: number;
+	/**
+	 * Streamed generation time in milliseconds, by the TPS notice's rule (senpi#3393): first delta to last delta,
+	 * or from the response's start when it reasoned before its first delta. Absent when nothing streamed. Stamped on
+	 * aborted and failed responses too: a consumer computing a rate skips those, as the TPS notice does.
+	 */
+	generationMs?: number;
+}
+
 export interface AssistantMessage {
 	role: "assistant";
 	content: (TextContent | ThinkingContent | ToolCall | ProviderNativeContent)[];
@@ -725,16 +766,33 @@ export interface AssistantMessage {
 	stopDetails?: AssistantStopDetails;
 	deferred?: DeferredHandle;
 	errorMessage?: string;
+	/** Redaction-safe cause retained when a session projects a provider limit as user-facing advice. */
+	errorCause?: { type: "usage_limit"; scope: "account" | "model" };
 	/** Structured provider failure family, minted only by a provider adapter from structured error metadata. */
 	providerDiagnostic?: ProviderDiagnostic;
 	/** Explicit owner for an abort initiated by the provider retry watchdog. */
 	abortSource?: "provider";
+	/**
+	 * Set when the run failed in local code (session bookkeeping, a local file) rather than in a provider request.
+	 * No model produced the failure, so retry and model fallback must not act on it.
+	 */
+	failureSource?: "local";
 	rawStopReason?: string;
 	/**
 	 * Provider indication of whether the model explicitly ended its turn.
 	 * Preserved for debugging and does not currently affect agent control flow.
 	 */
 	endTurn?: boolean;
+	/**
+	 * Request-only hint, never persisted: the history up to and including this message is a stable
+	 * prefix, so adapters with explicit prompt-cache breakpoints mark it. Context reduction sets it on
+	 * the last message its frontier leaves unchanged, so the next frontier step reads that prefix
+	 * instead of re-writing it (senpi#3242).
+	 */
+	promptCacheBreakpoint?: true;
+
+	/** Response timing stamped by the agent loop. Absent on older messages and on messages built outside the loop. */
+	timing?: AssistantMessageTiming;
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
@@ -804,6 +862,8 @@ export interface AssistantImages {
 	background?: "transparent" | "opaque";
 	stopReason: ImagesStopReason;
 	errorMessage?: string;
+	/** Structured classification of a provider rejection (HTTP status, category); set only on `error`. */
+	providerDiagnostic?: ProviderDiagnostic;
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
@@ -918,8 +978,9 @@ export interface Context {
 	tools?: Tool[];
 	/**
 	 * Names from `tools` the model may call on this request; absent means every tool is callable.
-	 * Set only for models whose compat declares `supportsAllowedTools`: the adapter keeps `tools`
-	 * byte-stable and restricts callability through `tool_choice` (senpi#2095).
+	 * Set only for models that `supportsAllowedToolChoice` accepts (the compat flag on a native OpenAI API
+	 * host): the adapter keeps `tools` byte-stable and restricts callability through `tool_choice`
+	 * (senpi#2095, senpi#3080).
 	 */
 	activeToolNames?: string[];
 }
@@ -979,6 +1040,16 @@ export type AssistantMessageEvent =
  * Use this to override URL-based auto-detection for custom providers.
  */
 export interface OpenAICompletionsCompat {
+	/**
+	 * In-turn web search support on this exact endpoint. OpenRouter and Moonshot
+	 * have documented native defaults; Z.AI PAYG chat requires explicit opt-in
+	 * because its coding-plan endpoint documents remote MCP search instead.
+	 * https://openrouter.ai/docs/guides/features/server-tools/web-search
+	 * https://platform.kimi.ai/docs/guide/use-web-search
+	 * https://docs.z.ai/guides/tools/web-search
+	 * https://docs.z.ai/devpack/mcp/search-mcp-server
+	 */
+	supportsWebSearch?: boolean;
 	/** Whether the provider supports the `store` field. Default: auto-detected from URL. */
 	supportsStore?: boolean;
 	/** Whether the provider supports the `developer` role (vs `system`). Default: auto-detected from URL. */
@@ -1189,6 +1260,12 @@ export interface AnthropicMessagesCompat {
 	 * the payload. Default: true only for the first-party Anthropic endpoint.
 	 */
 	supportsWebSearch?: boolean;
+	/**
+	 * Whether request bodies of 4096+ characters are sent with `Content-Encoding: gzip`. A refused encoding
+	 * (415, a proxy's 400/403, or the origin failing to parse the body) is resent uncompressed once and that
+	 * origin stays uncompressed for the process. Default: true only for the first-party Anthropic endpoint.
+	 */
+	supportsGzipRequestBody?: boolean;
 }
 
 /** Compatibility settings for Amazon Bedrock models. */
@@ -1302,9 +1379,21 @@ export interface ModelCostTier extends ModelCostRates {
 	inputTokensAbove: number;
 }
 
-export interface ModelCost extends ModelCostRates {
+export interface ModelCostCard extends ModelCostRates {
 	/** Request-wide pricing tiers. The highest matching input threshold applies to the full request. */
 	tiers?: ModelCostTier[];
+}
+
+export interface ModelCostEffectiveRate extends ModelCostCard {
+	/** ISO 8601 UTC instant from which this card replaces the base card and every earlier dated card. */
+	effectiveFrom: string;
+}
+
+export interface ModelCost extends ModelCostCard {
+	/** Scheduled list-price changes, each billed for requests at or after its `effectiveFrom`. */
+	effectiveRates?: ModelCostEffectiveRate[];
+	/** No price is known for this model (rates are placeholders): usage on it reports `costUnknown`, not a $0 cost. */
+	unknown?: true;
 }
 
 export interface ModelImageResizeOptions {

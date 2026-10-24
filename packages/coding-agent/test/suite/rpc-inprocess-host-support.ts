@@ -10,6 +10,7 @@ import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
 import { type RpcSessionIdlePolicy, SessionCommandRouter } from "../../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import { RpcSessionRegistry } from "../../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "../helpers/fake-session-base.ts";
 import { assistantMessage } from "./rpc-inprocess-host-metrics.ts";
 
 /**
@@ -68,7 +69,7 @@ export interface FakeBindingExtras {
  * the host aborted persists nothing - so a test that expects a turn to outlive its
  * client's disconnect fails if the host tore the session down instead.
  */
-function inProcessRuntimeFactory(): {
+export function inProcessRuntimeFactory(): {
 	createRuntime: CreateAgentSessionRuntimeFactory;
 	turns: Map<string, FakeTurn>;
 	teardown: TeardownGate;
@@ -137,8 +138,7 @@ function inProcessRuntimeFactory(): {
 		});
 		return {
 			session: {
-				sessionManager: manager,
-				agentDir: options.agentDir,
+				...fakeSessionBase({ ...options, sessionManager: manager }),
 				isFastModeActive: () => false,
 				agent: { state: {} },
 				getContextUsage: () => undefined,
@@ -167,6 +167,8 @@ function inProcessRuntimeFactory(): {
 					pendingDeliveries.splice(0);
 					return Object.assign({ steering: [], followUp: [] }, { ordered: [] });
 				},
+				// Nothing identified is ever queued here, so a clear has nothing to record.
+				whenQueueClearRecorded: async () => {},
 				// Composed through the production predicate so this fake cannot drift
 				// from the activity contract the sweep consults.
 				get activitySnapshot() {
@@ -178,10 +180,14 @@ function inProcessRuntimeFactory(): {
 						hasActiveWakeSource: false,
 					};
 				},
-				get isSessionBusy() {
+				get isSessionBusy(): boolean {
 					return isSessionBusySnapshot(this.activitySnapshot);
 				},
-				extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+				extensionRunner: {
+					hasHandlers: () => false,
+					emit: async () => {},
+					emitSessionMove: async () => [],
+				},
 				subscribe: () => () => {},
 				abort: async () => {
 					state.aborted = true;

@@ -4,6 +4,7 @@
  * supervisor's orchestration; every name stays re-exported there for existing importers.
  */
 import { type ChildProcess, spawn } from "node:child_process";
+import { Socket } from "node:net";
 import { extname } from "node:path";
 import { isBunBinary } from "../../config.ts";
 import { runtimeExecArgv } from "../../utils/runtime-exec-argv.ts";
@@ -15,7 +16,10 @@ import {
 	HOST_PUBLIC_SOCKET_ENV,
 	HOST_SCRATCH_DIR_ENV,
 	HOST_WATCH_FD_ENV,
+	HOST_WATCH_LIFETIME_FIFO_ENV,
 	HOST_WATCH_PPID_ENV,
+	HOST_WATCH_PSTART_ENV,
+	HOST_WATCH_PSTART_TICKS_ENV,
 } from "./host-watchdog.ts";
 import type { SocketFileIdentity } from "./socket-ownership.ts";
 import { SOCKET_SECRET_FILE_ENV } from "./socket-transport.ts";
@@ -28,6 +32,8 @@ export interface SupervisorLaunch {
 	readonly childArgs?: readonly string[];
 	/** Explicit ownership directory for callers whose environment is not yet branded. */
 	readonly agentDir?: string;
+	/** Inherited caller-lifetime pipe, distinct from the supervisor-to-host watchdog pipe. */
+	readonly ownerFd?: number;
 	/**
 	 * Where this supervisor BINDS, when it is a successor generation: `<socket>.next-<gen>`.
 	 * It renames that entry over `socket` once its host answers - and never binds the live
@@ -86,10 +92,16 @@ export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch |
 	let childCommand: string | undefined;
 	let childArgs: readonly string[] | undefined;
 	let agentDir: string | undefined;
+	let ownerFd: number | undefined;
 	let bindSocket: string | undefined;
 	let replaceIdentity: SocketFileIdentity | undefined;
 	for (let index = 0; index < argv.length; index++) {
 		const arg = argv[index];
+		if (arg === "--owner-fd" && index + 1 < argv.length) {
+			ownerFd = Number(argv[++index]);
+			if (!Number.isSafeInteger(ownerFd) || ownerFd < 3) return undefined;
+			continue;
+		}
 		if (arg === "--socket" && index + 1 < argv.length) {
 			socket = argv[++index];
 			continue;
@@ -123,7 +135,23 @@ export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch |
 	}
 	return socket === undefined
 		? undefined
-		: { socket, hostArgs, childCommand, childArgs, agentDir, bindSocket, replaceIdentity };
+		: { socket, hostArgs, childCommand, childArgs, agentDir, ownerFd, bindSocket, replaceIdentity };
+}
+
+export const OWNER_WATCH_FD = 3;
+// Strongly retain the write end until that supervisor exits, but never keep the caller alive.
+const ownerPipes = new Set<Socket>();
+
+export function keepOwnerPipe(child: ChildProcess): void {
+	const pipe = child.stdio[OWNER_WATCH_FD];
+	if (!(pipe instanceof Socket)) throw new Error("RPC owner pipe was not inherited");
+	ownerPipes.add(pipe);
+	pipe.on("error", () => {});
+	pipe.unref();
+	child.once("exit", () => {
+		ownerPipes.delete(pipe);
+		pipe.destroy();
+	});
 }
 
 /** `<dev>:<ino>` as the ensure captured it; anything else is no identity at all, never a guess. */
@@ -210,6 +238,9 @@ export function spawnHostChild(options: {
 	readonly internalSocket: string;
 	readonly internal: { readonly dir?: string; readonly secretPath: string };
 	readonly internalSecret?: Buffer;
+	readonly internalKey?: Buffer;
+	readonly supervisorStart?: { readonly time?: string; readonly ticks?: string };
+	readonly lifetimeFifo?: string;
 	readonly daemonDir: string;
 	readonly instanceId: string;
 	readonly cleanupPaths: readonly string[];
@@ -217,7 +248,7 @@ export function spawnHostChild(options: {
 }): ChildProcess {
 	const { launch, internalSocket, internal, internalSecret, publicSocket } = options;
 	const childLaunch = spawnableChildLaunch(resolveHostChildLaunch(launch, internalSocket));
-	return spawn(childLaunch.command, childLaunch.args, {
+	const child = spawn(childLaunch.command, childLaunch.args, {
 		env: {
 			...process.env,
 			...(launch.agentDir ? { SENPI_CODING_AGENT_DIR: launch.agentDir } : {}),
@@ -227,19 +258,29 @@ export function spawnHostChild(options: {
 			[HOST_INSTANCE_ID_ENV]: options.instanceId,
 			[HOST_WATCH_FD_ENV]: String(HOST_CHILD_WATCH_FD),
 			[HOST_WATCH_PPID_ENV]: String(process.pid),
+			[HOST_WATCH_PSTART_ENV]: options.supervisorStart?.time,
+			[HOST_WATCH_PSTART_TICKS_ENV]: options.supervisorStart?.ticks,
+			[HOST_WATCH_LIFETIME_FIFO_ENV]: options.lifetimeFifo,
 			...(internal.dir ? { [HOST_SCRATCH_DIR_ENV]: internal.dir } : {}),
-			...(internalSecret ? { [SOCKET_SECRET_FILE_ENV]: internal.secretPath } : {}),
+			[SOCKET_SECRET_FILE_ENV]: process.platform === "win32" && internalSecret ? internal.secretPath : undefined,
+			SENPI_RPC_INTERNAL_KEY_STDIN: options.internalKey ? "1" : undefined,
 			[HOST_CLEANUP_PATHS_ENV]: options.cleanupPaths.join("\n"),
 			...(process.platform === "win32" ? {} : { [HOST_PUBLIC_SOCKET_ENV]: publicSocket }),
 		},
 		// Slot 3 is the lifetime pipe: "pipe" gives the child a read end it can
 		// wait on and keeps the write end owned by this process alone.
 		shell: childLaunch.shell,
-		stdio: ["ignore", "ignore", "inherit", "pipe"],
+		stdio: [process.platform === "win32" ? "ignore" : "pipe", "ignore", "inherit", "pipe"],
 		// The supervisor is spawned detached, so on win32 it owns no console. A
 		// console-subsystem child started from it would allocate a fresh one,
 		// which Windows Terminal renders as an empty window that takes focus.
 		// CREATE_NO_WINDOW gives the child a console with no window instead.
 		windowsHide: true,
 	});
+	if (options.internalKey) {
+		child.stdin?.on("error", () => {});
+		// One write only. Keep its write end alive until this supervisor exits.
+		child.stdin?.write(options.internalKey);
+	}
+	return child;
 }

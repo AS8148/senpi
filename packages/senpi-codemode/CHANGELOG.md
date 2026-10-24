@@ -8,11 +8,303 @@
 
 ### Changed
 
+### Fixed
+
+### Removed
+
+## [2026.10.24-2] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-1] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.23-1] - 2026-10-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+- Removed the built-in llama.cpp provider's image-format exception along with the `/llama` integration ([#3202](https://github.com/code-yeongyu/senpi/issues/3202)).
+
+## [2026.10.21-3] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.21-2] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.21-1] - 2026-10-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.20-1] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.19-2] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.19-1] - 2026-10-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Stopping a kernel or an environment install whose interpreter failed to start no longer SIGKILLs the host's own process group on Node < 24.22 / 26.10 ([#3706](https://github.com/code-yeongyu/senpi/issues/3706)).
+
+### Removed
+
+## [2026.10.19] - 2026-10-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.18-1] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A Python kernel no longer loses its globals silently. When its control pipe broke before its exit was seen (a dying interpreter hit by the host's next write), the death went unreported and the next cell started a fresh interpreter with no notice; it is now a death like any other, replaced and announced. A kernel replaced by a later generation of the same session (a reload, including the automatic config reload, a host restart, or a resume) now announces itself on its first result. Restart notices name the lost globals; a SIGKILL that senpi did not send says it was probably the system under memory pressure and gives the host's memory state and the kernel's last memory reading; the prelude's parent watch names itself when it stops the kernel. Reported by 용짱 ([#3612](https://github.com/code-yeongyu/senpi/issues/3612)).
+
+### Removed
+
+## [2026.10.18] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-4] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-3] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-2] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Julia writes its startup status and ready frames pre-encoded, so neither a fresh nor an interrupt-replacement interpreter runs the frame encoder before its first cell; all startup stages are still reported ([#3048](https://github.com/code-yeongyu/senpi/issues/3048)).
+
+### Removed
+
+## [2026.10.16] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.15] - 2026-10-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `display()` of a large object, such as a screenshot result that wraps a multi-MB Buffer, no longer writes megabytes into the session file or breaks the session render. The stored copy is trimmed inside the value instead of dropped: every top-level key is kept, Buffers become a `<Buffer N MB>` summary, long strings, arrays and keys keep a prefix with a visible marker, and the entry stays within the display budget, emoji included. Older sessions holding such entries render a short summary, and an object whose `buffer` holds image bytes now displays as the image with its metadata ([#3320](https://github.com/code-yeongyu/senpi/pull/3320)).
+
+### Removed
+
+## [2026.10.13] - 2026-10-13
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Large JavaScript `eval` data cells no longer stall the shared RPC host on unnecessary import parsing. Cells without possible import syntax skip Babel, and the whole-AST walk runs only when a dynamic import is possible. The dynamic-import check stays linear on comment-heavy data; imports with comments or non-ASCII bindings still rewrite correctly ([#3206](https://github.com/code-yeongyu/senpi/pull/3206)).
+
+### Removed
+
+## [2026.10.12] - 2026-10-12
+
+### Breaking Changes
+
+### Added
+
+- Session-owned eval cell RPC handlers share the eval tool's manager, bound output tails, return typed unknown-cell failures and confirmed stop snapshots, and preserve ordinary detached completion notifications ([#3072](https://github.com/code-yeongyu/senpi/issues/3072)).
+
+### Changed
+
+- The eval tool's stop action also cancels listed running foreground cells, returning their terminal outcome. Concurrent stops await the same interrupt and confirm whether kernel state survived ([#3072](https://github.com/code-yeongyu/senpi/issues/3072)).
+
+### Fixed
+
+- Pip installs preserve successful results, typed install errors and cancellation when scratch cleanup fails. Cleanup retries before reporting exhausted retries as a warning ([#3103](https://github.com/code-yeongyu/senpi/pull/3103)).
+
+### Removed
+
+## [2026.10.11] - 2026-10-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Julia loads handle helpers at first use and installs globals sizing declarations only when a globals diagnostic is requested, reducing fresh-kernel CPU work. This is a partial fix; the remaining startup regression is tracked separately (Refs [#3048](https://github.com/code-yeongyu/senpi/issues/3048)).
+
+### Removed
+
+## [2026.10.10-12] - 2026-10-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Benchmark interpreter CPU is sampled by the host after complete result reception, including result encoding and flushing. Saved reports record this boundary and refuse legacy embedded-clock CPU samples that need remeasurement (Refs [#3048](https://github.com/code-yeongyu/senpi/issues/3048)).
+
+### Removed
+
+## [2026.10.10-11] - 2026-10-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
 - Replaced the plan-authored type assertions the F2 audit listed, in this package's production code and tests, with real types: `EvalKernel` now declares the optional `describeKernelTools` / `invokeKernelTool` capabilities, the JS `WorkerLike` carries an optional `pid`, `bun:ffi` is read through one shared `isBunFfi` guard, the sandbox `credits` buffer is typed as `Int32Array<SharedArrayBuffer>`, the gate allowlist is validated by the existing typebox `allowlistSchema`, and test fakes use `satisfies`, typed factories and narrowing guards instead of casts. No behavior change, except that a malformed base allowlist is now refused by the same schema the head allowlist already required. ([#3005](https://github.com/code-yeongyu/senpi/issues/3005))
 - The bench judges `crash-queue-100` on Ruby and Julia by an absolute head budget instead of the head/base ratio: all 100 queued cells must run exactly once after one kernel replacement, with the head's median wall time under 820 ms (Ruby) or 2,700 ms (Julia). Their base never recovered from the crash, so the ratio compared a failure path with the real work. ([#3025](https://github.com/code-yeongyu/senpi/issues/3025))
 - A streaming, queued or running eval row now shows the cell's code in a fixed-height block that scrolls upward as lines arrive: the newest line always stays visible, older lines fold into an "N earlier code lines" row counted inside the block, and once output or status events arrive they share the block's rows instead of growing it, so the row never grows the transcript at any terminal width. The header stays one row, keeping the live spinner and render-clock elapsed time (a queued cell keeps its queued badge). Once a cell finishes, errs or is cancelled, the collapsed row is one line (icon, summary, status and duration), and expanding it shows the full code, output and status events. ([#2933](https://github.com/code-yeongyu/senpi/issues/2933))
 
 ### Fixed
+
+- Python cells use a C-backed FIFO and one combined stdout/stderr routing scope, reducing per-cell bookkeeping while retaining interpreter ownership, parked-cell callbacks, invocation scope, cancellation, and stale-descriptor fencing ([#3034](https://github.com/code-yeongyu/senpi/issues/3034)).
+
+- Ruby and Julia cells below the host-read memory notice threshold and ceiling no longer walk all globals or serialize an unused memory payload. Above either threshold, successful and raised cells both collect the same bounded globals diagnostic, including when hysteresis suppresses the notice text. Stopping while a finished cell waits for that optional diagnostic now settles its completed result without globals and keeps kernel state. Current-footprint accounting and ceiling enforcement still run on every cell ([#3028](https://github.com/code-yeongyu/senpi/issues/3028)).
+
+- Warm eval cells now recheck the session working directory synchronously instead of awaiting a filesystem thread-pool round trip. Every cell still refuses a deleted or non-directory cwd with the same error, and other filesystem errors still surface; kernel startup retains its asynchronous pre/post checks ([#3033](https://github.com/code-yeongyu/senpi/issues/3033)).
 
 - When a Python, Ruby, Julia or process-isolated JavaScript kernel dies while a frame is being sent to it, the failed write (EPIPE) is reported as that kernel's error instead of surfacing as an unhandled error. Before, that unhandled error could end the host, or make a test run where every test passed exit 1 ([#3016](https://github.com/code-yeongyu/senpi/issues/3016)).
 

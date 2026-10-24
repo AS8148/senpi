@@ -9,6 +9,7 @@ export type SdkErrorKind =
 	| "billing"
 	| "org_not_allowed"
 	| "entitlement"
+	| "long_context_unavailable"
 	| "other";
 
 export type SdkErrorClassification = {
@@ -112,6 +113,11 @@ export function classifySdkError(error: unknown): SdkErrorClassification {
 
 function classifyErrorKind(error: unknown): SdkErrorClassification {
 	const text = errorText(error).toLowerCase();
+	// Claude Code reports an account without the 1M window under the rate_limit code. It is a window
+	// entitlement, not a limit: retry at the standard window instead of blocking the account (senpi#3408).
+	if (/\b(?:extra usage|usage credits) (?:is|are) required for long context\b/.test(text)) {
+		return { kind: "long_context_unavailable", retryable: true };
+	}
 	if (
 		/\b(enotfound|eai_again|econnreset|econnrefused|etimedout|enetunreach|ehostunreach|und_err_connect_timeout|und_err_socket)\b|fetch failed|socket hang up|connection reset by peer/.test(
 			text,
@@ -140,6 +146,9 @@ function classifyErrorKind(error: unknown): SdkErrorClassification {
 		return { kind: "rate_limit", retryable: true };
 	}
 	if (/\b(?:http\s*)?529\b|overloaded/.test(text)) return { kind: "overloaded", retryable: true };
+	// A server, gateway or timeout status is the provider's fault even when its body echoes "unauthorized":
+	// only a 401 is a rejected token, so this must not become an auth block (senpi#2081).
+	if (/\bhttp\s*(?:408|5\d\d)\b/.test(text)) return { kind: "other", retryable: true };
 	if (/\binvalid_grant\b|\binvalid_token\b|\b(?:http\s*)?401\b|\bunauthorized\b/.test(text)) {
 		return { kind: "auth_error", retryable: true };
 	}

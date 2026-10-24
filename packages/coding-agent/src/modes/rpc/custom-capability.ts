@@ -20,11 +20,17 @@ import type { RpcExtensionUIRequest } from "./rpc-types.ts";
 /** The capability string a client sends in its handshake to opt into the notice. */
 export const CUSTOM_UNSUPPORTED_CAPABILITY = "custom_unsupported";
 export const EXTENSION_EVENTS_CAPABILITY = "extension_events";
+/** Host protocol support; a session without codemode returns `eval_cells_unavailable`. */
+export const EVAL_CELLS_CAPABILITY = "eval_cells";
 export const AUTO_TITLE_SESSIONS_CAPABILITY = "auto_title_sessions";
 /** Host capability: the `continue_from_leaf` command starts a turn with no new prompt (#1930). */
 export const CONTINUE_FROM_LEAF_CAPABILITY = "continue_from_leaf";
 /** HOST capability: the shared router guards foreign holders at every writing RPC admission. */
 export const SESSION_HELD_CAPABILITY = "session_held";
+/** Host supports explicit held-wake release; its command reply acknowledges admission. */
+export const RESUME_SESSION_CAPABILITY = "resume_session";
+/** Host honors open_session.attended:false instead of silently starting unattended work. */
+export const ATTENDED_CAPABILITY = "attended";
 /**
  * Opt-in: the host replaces inline image bytes inside tool results with `image_ref`
  * placeholders for this connection; the client fetches a block on demand with `get_media`.
@@ -32,6 +38,13 @@ export const SESSION_HELD_CAPABILITY = "session_held";
 export const MEDIA_PLACEHOLDERS_CAPABILITY = "media_placeholders";
 /** Opt-in: the client can present a multi-question `extension_ui_request{method:"question"}`. */
 export const QUESTION_CAPABILITY = "question";
+/** HOST capability: `prompt.toolBarrier` and `release_tool_barrier` are honored (senpi#3717). */
+export const TOOL_BARRIER_CAPABILITY = "tool_barrier";
+/**
+ * Both directions, like `media_placeholders`: a host advertises it in `get_protocol_info` (its sessions send
+ * `host_request` / `relocation_due`), and a client sends it in `set_client_info` to offer moving a session elsewhere.
+ */
+export const SESSION_RELOCATION_CAPABILITY = "session_relocation";
 
 /**
  * HOST capability (advertised in `get_protocol_info`, never sent by a client):
@@ -39,6 +52,21 @@ export const QUESTION_CAPABILITY = "question";
  * that flag survives its last client's disconnect instead of being closed with it.
  */
 export const RETAIN_ON_DISCONNECT_CAPABILITY = "retain_on_disconnect";
+
+/**
+ * Advertised by a multi-session host that answers `detach_connection`: it drops every attachment the
+ * asking connection holds and replies only once that is done, so a short-lived client can return knowing
+ * no other connection will still see it attached (senpi#3238).
+ */
+export const DETACH_CONNECTION_CAPABILITY = "detach_connection";
+/**
+ * Connection role (senpi#3811): the connection may exercise a person's authority (Stop with intent, release a
+ * pause). It does not decide input origin; that comes from the entry point. Declared per connection by the
+ * client's own `set_client_info` and fixed at that first declaration (see `connection-roles.ts`).
+ */
+export const INTERACTIVE_USER_CAPABILITY = "interactive_user";
+/** The connection owns this session as a task child; only it may pause or resume the session for its run (senpi#3811). */
+export const TASK_PARENT_CAPABILITY = "task_parent";
 
 /**
  * HOST capability: this host accepts `open_session.context`, hands it to that session's
@@ -52,6 +80,13 @@ export const SESSION_CONTEXT_CAPABILITY = "session_context";
  * worker session's lifecycle records on the connections attached to it.
  */
 export const SESSION_KIND_CAPABILITY = "session_kind";
+
+/**
+ * Host capability: `subscribe_sessions` / `unsubscribe_sessions` (the `session_status` stream), a real
+ * `session_opened` per created session, `set_session_context`, and one `loaded_surfaces_changed` per
+ * connection per inventory digest.
+ */
+export const SESSION_STATUS_CAPABILITY = "session_status";
 
 /**
  * HOST capability: this host honors `open_session.auto_title`, so a session can opt
@@ -157,3 +192,9 @@ export function buildCustomUnsupportedRequest(
 		extensionName: name,
 	};
 }
+
+/** `verify_api_key` and `keyHint` on `get_auth_providers` rows (desktop #2510). */
+export const AUTH_KEY_VERIFY_CAPABILITY = "auth_key_verify";
+
+/** Queued inputs carry a `revision`, and `dequeue_message` / `edit_queued_message` accept `expectedRevision` (senpi#3459). */
+export const QUEUED_MESSAGE_REVISION_CAPABILITY = "queued_message_revision";

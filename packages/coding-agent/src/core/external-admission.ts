@@ -65,6 +65,10 @@ export class ExternalAdmission {
 		return this.turnEpochValue;
 	}
 
+	get hasInputWork(): boolean {
+		return this.inputHolds.size > 0;
+	}
+
 	/** Called when an agent run begins; a steer names the epoch it was meant for. */
 	beginTurn(): void {
 		this.turnEpochValue += 1;
@@ -140,7 +144,7 @@ export class ExternalAdmission {
 			return { kind: "turn_conflict", turn_epoch };
 		}
 		const message = deliveryMessage(input);
-		if (!this.isBusy()) {
+		if (!this.isBusy() && input.whenIdle !== "queue") {
 			this.pending.set(id, "start");
 			// A start that settles without writing the entry left it queued for later (the runtime's
 			// admission-retention path): from then on it is held like any queued delivery.
@@ -149,14 +153,16 @@ export class ExternalAdmission {
 			});
 			return { kind: "started", turn_epoch };
 		}
-		if (input.deliverAs === "steer") {
+		if (input.deliverAs === "steer" && this.isBusy()) {
 			if (input.expected_turn_id === undefined) return { kind: "turn_conflict", turn_epoch };
 			this.pending.set(id, "steer");
 			this.port.enqueue(message, "steer");
 			return { kind: "steered", turn_epoch };
 		}
-		this.pending.set(id, "followUp");
-		this.port.enqueue(message, "followUp");
+		// Mid-turn follow-up, or input an idle session holds for its next turn in the mode it was sent as.
+		const mode = this.isBusy() ? "followUp" : input.deliverAs;
+		this.pending.set(id, mode);
+		this.port.enqueue(message, mode);
 		return { kind: "queued", turn_epoch };
 	}
 

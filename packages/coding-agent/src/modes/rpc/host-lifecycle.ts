@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
-import { realpathSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { getAgentDir, isBundledNode } from "../../config.ts";
+import { getAgentDir, isBundledNode, VERSION } from "../../config.ts";
+import { HostAdmission } from "./host-admission.ts";
 import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
+import { isCliModuleEntry } from "./host-cli-entry.ts";
 import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
-import { SupervisorActivity } from "./host-lifecycle-activity.ts";
+import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
 import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } from "./host-lifecycle-drain.ts";
+import { prepareInternalHop } from "./host-lifecycle-internal-key.ts";
 import {
 	HOST_CHILD_WATCH_FD,
 	parseSupervisorArgs,
@@ -25,7 +26,7 @@ import {
 	prepareSocketPath,
 	waitForListener,
 } from "./host-lifecycle-proxy.ts";
-import { createInternalSocketPath, readSettingsFile, recordChildPid } from "./host-lifecycle-scratch.ts";
+import { readSettingsFile, recordChildPid } from "./host-lifecycle-scratch.ts";
 import {
 	performShutdown,
 	registerSupervisorSignals,
@@ -33,9 +34,10 @@ import {
 	type SupervisorState,
 	supervisorSender,
 } from "./host-lifecycle-shutdown.ts";
-import { errorMessage, writeStderrLine } from "./host-supervisor-log.ts";
+import { startSupervisorTicker } from "./host-lifecycle-ticker.ts";
+import { errorMessage, writeHostReady, writeStderrLine } from "./host-supervisor-log.ts";
+import { RpcPublicEndpoint } from "./rpc-public-key.ts";
 import { PUBLIC_SOCKET_IDENTITY_FILE, statSocketIdentity, writeSocketIdentityFile } from "./socket-ownership.ts";
-import { createSocketSecret, socketSecretPath } from "./socket-transport.ts";
 
 // The exit verdict, the launch surface and the cold-start/idle-exit policy live in their own modules
 // (host-child-exit.ts, host-lifecycle-launch.ts, host-lifecycle-policy.ts); they stay exported from
@@ -77,6 +79,8 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	const generation = generationPaths(paths, instanceId);
 	const policy = resolveHostPolicy(await readSettingsFile(paths.settingsFile), process.env);
 	const publicSocket = launch.socket;
+	const publicEndpoint =
+		process.platform === "win32" ? undefined : new RpcPublicEndpoint(launch.agentDir ?? getAgentDir(), publicSocket);
 	// A successor generation binds its own name and adopts the public one by rename; an ordinary
 	// start binds the public name directly. Everything downstream - the child's environment, the
 	// ownership token, the teardown - is expressed in terms of the PUBLIC path either way.
@@ -88,10 +92,8 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// It is provisioned BEFORE the internal hop and the child so a provisioning
 	// failure leaves no scratch directory and no host process behind.
 	const publicSecret = process.platform === "win32" ? await ensurePublicSocketSecret(publicSocket) : undefined;
-	const internal = await createInternalSocketPath(paths.dir);
-	const internalSocket = internal.socket;
-	const internalSecretPath = internal.secretPath ?? socketSecretPath(internalSocket);
-	const internalSecret = process.platform === "win32" ? await createSocketSecret(internalSecretPath) : undefined;
+	const hop = await prepareInternalHop(paths.dir);
+	const { internal, internalSocket, internalSecret, internalKey } = hop;
 	const state: SupervisorState = {
 		shuttingDown: false,
 		shutdownReason: undefined,
@@ -100,19 +102,24 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		publicSocketIdentity: undefined,
 		endpointReplaced: false,
 	};
+	const owner = new SupervisorOwner(generation.dir);
 	const activity = new SupervisorActivity({
 		idleExitMs: policy.coldStart === "persistent" ? Number.POSITIVE_INFINITY : policy.idleExitMs,
 		internalSocket,
-		...(internalSecret ? { internalSecret } : {}),
+		...hop.transport,
+		instanceId,
 		settled: () => state.shuttingDown,
+		onActivity: () => owner.activity(),
 	});
 	const watchers: Array<() => void> = [];
 
 	const child = spawnHostChild({
 		launch,
 		internalSocket,
-		internal: { ...internal, secretPath: internalSecretPath },
-		...(internalSecret ? { internalSecret } : {}),
+		internal,
+		...hop.transport,
+		supervisorStart: hop.supervisorStart,
+		lifetimeFifo: hop.lifetimeFifo,
 		daemonDir: paths.dir,
 		instanceId,
 		cleanupPaths: hostCrashCleanupPaths({
@@ -130,7 +137,12 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// death notification. Errors on it must not crash the supervisor.
 	child.stdio[HOST_CHILD_WATCH_FD]?.on("error", () => {});
 	// The CHILD's own identity, so a reader can tell "supervisor gone, child still running" apart.
-	if (child.pid !== undefined) void recordChildPid(generation.childPidFile, child.pid);
+	if (child.pid !== undefined)
+		void recordChildPid(
+			generation.childPidFile,
+			child.pid,
+			() => child.exitCode === null && child.signalCode === null,
+		);
 	child.once("exit", (code, signal) => {
 		// Recorded BEFORE any shutdown it triggers: `shutdown` ends in `process.exit`. A stop the
 		// supervisor is performing itself is recorded too, as the engine stop it is.
@@ -151,24 +163,36 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		void state.childExitRecorded.then(() => shutdown(verdict.reason, verdict.exitCode));
 	});
 
-	const drain = new SupervisorDrain(child, () => state.shuttingDown);
+	const admission = new HostAdmission({ protocolVersion: 1, serverVersion: VERSION, capabilities: [], instanceId });
+	const drain = new SupervisorDrain(
+		child,
+		() => state.shuttingDown,
+		() => admission.stop(),
+		{ file: generation.childDrainRequestFile, sender: supervisorSender(instanceId) },
+	);
 	const server = createPublicProxy({
 		internalSocket,
-		...(internalSecret ? { internalSecret } : {}),
+		...hop.transport,
 		...(publicSecret ? { publicSecret } : {}),
+		...(publicEndpoint ? { publicEndpoint } : {}),
 		clients: activity.clients,
-		refusing: () => state.shuttingDown || drain.active,
+		admission,
 		onDetach: () => activity.refresh(),
+		onAdmit: () => owner.activity(),
 	});
 	server.once("error", (cause) => {
 		if (!state.shuttingDown) void shutdown(`public socket listener failed: ${errorMessage(cause)}`, 1);
 	});
-	const tickIntervalMs = Math.max(20, Math.min(1_000, policy.idleExitMs / 4));
-	const ticker = setInterval(() => {
-		if (!drain.active && activity.refresh() === "exit" && activity.clients.unclassifiedCount === 0)
-			void shutdown("idle", 0);
-	}, tickIntervalMs);
-	watchers.push(() => clearInterval(ticker));
+	watchers.push(
+		startSupervisorTicker({
+			idleExitMs: policy.idleExitMs,
+			activity,
+			owner,
+			draining: () => drain.active,
+			shuttingDown: () => state.shuttingDown,
+			shutdown,
+		}),
+	);
 
 	const teardown: SupervisorShutdown = {
 		paths,
@@ -180,7 +204,9 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		child,
 		activity,
 		drain,
+		admission,
 		state,
+		...(publicEndpoint ? { publicEndpoint } : {}),
 		stopWatchers: () => {
 			for (const stop of watchers.splice(0)) stop();
 		},
@@ -198,10 +224,16 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// default kill, which would leave that directory behind.
 	registerSupervisorSignals(shutdown, () => drain.drain());
 	try {
-		await waitForListener(internalSocket, 30_000, internalSecret);
+		// Direct supervisor launches predate owner records and may have no generation directory.
+		// Ensured starts create it before spawning and always carry an explicit owner/null record.
+		if (launch.ownerFd !== undefined || (await readSettingsFile(generation.settingsFile))) {
+			await owner.start(launch.ownerFd);
+		}
+		await waitForListener(internalSocket, 30_000, internalSecret, internalKey);
 		await activity.openObserver();
 		await prepareSocketPath(bindSocket);
 		await listen(server, bindSocket, publicSecret);
+		await publicEndpoint?.publish();
 		state.publicSocketOwned = true;
 		if (successor) await adoptPublicSocket(bindSocket, publicSocket, launch.replaceIdentity);
 		state.publicSocketIdentity = await statSocketIdentity(publicSocket);
@@ -220,8 +252,10 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 				() => {
 					state.endpointReplaced = true;
 				},
+				{ file: paths.pointerFile, instanceId },
 			),
 		);
+		watchers.push(await drain.acceptRequests(generation));
 	} catch (cause) {
 		await shutdown(`startup failed: ${errorMessage(cause)}`, 1);
 	}
@@ -234,25 +268,11 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			),
 		);
 	}
-	writeStderrLine(
-		`senpi rpc host ready on unix://${publicSocket} (coldStart=${policy.coldStart}, idleExitMs=${
-			policy.coldStart === "persistent" ? "never" : String(policy.idleExitMs)
-		})`,
-	);
+	writeHostReady(publicSocket, policy.coldStart, policy.idleExitMs);
 	await new Promise<never>(() => {});
 }
 
-function isEntryScript(): boolean {
-	const entry = process.argv[1];
-	if (!entry) return false;
-	try {
-		return fileURLToPath(import.meta.url) === realpathSync(entry);
-	} catch {
-		return false;
-	}
-}
-
-if (!isBundledNode && isEntryScript()) {
+if (!isBundledNode && isCliModuleEntry(import.meta.url)) {
 	const launch = parseSupervisorArgs(process.argv.slice(2));
 	if (!launch) {
 		writeStderrLine("usage: host-lifecycle.ts --socket <path> [host cli args...]");

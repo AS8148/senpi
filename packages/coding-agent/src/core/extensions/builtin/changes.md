@@ -1,3 +1,304 @@
+## 2026-10-23 - show_html_page points at the visualize skill again (senpi#2869)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: the `show_html_page` description gains one sentence, "Load the visualize skill before building the page." The guidelines are unchanged, so the pointer appears once.
+
+### Why
+
+- The 2026-10-06 entry removed the pointer until the skill shipped. The `visualize` skill now ships in released omo (oh-my-openagent#9702), so the description names it without restating its content.
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own tool; its description is defined here.
+
+### Expected merge conflict zones
+
+- LOW: the `description` string of `showHtmlPageTool` in `html-render/tool.ts`.
+
+## 2026-10-21 - The TPS notice uses the shared generation-window rule (senpi#3879)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tps.ts`: `reasonedBeforeFirstDelta` and `STREAMED_DELTA_TYPES` now come from `@earendil-works/pi-agent-core` (`packages/agent/src/response-timing.ts`); the local copies are gone. Behavior is unchanged.
+
+### Why
+
+- The persisted response timing (senpi#3879) and the TPS notice must measure the same window; one shared rule keeps them from drifting (review of senpi#3884).
+
+### Why an extension could not handle it
+
+- It is an extension already; the change only removes a duplicated helper.
+
+### Expected merge conflict zones
+
+- LOW: the imports and helper block at the top of `tps.ts`.
+
+## 2026-10-21 - Handoff estimates do not use cumulative context (omo#10792)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts`: the first-reply size estimate prefers an explicit request context measurement, skips an unknown one, and retains the prompt-only calculation for legacy usage.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts`: cumulative billing must not inflate the estimated fresh-session size. The request snapshot's input preserves the prompt-only estimate without subtracting cumulative output.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts`: this is the builtin's own usage reader.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts`, `promptTokensOfFirstReply`.
+
+## 2026-10-21 - Deliver a resumed question's answer as a user message (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` passes `deliver: "user-message"` for a question resumed after a restart, as it already did for an async question; only a live blocking question passes `tool-result`.
+
+### Why
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: a resumed question's answer is delivered by `deliverAnswer`, whose question-input release reports it as human input. The RPC adapter reports `tool-result` answers itself, so the option must say which path delivers the answer or one answer counts twice.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: the builtin owns answer delivery for every surface, while lifecycle accounting belongs to the engine.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: the `deliver` member of the question dialog options in `startQuestion`.
+
+## 2026-10-21 - Declare lifecycle wake-source obligation kinds (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: `WakeSourceStateEvent` accepts an optional `children` or `background` kind. Publishers without it retain background semantics.
+
+### Why
+
+Child work must remain distinct from monitors and background jobs in lifecycle accounting.
+
+### Why an extension could not handle it
+
+The shared cross-package event contract is engine-owned.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: `WakeSourceStateEvent`.
+
+## 2026-10-21 - Distinguish human question answers from automatic timeouts (senpi#3853)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: Routes actual answered/comment-submitted outcomes through the engine-owned question-input capability; automatic outcomes keep sendUserMessage and remain held.
+
+### Why
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: A question timeout must not release an unattended hold, while a real answer must.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: The builtin owns the canonical outcome and sends the answer for every surface; generic extensions cannot assert a human origin.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: deliverAnswer; the rest of question persistence and formatting is unchanged.
+
+## 2026-10-21 - Optional launch-gated Fable recommendation (senpi#3893)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the Fable recommendation uses the launch id only when both `FABLE55_LAUNCH.released` and `promoteDefaults` are true. Both are false in this draft, so today's list is unchanged. Effort remains xhigh, provider ranking remains unchanged, and Opus 5.5 remains the first recommendation.
+- This change and its four-case flag-matrix test are their own commit (82547134f3), which no later commit touches, so it reverts cleanly. Launch-day support can land without this commit; keeping it still requires an explicit promotion flip in the central launch block.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: release readiness and the decision to recommend a new Fable release are independent. No unreleased model should become a default.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the recommendation list belongs to this builtin.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: import and Fable slot in `RECOMMENDED_DEFAULT_MODELS`.
+
+## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/handoff-hint/` (new): after a human-started turn settles, arms a timer for the prompt cache's expiry (last request, warm pings included, plus the model's TTL). When it fires on an idle session at or above `handoffHint.minContextTokens`, below the compaction trigger, with no active goal, and a fresh session would save at least `handoffHint.minSavingUsd` on the next reply (priced from the model's cost card), it sets one `handoff-hint` widget line with two choices: `/handoff` (opens a linked new session whose first entry is a deterministic brief: goal, open todos, last request and answer, touched files, old session path; no model call, no turn) and `/handoff keep` (hides it for the session, persisted as a `handoff-hint` custom entry). Once per threshold crossing; never for `worker` sessions, print/JSON mode, or extension-started turns. Emits `handoff_hint` on the event bus for shown, accepted and dismissed.
+- `handoff-hint/` (review follow-up): a session opened with history arms from its last assistant reply's timestamp, so a resumed session whose cache already expired gets the hint before its first reply; `accepted` is emitted only after `newSession` returns not cancelled (a cancelled switch keeps the hint); `/handoff <other>` notifies instead of starting a session; the brief lists at most 20 open todos, each capped at 200 characters.
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers `handoff-hint` after `cache-keepalive`.
+
+### Why
+
+Measured over 7 days of real sessions, the first reply after the cache expired cost a median $2.33 at 400k-600k tokens against $0.46 for a fresh session, and 82% of returns after a 5-60 minute break were cold. Nothing told the user (senpi#3230).
+
+### Why an extension could not handle it
+
+It is an extension; this records the new builtin.
+
+### Expected merge conflict zones
+
+- LOW: `builtin/index.ts` import block and the `builtinExtensions` entry after `cache-keepalive`.
+
+## 2026-10-17 - /files lists the whole active path after a reopen (senpi#3519)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/files.ts`: `/files` reads `ctx.sessionManager.getFullBranch()` instead of `getBranch()`.
+
+### Why
+
+- A reopened compacted session keeps only its latest compaction window in memory (#3519), so `getBranch()` covers only that window; `/files` promises the files of the whole session.
+
+### Why an extension could not handle it
+
+- This is the builtin extension itself; the fix is the call it makes.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/files.ts`, the branch read at the top of the handler.
+
+## 2026-10-15 - TPS is timed from the first streamed token to the last (senpi#3393)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tps.ts`: the rate divides the output of assistant messages that actually streamed by their first-to-last delta time (`text_delta`, `thinking_delta`, `toolcall_delta` from `message_update`). No tok/s is shown when nothing streamed or the streamed time is under 0.5 s. The rest of the notice (cache hit, elapsed message time) is unchanged. A message that reasoned before its first delta (its usage reports reasoning tokens, or it carries a thinking block, redacted included, whose text never streamed: Bedrock and omitted-display thinking report no reasoning count) is timed from its own start instead; thinking that streamed as `thinking_delta` keeps the first-to-last-delta window: reasoning can be hidden, or only summarised after it finished, so the first delta comes after most of it was generated. Aborted, errored and zero-output messages add nothing to the rate.
+
+### Why
+
+- Timing from `message_start` to `message_end` made a non-streamed reply read thousands of tok/s (`12853.9 tok/s ... 0.0s` on 5.1.30), and counted time-to-first-token for streamed ones. Regression: `test/suite/tps-extension.test.ts` (#3393 cases).
+
+### Why an extension could not handle it
+
+- This is the extension.
+
+### Expected merge conflict zones
+
+- LOW: the `message_update` handler and the rate line in `agent_end`.
+## 2026-10-14 - vertex-model-garden provider extension
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers the new `vertex-model-garden` builtin after `cursor-cli-oauth`.
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/transport.ts`: keeps the URL builder private; the SDK-wire test owns the global endpoint contract without a duplicate helper test or test-only export.
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/` (fork-only): registers only `vertex-garden` for Model Garden open models through `.../locations/global/endpoints/openapi` (`openai-completions`). It wraps the builtin API stream, injects an ADC bearer token plus `x-goog-user-project`, and is gated on the ADC credential chain through `ambientAuth` (`auth.ts`, composed by `provider-composer.ts`), so the lane is available while ADC is present without counting as a configured provider and never takes the automatic default over one the user configured (senpi#2327). The target project comes from `GOOGLE_CLOUD_PROJECT`/`GCLOUD_PROJECT`, else the ADC quota project, else `getProjectId()`; the API-key slot is never read, so a stored secret cannot reach the request URL. The starter catalog is exactly `deepseek-ai/deepseek-v4.1-flash-maas` (1,000,000-token context from the existing `deepseek-v4-1-flash` catalog data) and `zai-org/glm-5.2-maas`, priced at the model card's published MaaS list prices — DeepSeek V4.1 Flash $0.30/$1.20 per 1M tokens with a $0.03 cache hit, GLM 5.2 $1.40/$4.40 with a $0.14 cached input rate (https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing, "Deepseek's models" and "GLM's models"; DeepSeek V4.1 Flash is listed at no charge through 2026-10-16). Both models declare reasoning with every thinking level marked unsupported, so no level is offered that these endpoints cannot steer. Claude registration, catalog, rawPredict transport and tests are removed.
+
+### Why
+
+- Vertex Model Garden open models previously needed a hand-written models.json and a token script.
+- Marketplace partner models, including Claude and Grok, are excluded because they are card-billed and promotional credits do not apply.
+
+### Why an extension could not handle it
+
+- It is an extension; only the one-line registration in `builtin/index.ts` sits outside it.
+
+### Expected merge conflict zones
+
+- LOW: one import and one `builtinExtensions` entry.
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove the retired mode from recommendation policy and update the shared async-answer ownership comment. Existing mode behavior and model provenance checks stay intact.
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
+## 2026-10-13 - tps: per-run stats notify is TUI-only (senpi#3236)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tps.ts`: the `agent_end` handler returns early when `ctx.mode !== "tui"`, so the TPS/cache-hit notice is sent only to the TUI footer. Message text, timing accumulation, and the `output > 0`/`elapsedMs > 0` guards are unchanged.
+- `packages/coding-agent/test/suite/tps-extension.test.ts`: the ctx mock carries `mode: "tui"`, matching `ExtensionContext`.
+- `packages/coding-agent/test/suite/regressions/3236-tps-notify-tui-only.test.ts` (new): a TUI ctx still receives exactly one unchanged notice; rpc/app-server/json/print ctxs receive none.
+
+### Why
+
+In RPC mode `ctx.ui.notify` becomes an `extension_ui_request`, and the desktop rendered each one as an info warning row ("Work Log") once per agent run. The notice is a TUI footer nicety and has no RPC-mode consumer; the desktop now drops the string server-side (omo-desktop-app #2327), and this change stops the engine from emitting it outside the TUI in the first place.
+
+### Why an extension could not handle it
+
+It is an extension — the guard lives inside the existing `tps` builtin, whose notify call site is the only emitter of this string.
+
+### Expected merge conflict zones
+
+- LOW in `tps.ts` around the `agent_end` early-return block; LOW in `tps-extension.test.ts` around the ctx mock shape.
+
+## 2026-10-11 - Restore shipped defaults and cache-preserving search policy (senpi#3125 delta)
+
+### What changed
+
+- `server-search-fallback.ts` separates fallback from disabled metadata and preserves the original hook on cache-retaining summaries.
+- Anthropic and OpenAI native injectors restore main's direct API/Claude OAuth and OpenAI/Azure defaults. Both consult failure memory using the request model, not the selected session model.
+- Server-tool exclusion preserves client search declarations and omits empty tools arrays.
+
+### Why
+
+- New opt-in routes must not remove shipped defaults or invalidate the main-turn cache prefix.
+
+### Why an extension could not handle it
+
+- These are corrections to the existing built-in injection and fallback extensions.
+
+### Expected merge conflict zones
+
+- Capability predicates, payload filters and request-model failure lookup.
+
+## 2026-10-11 - Preserve search fallback schemas and keepalive prefixes (senpi#3122 review)
+
+### What changed
+
+- `server-search-fallback.ts`: session/model failure memory is shared by native injectors and standalone search; suppression markers are request-local and never serialized.
+- `cache-keepalive/index.ts`: explicitly requests the main-turn server-search prefix rather than using the search-disabled auxiliary default.
+- Native search extensions preserve provider-built function declarations after a failure and require opt-in on unverified routes.
+
+### Why
+
+- Schema normalization and a stable cache prefix must survive native-search fallback without adding duplicate tools or another failed request per prompt.
+
+### Why an extension could not handle it
+
+- These are coordinated changes to existing built-in extensions.
+
+### Expected merge conflict zones
+
+- Fallback metadata, native injector hooks, and keepalive request preparation.
+
+## 2026-10-11 - Classify the Moonshot server-search echo tool (senpi#3122)
+
+### What changed
+
+- `moved-path-guard/tool-classes.ts` classifies `$web_search` as `none`: it echoes server-generated arguments and performs no filesystem access.
+
+### Why
+
+- The native-first search extension registers this additional tool; the full-load regression requires every built-in tool to carry an explicit moved-path class.
+
+### Why an extension could not handle it
+
+- The moved-path guard owns the built-in tool classification table.
+
+### Expected merge conflict zones
+
+- `moved-path-guard/tool-classes.ts`: the path-free search tool entries.
+
 ## 2026-10-08 - moved-path-guard: folder check follows only a legacy-root symlink (senpi#2898)
 
 ### What changed
@@ -486,7 +787,6 @@ The provider id is resolved inside the package before any extension loads, and t
 
 - `packages/coding-agent/src/core/extensions/builtin/ask-user/render.ts`: renderer exports.
 - `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: attachment options.
-
 
 ## 2026-09-20 - Recover unsettled async questions after restart (#1857 I3)
 
@@ -1470,3 +1770,21 @@ The provider id is resolved inside the package before any extension loads, and t
 - `utils/changes.md`: corrected the stale `shortenPath()` note that claimed it backed the `/sessions` HUD picker; `shortenPath()` itself stays (other consumers remain).
 - Neo (the Go TUI) shipped a native port of the same HUD; it was removed in lockstep to satisfy the repo-wide "no /sessions HUD source" contract: `internal/ui/builtinext/{observer,observer_overlay,observer_viewer,observer_test,transcript,transcript_decode,transcript_render}.go`, the `ResolveSessionsCommandOutcome` resolver and its tests, the `app.sessions.observe` keybinding definition/scope/migration/registry-test entries, the qaharness `observer` scenario, the welcome-menu entry that advertised it, the `/sessions` command in the bridge `get_commands` testdata, and the `task-14-session-observer-tail` visual-claims manifest entry plus its triplet.
 - Why: user-requested cleanup. The HUD duplicated `/resume`'s session-picking surface and the `ctrl+s` chord collided with the more useful `app.session.toggleSort` / `app.models.save` chords that already bind `ctrl+s` in other scopes.
+
+## 2026-10-17 - /account marks a slot of the other login kind as unused (#3486)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts`: `statusOf` shows `unused (other login kind; switch with /login)` for an account summarized as unused.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts`: the list showed a never-used API key slot under an OAuth login as available (#3486 review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts` is the built-in `/account` command.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts`: `statusOf`.

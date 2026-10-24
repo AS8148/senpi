@@ -126,6 +126,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			sink,
 		);
 		pi.on("session_start", (event, ctx) => {
+			if (event.sizesOnly) return;
 			const work = onSessionStart(event, ctx);
 			// First paint does not wait for attach; prompt preparation reuses its promise.
 			void work;
@@ -153,7 +154,12 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 						...skillDecls.warnings,
 						...(skillDecls.servers.size > 0 ? await service.attachSkillMcpServers(skillDecls.servers, pi) : []),
 					];
-					for (const warning of warnings) createMcpLogger("skills").warn(warning);
+					for (const warning of warnings) {
+						if (!warning.startsWith("Project MCP server")) createMcpLogger("skills").warn(warning);
+						if (warning.startsWith("Blocked skill link")) {
+							pi.events.emit("security_notice", { category: "skill-link-blocked", message: warning });
+						}
+					}
 				}
 				// Use the known instructions now. Deferred catalog registration refreshes
 				// the service for subsequent turns instead of gating this provider request.
@@ -176,7 +182,10 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 						await service.handleSessionShutdown(event);
 						return;
 					}
-					if (event.reason !== "reload") disposeControlInventory();
+					// A reload builds a new runner whose factory subscribes again, so this generation's listeners go
+					// now too: left on the process-wide service they keep the old runner and its whole extension
+					// graph reachable, one generation per reload.
+					disposeControlInventory();
 					// The shared service outlives any one session: release only this session's binding,
 					// and dispose only when the last live session quits (#2514).
 					await service.releaseSession(pi, event.reason === "quit" ? "quit" : undefined);

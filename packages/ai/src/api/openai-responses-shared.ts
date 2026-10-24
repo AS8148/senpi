@@ -4,6 +4,7 @@ import type {
 	Tool as OpenAITool,
 	ResponseCreateParamsStreaming,
 	ResponseFunctionCallOutputItemList,
+	ResponseFunctionWebSearch,
 	ResponseInput,
 	ResponseInputContent,
 	ResponseInputImage,
@@ -43,6 +44,7 @@ import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { reportedCount } from "../utils/reported-count.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
 import { getCurrentTools, getDeclaredTools, resolveTranscript, resolveTranscriptTools } from "../utils/transcript.ts";
@@ -483,6 +485,27 @@ export function convertResponsesMessages<TApi extends Api>(
 					}
 					// Signed foreign blocks with no text are intentionally dropped.
 				} else if (block.type === "providerNative") {
+					// Responses accepts its completed web_search_call output items
+					// in the next input. Keep them only on the originating route/model;
+					// encrypted/native state must never cross provider boundaries.
+					// https://developers.openai.com/api/docs/guides/conversation-state
+					// Verified against the ChatGPT subscription endpoint for senpi#3122.
+					const raw = block.raw;
+					if (
+						isSameModel &&
+						block.subtype === "web_search_call" &&
+						raw !== null &&
+						typeof raw === "object" &&
+						"type" in raw &&
+						raw.type === "web_search_call" &&
+						"id" in raw &&
+						typeof raw.id === "string" &&
+						"action" in raw &&
+						"status" in raw &&
+						(raw.status === "completed" || raw.status === "failed")
+					) {
+						output.push(raw as ResponseFunctionWebSearch);
+					}
 				} else if (block.type === "text") {
 					const textBlock = block as TextContent;
 					pushAssistantText(textBlock.text, textBlock.textSignature);
@@ -658,7 +681,8 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 	const supportsStrictMode = options?.supportsStrictMode ?? true;
 	const supportsOpenAIGrammarTools = options?.supportsOpenAIGrammarTools ?? false;
 
-	return tools.map((tool) => {
+	const sortedTools = [...tools].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+	return sortedTools.map((tool) => {
 		const grammar = resolveGrammarConstrainedSampling(tool, supportsOpenAIGrammarTools);
 		if (grammar) {
 			return {
@@ -996,13 +1020,14 @@ export async function processResponsesStream<TApi extends Api>(
 			const cachedTokens = inputDetails?.cached_tokens || 0;
 			// OpenAI platform reports cache_write_tokens; some compatible gateways use cache_creation_tokens.
 			const cacheWriteTokens = inputDetails?.cache_write_tokens ?? inputDetails?.cache_creation_tokens ?? 0;
+			const reasoning = reportedCount(response.usage.output_tokens_details?.reasoning_tokens);
 			output.usage = {
 				// OpenAI includes cached and cache-write tokens in input_tokens, so subtract both.
 				input: Math.max(0, (response.usage.input_tokens || 0) - cachedTokens - cacheWriteTokens),
 				output: response.usage.output_tokens || 0,
 				cacheRead: cachedTokens,
 				cacheWrite: cacheWriteTokens,
-				reasoning: response.usage.output_tokens_details?.reasoning_tokens || 0,
+				...(reasoning === undefined ? {} : { reasoning }),
 				totalTokens: response.usage.total_tokens || 0,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			};

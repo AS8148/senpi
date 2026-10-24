@@ -6,6 +6,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Provider } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { z } from "zod";
 import { parseArgs } from "../../src/cli/args.ts";
@@ -101,6 +102,8 @@ export async function contextHost(
 		browserStateExtension?: boolean;
 		/** A faux provider every session can reach (`--provider`/`--model` select its first model). */
 		faux?: ReturnType<typeof fauxProvider>;
+		/** Additional independently authenticated providers for fallback profile tests. */
+		additionalProviders?: readonly Provider[];
 		/** Global settings written to `<agentDir>/settings.json` before the host starts. */
 		globalSettings?: Record<string, unknown>;
 	} = {},
@@ -116,6 +119,16 @@ export async function contextHost(
 	await writeFile(browserState, BROWSER_STATE_EXTENSION);
 	if (options.globalSettings !== undefined) {
 		await writeFile(join(agentDir, "settings.json"), `${JSON.stringify(options.globalSettings, null, 2)}\n`);
+	}
+	if (options.additionalProviders?.length) {
+		await writeFile(
+			join(agentDir, "auth.json"),
+			JSON.stringify(
+				Object.fromEntries(
+					options.additionalProviders.map((provider) => [provider.id, { type: "api_key", key: "spare-key" }]),
+				),
+			),
+		);
 	}
 	const faux =
 		options.faux ??
@@ -145,7 +158,18 @@ export async function contextHost(
 		agentDir,
 		createRuntime: createCliRuntimeFactory(
 			{ parsed, cwd, agentDir, appMode: "rpc" },
-			faux ? { extensionFactories: [(pi) => pi.registerProvider(faux.provider)] } : {},
+			faux
+				? {
+						extensionFactories: [
+							(pi) => {
+								pi.registerProvider(faux.provider);
+								for (const provider of options.additionalProviders ?? []) {
+									pi.registerProvider(provider);
+								}
+							},
+						],
+					}
+				: {},
 		),
 		closeGraceMs: 1_000,
 		now: () => clock.now,

@@ -6,6 +6,7 @@ import {
 	type Color,
 	colorToHex,
 	colorToOklch,
+	type EditorKeywordHighlight,
 	type EditorTheme,
 	foregroundAnsi,
 	getTerminalColorMode,
@@ -27,6 +28,7 @@ import { getCustomThemesDir, getThemesDir } from "../../../config.ts";
 import type { SourceInfo } from "../../../core/source-info.ts";
 import { closeWatcher, watchWithErrorHandler } from "../../../utils/fs-watch.ts";
 import { highlight, supportsLanguage } from "../../../utils/syntax-highlight.ts";
+import { createReservedKeywordHighlight } from "./reserved-keyword-rainbow.ts";
 import { generateSystemThemeColors, SYSTEM_THEME_NAME, terminalAppearance } from "./system-theme.ts";
 
 /** Name of the built-in theme generated from the terminal's colors (`"system"`), used when no theme is set. */
@@ -1091,7 +1093,32 @@ export function getLanguageFromPath(filePath: string): string | undefined {
 	return extToLang[ext];
 }
 
+/**
+ * One markdown theme per active `Theme`. A new object per message cost about 640 bytes for each mounted message
+ * (#2537). It is rebuilt when the theme switches, because Markdown's render cache keys on the theme object's
+ * identity: reusing one object across a switch would serve lines colored for the old theme.
+ */
+let sharedMarkdownThemeEntry: { readonly for: Theme; readonly markdown: MarkdownTheme } | undefined;
+
+/** A new markdown theme object, as before: extensions may customize their copy. */
 export function getMarkdownTheme(): MarkdownTheme {
+	return createMarkdownTheme();
+}
+
+/**
+ * The markdown theme the built-in message components share: one frozen object per active `Theme`, so a mounted
+ * message does not hold its own copy. Not exported from the package; extensions call `getMarkdownTheme()`.
+ */
+export function sharedMarkdownTheme(): MarkdownTheme {
+	const active = (globalThis as Record<symbol, Theme>)[THEME_KEY];
+	if (active === undefined) return createMarkdownTheme();
+	if (sharedMarkdownThemeEntry?.for !== active) {
+		sharedMarkdownThemeEntry = { for: active, markdown: Object.freeze(createMarkdownTheme()) };
+	}
+	return sharedMarkdownThemeEntry.markdown;
+}
+
+function createMarkdownTheme(): MarkdownTheme {
 	return {
 		heading: (text: string) => theme.fg("mdHeading", text),
 		link: (text: string) => theme.fg("mdLink", text),
@@ -1144,8 +1171,17 @@ export function getEditorTheme(): EditorTheme {
 	return {
 		borderColor: (text: string) => theme.fg("borderMuted", text),
 		mention: (text: string) => theme.fg("skillMention", `\x1b[1m${text}\x1b[22m`),
+		keywordHighlight: getReservedKeywordHighlight(),
 		selectList: getSelectListTheme(),
 	};
+}
+
+/** Rainbow for OmO's reserved prompt keywords; it follows the active theme's appearance and colour mode. */
+export function getReservedKeywordHighlight(): EditorKeywordHighlight | undefined {
+	return createReservedKeywordHighlight({
+		appearance: () => theme.appearance,
+		colorMode: () => theme.getColorMode(),
+	});
 }
 
 export function getSettingsListTheme(): SettingsListTheme {

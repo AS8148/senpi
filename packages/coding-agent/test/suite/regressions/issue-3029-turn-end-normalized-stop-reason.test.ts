@@ -16,12 +16,14 @@ describe("turn_end boundary when the loop normalizes a response's stop reason (s
 		{
 			label: "a stop response with a pending tool call",
 			response: () => fauxAssistantMessage(fauxToolCall("noop", {}), { stopReason: "stop" }),
+			turns: 2,
 		},
 		{
 			label: "a toolUse response without a tool call",
 			response: () => fauxAssistantMessage("done", { stopReason: "toolUse" }),
+			turns: 1,
 		},
-	])("Given $label when the turn ends then turn_end handlers get its persisted entry ID", async ({ response }) => {
+	])("Given $label when the turn ends then turn_end handlers get its persisted entry ID", async ({ response, turns }) => {
 		// given
 		const tool: AgentTool = {
 			name: "noop",
@@ -51,7 +53,7 @@ describe("turn_end boundary when the loop normalizes a response's stop reason (s
 
 		// then
 		expect(errors.filter((error) => error.extensionPath === "<boundary>")).toEqual([]);
-		expect(entryIds.length).toBeGreaterThan(0);
+		expect(entryIds).toHaveLength(turns);
 		for (const id of entryIds) {
 			const entry = id === undefined ? undefined : harness.sessionManager.getEntry(id);
 			expect(entry?.type === "message" ? entry.message.role : undefined).toBe("assistant");

@@ -9,7 +9,9 @@
  * simply exits under it (the marker is written only after a COMPLETED pass, so the next long-lived
  * process picks the work up). At most one pass per agent directory every `minIntervalMs`, stopped by
  * a time and a count budget. It never considers - and so never locks - the endpoint the ensure was
- * for, never signals, and never lowers the evidence bar.
+ * for, and never lowers the evidence bar. The one process it may end is a stale older-engine host
+ * (`host-stale-engine.ts`, #3268), judged and stopped under that endpoint's lock exactly as
+ * `senpi host gc` does.
  *
  * Fairness: endpoints are walked in sorted directory order starting AFTER the marker's `cursor` (the
  * last one the previous pass examined), wrapping around, so one uncollectable endpoint costs at most
@@ -29,6 +31,7 @@ import {
 	readHostGcPassMarker,
 	writeHostGcPassMarker,
 } from "./host-gc-pass-marker.ts";
+import { gcRpcPublicKeys } from "./rpc-public-key.ts";
 
 export const OPPORTUNISTIC_GC_BUDGET = { budgetMs: 1_500, maxEndpoints: 32, minIntervalMs: 300_000 } as const;
 
@@ -58,6 +61,8 @@ export async function gcHostEndpointsOpportunistically(
 	const previous = await readHostGcPassMarker(options.agentDir);
 	const startedAt = now();
 	if (previous !== undefined && startedAt - previous.completedAt < minIntervalMs) return { ran: false };
+	if (process.platform !== "win32")
+		await gcRpcPublicKeys(options.agentDir, { deadline: startedAt + budgetMs, maxRecords: maxEndpoints });
 	const candidates = await gcCandidates(options);
 	const present = new Set(candidates.map((endpoint) => endpoint.name));
 	const skip: Record<string, HostGcSkipEntry> = {};
@@ -80,8 +85,12 @@ export async function gcHostEndpointsOpportunistically(
 		}
 		examined += 1;
 		cursor = endpoint.name;
-		const outcome = await gcEndpoint(endpoint.socket, endpoint.dir, {}).catch(() => ({ removed: false }) as const);
-		if (outcome.removed) {
+		const outcome = await gcEndpoint(endpoint.socket, endpoint.dir, { staleEngine: {} }).catch(
+			() => ({ removed: false }) as const,
+		);
+		// A stopped stale host leaves a dead endpoint the next pass collects without waiting out a backoff.
+		if ("stopped" in outcome) delete skip[endpoint.name];
+		else if (outcome.removed) {
 			removed += 1;
 			delete skip[endpoint.name];
 		} else {

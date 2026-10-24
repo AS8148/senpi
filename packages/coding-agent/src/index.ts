@@ -15,6 +15,7 @@ export {
 	VERSION,
 } from "./config.ts";
 export {
+	type AgentAbortCause,
 	AgentSession,
 	type AgentSessionConfig,
 	type AgentSessionEvent,
@@ -256,6 +257,7 @@ export {
 	type KernelToolInvokeScope,
 	kernelToolsStorage,
 } from "./core/extensions/kernel-tools-context.ts";
+export { ReservedCustodyKey } from "./core/extensions/lifecycle-api.ts";
 // Notice primitives
 export {
 	buildNoticeBox,
@@ -301,6 +303,13 @@ export {
 	readOwnFootprint,
 	readProcessFootprint,
 } from "./core/process-footprint.ts";
+export {
+	findReservedKeywordRuns,
+	findReservedKeywordSpans,
+	type ReservedKeyword,
+	type ReservedKeywordRun,
+	type ReservedKeywordSpan,
+} from "./core/reserved-keywords.ts";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.ts";
 export { DefaultResourceLoader, loadProjectContextFiles } from "./core/resource-loader.ts";
 // SDK for programmatic usage
@@ -332,6 +341,22 @@ export {
 	createWriteTool,
 	type PromptTemplate,
 } from "./core/sdk.ts";
+export type {
+	ChildLifecycleReport,
+	DeliveryTicketId,
+	HumanWait,
+	LifecycleApi,
+	LifecycleHold,
+	LifecycleWaits,
+	ObligationKind,
+	ObligationToken,
+	SelfSettleResult,
+	SessionLifecycle,
+	SessionLifecycleEvent,
+	SessionLifecycleState,
+	SpawnedBy,
+	WorkObligations,
+} from "./core/session-lifecycle-types.ts";
 export {
 	type BranchSummaryEntry,
 	buildContextEntries,
@@ -502,6 +527,7 @@ export {
 	type HostGcOptions,
 	type HostGcResult,
 	type HostGenerationRow,
+	type HostHolder,
 	type HostLaunchSpec,
 	type HostLaunchSpecCore,
 	HostLaunchSpecError,
@@ -536,6 +562,8 @@ export {
 	RpcClientOpenInFlightError,
 	type RpcClientOptions,
 	type RpcCommand,
+	type RpcEvalCell,
+	type RpcEvalCellSnapshot,
 	type RpcEventListener,
 	type RpcExtensionEvent,
 	type RpcExtensionUIRequest,

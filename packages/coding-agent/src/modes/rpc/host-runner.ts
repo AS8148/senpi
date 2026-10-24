@@ -45,7 +45,8 @@ import {
 import { probeProtocolInfo } from "./host-probe.ts";
 import { readHostStatus, readSessionCounts } from "./host-status.ts";
 import { readAllHostStatus } from "./host-status-all.ts";
-import { stopHost } from "./host-stop.ts";
+import { staleStopGeneration, stopHost } from "./host-stop.ts";
+import type { HostStopGeneration } from "./host-stop-generation.ts";
 
 export {
 	HOST_EXIT_ERROR,
@@ -55,6 +56,8 @@ export {
 	HOST_EXIT_USAGE,
 	type HostOutcome,
 } from "./host-outcome.ts";
+import { hostRequestKeyRoot } from "./host-request-key-root.ts";
+import { withRpcKeyRoot } from "./rpc-auth-client.ts";
 
 const PROBE_TIMEOUT_MS = 10_000;
 
@@ -78,7 +81,17 @@ export type HostRequest =
 			/** Every endpoint under `target.agentDir` (its socket is ignored), read without pruning. */
 			readonly all?: boolean;
 	  }
-	| { readonly action: "stop"; readonly target: HostTarget; readonly drain: boolean; readonly force: boolean }
+	| {
+			readonly action: "stop";
+			readonly target: HostTarget;
+			readonly drain: boolean;
+			readonly force: boolean;
+			readonly expectedGeneration?: HostStopGeneration;
+			/** With `drain`: the generation to drain, by instance id (senpi#3653). */
+			readonly instanceId?: string;
+			/** With `drain`: wait up to this long for that generation to exit. */
+			readonly waitMs?: number;
+	  }
 	| {
 			readonly action: "handoff";
 			readonly target: HostTarget;
@@ -90,7 +103,14 @@ export type HostRequest =
 	| { readonly action: "gc"; readonly agentDir: string }
 	| { readonly action: "shard_path"; readonly kind: ShardKind; readonly owner: string; readonly root: string };
 
-export async function runHostRequest(request: HostRequest): Promise<HostOutcome> {
+export async function runHostRequest(
+	request: HostRequest,
+	options: { readonly keyRoot?: string } = {},
+): Promise<HostOutcome> {
+	return withRpcKeyRoot(hostRequestKeyRoot(request, options.keyRoot), () => runHostRequestInKeyRoot(request));
+}
+
+async function runHostRequestInKeyRoot(request: HostRequest): Promise<HostOutcome> {
 	if (request.action === "ensure" || request.action === "handoff" || request.action === "stop") {
 		const { socket, agentDir } = request.target;
 		if ((await endpointKindOfSocket(socket, agentDir)) === "tui") {
@@ -105,7 +125,7 @@ export async function runHostRequest(request: HostRequest): Promise<HostOutcome>
 				? statusAllOutcome(request.target, request.includeWorkers)
 				: statusOutcome(request.target, request.includeWorkers);
 		case "stop":
-			return stopOutcome(request.target, request.drain, request.force);
+			return stopOutcome(request);
 		case "handoff":
 			return request.handover === undefined
 				? handoffOutcome(request.target, request.spec)
@@ -113,7 +133,10 @@ export async function runHostRequest(request: HostRequest): Promise<HostOutcome>
 		case "shard_path":
 			return shardPathOutcome(request.kind, request.owner, request.root);
 		case "gc":
-			return { exitCode: HOST_EXIT_OK, payload: { ...(await gcHostEndpoints(request.agentDir)) } };
+			return {
+				exitCode: HOST_EXIT_OK,
+				payload: { ...(await gcHostEndpoints(request.agentDir, { staleEngine: {} })) },
+			};
 		default:
 			return assertNever(request);
 	}
@@ -149,6 +172,7 @@ async function ensureOutcome(
 			reason: error.reason,
 			socket: target.socket,
 			...(error.detail !== undefined && { detail: error.detail }),
+			...(error.holder !== undefined && { holder: error.holder }),
 		});
 	}
 	const host = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS).finally(ensured.release);
@@ -201,20 +225,40 @@ function shardPathOutcome(kind: ShardKind, owner: string, root: string): HostOut
  * so it is gated on the host's own count and refuses with those counts rather than a bare "busy".
  * A DRAIN ends no work - the host stops accepting and leaves when it is empty - so it is never gated.
  */
-async function stopOutcome(target: HostTarget, drain: boolean, force: boolean): Promise<HostOutcome> {
+async function stopOutcome(request: Extract<HostRequest, { action: "stop" }>): Promise<HostOutcome> {
+	const { target, drain, force, instanceId, waitMs } = request;
+	if (request.expectedGeneration !== undefined) {
+		const stale = await staleStopGeneration(target.socket, target.agentDir, request.expectedGeneration);
+		if (stale !== undefined) return refusal("refuse", undefined, { reason: stale.reason, socket: target.socket });
+	}
 	const host = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS);
 	const sessions = await readSessionCounts(target.socket, true);
 	const occupied = sessions.foreign_attached + sessions.foreign_retained > 0;
 	if (!drain && !force && occupied) {
 		return refusal("refuse", host, { reason: "sessions_live", socket: target.socket, sessions });
 	}
-	const result = await stopHost({ socket: target.socket, agentDir: target.agentDir, drain, force });
+	const result = await stopHost({
+		socket: target.socket,
+		agentDir: target.agentDir,
+		drain,
+		force,
+		...(request.expectedGeneration !== undefined && { expectedGeneration: request.expectedGeneration }),
+		...(instanceId !== undefined && { instanceId }),
+		...(waitMs !== undefined && { waitMs }),
+	});
 	if (result.action === "refuse") {
 		return refusal("refuse", host, { reason: result.reason, socket: target.socket, sessions });
 	}
 	return {
 		exitCode: HOST_EXIT_OK,
-		payload: { action: result.action, socket: target.socket, pid: result.pid, sessions },
+		payload: {
+			action: result.action,
+			socket: target.socket,
+			pid: result.pid,
+			...("instanceId" in result && result.instanceId !== undefined && { instanceId: result.instanceId }),
+			...("exited" in result && result.exited !== undefined && { exited: result.exited }),
+			sessions,
+		},
 	};
 }
 

@@ -16,6 +16,7 @@ import filesExtension from "./files.ts";
 import goalExtension from "./goal/index.ts";
 import gptAccountExtension from "./gpt-account.ts";
 import gptApplyPatchExtension from "./gpt-apply-patch/index.ts";
+import handoffHintExtension from "./handoff-hint/index.ts";
 import helpExtension from "./help/index.ts";
 import herdrExtension from "./herdr/index.ts";
 import historySearchExtension from "./history-search/index.ts";
@@ -38,6 +39,7 @@ import promptUrlWidgetExtension from "./prompt-url-widget.ts";
 import reasoningExtension from "./reasoning/index.ts";
 import recommendedModelsExtension from "./recommended-models/index.ts";
 import redrawsExtension from "./redraws.ts";
+import relocateSessionExtension from "./relocate-session/index.ts";
 import repositoryIdentityExtension from "./repository-identity.ts";
 import piRulesExtension from "./rules/index.ts";
 import scheduleExtension from "./schedule/index.ts";
@@ -48,6 +50,7 @@ import toolPairGuardExtension from "./tool-pair-guard/index.ts";
 import toolSearchExtension from "./tool-search/index.ts";
 import tpsExtension from "./tps.ts";
 import ttsrExtension from "./ttsr/index.ts";
+import vertexModelGardenExtension from "./vertex-model-garden/index.ts";
 import videoInExtension from "./video-in/index.ts";
 import webfetchExtension from "./webfetch/index.ts";
 import websearchExtension from "./websearch/index.ts";
@@ -114,6 +117,10 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	// Durable counterpart of `loop`: writes job files a separate `senpi schedule run` fires later.
 	{ id: "schedule", factory: scheduleExtension },
 	{ id: "cache-keepalive", factory: cacheKeepAliveExtension },
+	// After cache-keepalive: its warm pings move the cache expiry the hint waits for.
+	{ id: "handoff-hint", factory: handoffHintExtension },
+	// Asks the session's host to continue it on another computer; without a host it only answers "stay here".
+	{ id: "relocate-session", factory: relocateSessionExtension },
 	{ id: "ttsr", factory: ttsrExtension },
 	{ id: "btw", factory: btwExtension },
 	// HTML page rendering for standalone senpi (TUI/local); the desktop thread reaches the
@@ -126,6 +133,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "claude-sdk-oauth", factory: anthropicSubscriptionExtension },
 	// Registers unconditionally and reports executable/auth state through its oauth check, so it stays beside the other provider lane.
 	{ id: "cursor-cli-oauth", factory: cursorCliOauthExtension },
+	// Provider-only lane beside the other provider registrations; no hooks, so order is not load-bearing.
+	{ id: "vertex-model-garden", factory: vertexModelGardenExtension },
 	// Config reload follows settings-dependent builtins so reloads rebuild their resolved settings before catalog feeders observe them.
 	{ id: "config-reload", factory: configReloadExtension },
 	// Shared catalog wiring loads before MCP, which feeds its tools into the shared catalog as the final builtin.

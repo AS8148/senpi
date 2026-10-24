@@ -25,6 +25,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
+import { isDeepStrictEqual } from "util";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { findNearestParentConfigDir } from "../nearest-parent-config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
@@ -36,7 +37,13 @@ import {
 	compactionReserveTokens,
 } from "./compaction-settings-access.ts";
 import { type ResolvedCompactionSettings, resolveCompactionSettings } from "./compaction-settings-resolver.ts";
-import { MAX_ENGINE_TURNS_PER_USER_INPUT, MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW } from "./engine-turn-limit.ts";
+import type { ContextFileLimits } from "./context-files.ts";
+import {
+	MAX_ENGINE_TURNS_PER_RESUME_WINDOW,
+	MAX_ENGINE_TURNS_PER_USER_INPUT,
+	MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW,
+} from "./engine-turn-limit.ts";
+import { type HeldFileLock, lockWithLossHandling } from "./file-lock.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import {
 	CredentialStoreBusyError,
@@ -70,6 +77,7 @@ import {
 	ASK_USER_MAX_TIMEOUT_MINUTES,
 	ASK_USER_MIN_TIMEOUT_MINUTES,
 	type AskUserSettings,
+	type HandoffHintSettings,
 	type ImageSettings,
 	type LookAtSettings,
 	type MarkdownSettings,
@@ -82,6 +90,13 @@ import {
 	type TodoFirstTurnPlan,
 	type TodoSettings,
 } from "./settings-shapes.ts";
+import {
+	logStateError,
+	migrateSettingsState,
+	parseStateSettings,
+	readSettingsState,
+	STATE_KEYS,
+} from "./settings-state.ts";
 import { MAX_SKILL_EXPANSIONS_PER_PROMPT } from "./skill-invocation.ts";
 import {
 	type BranchSummarySettings,
@@ -106,6 +121,18 @@ export const DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS = 2_000;
  * hung handler still must not hold quit/reload/new/resume hostage.
  */
 export const DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS = 10_000;
+/**
+ * Total wait across every `session_shutdown` handler when the process quits (senpi#3711). Above the OmO memory
+ * extension's own 1500 ms shutdown drain, whose first step flushes the memory journal.
+ */
+export const DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS = 2_000;
+/** Warn threshold for one handler of an agent lifecycle event the session awaits before persisting (senpi#3650). */
+export const DEFAULT_EXTENSION_EVENT_HANDLER_WARN_MS = 60_000;
+/**
+ * Hard cap for one such handler. Above the 15 min summarization budget a blocking compaction in a `message_end`
+ * handler may legitimately use; past it the host stops waiting so the turn is persisted and queued input delivered.
+ */
+export const DEFAULT_EXTENSION_EVENT_HANDLER_TIMEOUT_MS = 1_200_000;
 
 export type TuiMode = RendererTuiMode;
 export type FullscreenExitOutput = "transcript" | "resume-hint";
@@ -184,6 +211,7 @@ export interface Settings {
 	followUpMode?: "all" | "one-at-a-time";
 	theme?: string;
 	compaction?: CompactionSettings & { model?: string };
+	contextFiles?: ContextFileLimits;
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettingsConfig;
 	fallback?: FallbackCircuitSettings;
@@ -202,6 +230,7 @@ export interface Settings {
 	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
 	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
 	enableAnalytics?: boolean; // default: false - opt-in analytics data sharing
+	enableSessionShare?: boolean; // default: true - false removes /share (global or project setting)
 	trackingId?: string; // analytics tracking identifier, generated when analytics is enabled
 	deviceId?: string; // stable UUID of this installation, created when a login first needs it; global setting only
 	packages?: PackageSource[]; // Array of npm/git package sources (string or object with filtering)
@@ -216,11 +245,14 @@ export interface Settings {
 	maxSkillExpansionsPerPrompt?: number; // default: 5 - distinct skills one prompt may expand
 	terminal?: TerminalSettings;
 	promptCache?: PromptCacheSettings;
+	handoffHint?: HandoffHintSettings;
 	images?: ImageSettings;
 	lookAt?: LookAtSettings;
 	askUser?: AskUserSettings;
 	/** Bounds on turns the engine starts without a user message (senpi#2967). */
-	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number };
+	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number; maxPerResumeWindow?: number };
+	turn_inactivity_ms?: number; // default: 3_600_000, min 60_000, 0 disables; see core/turn-deadline.ts
+	turn_max_runtime_ms?: number; // default: 21_600_000, 0 disables
 	todo?: TodoSettings;
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
@@ -242,6 +274,9 @@ export interface Settings {
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
 	sessionShutdownHandlerWarnMs?: number; // Warn when one session_shutdown extension handler runs this long; 0 disables the warning
 	sessionShutdownHandlerTimeoutMs?: number; // Abort and skip a session_shutdown extension handler after this long; 0 disables the cap
+	sessionShutdownQuitBudgetMs?: number; // Total wait across all session_shutdown handlers on quit; 0 disables the total budget
+	extensionEventHandlerWarnMs?: number; // Report an agent lifecycle extension handler still running after this long; 0 disables the warning
+	extensionEventHandlerTimeoutMs?: number; // Stop waiting on an agent lifecycle extension handler after this long; 0 disables the cap
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
@@ -470,10 +505,16 @@ export function getInMemorySettingsPath(scope: SettingsScope): string {
 
 export interface SettingsManagerCreateOptions {
 	projectTrusted?: boolean;
+	/** The project trust exists only because the session runs Full access (senpi#3414): leaving it withdraws the trust. */
+	trustFromFullAccess?: boolean;
 }
 
 export interface SettingsStorage {
 	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void;
+	/** Optional separate bookkeeping store. Backends without it retain legacy global persistence. */
+	withStateLock?(fn: (current: string | undefined) => string | undefined): void;
+	withStateLockAsync?(fn: (current: string | undefined) => string | undefined): Promise<void>;
+	tryWithStateLock?(fn: (current: string | undefined) => string | undefined): boolean;
 	/**
 	 * The same locked read-modify-write without blocking the caller's thread while another writer
 	 * holds the lock. Queued saves use it when present; `withLock` stays for synchronous callers.
@@ -563,12 +604,12 @@ export class FileSettingsStorage implements SettingsStorage {
 		}
 	}
 
-	private async acquireLockWithRetry(path: string): Promise<() => Promise<void>> {
+	private async acquireLockWithRetry(path: string): Promise<HeldFileLock> {
 		const startedAt = Date.now();
 		let attempt = 0;
 		while (true) {
 			try {
-				return await lockfile.lock(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
+				return await lockWithLossHandling(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
 			} catch (error) {
 				if (!isLockError(error)) throw error;
 				const waitedMs = Date.now() - startedAt;
@@ -598,6 +639,18 @@ export class FileSettingsStorage implements SettingsStorage {
 		underLock?: () => void,
 	): Promise<void> {
 		const path = scope === "global" ? this.globalSettingsPath : this.projectSettingsPath;
+		return this.withPathLockAsync(path, fn, underLock);
+	}
+
+	withStateLockAsync(fn: (current: string | undefined) => string | undefined): Promise<void> {
+		return this.withPathLockAsync(join(resolvePath(this.agentDir), "state.json"), fn);
+	}
+
+	private async withPathLockAsync(
+		path: string,
+		fn: (current: string | undefined) => string | undefined,
+		underLock?: () => void,
+	): Promise<void> {
 		const readCurrent = async (): Promise<string | undefined> => {
 			try {
 				return await readFile(path, "utf-8");
@@ -610,7 +663,7 @@ export class FileSettingsStorage implements SettingsStorage {
 		let next = fn(current);
 		if (next === undefined) return;
 		await mkdir(dirname(path), { recursive: true });
-		const release = await this.acquireLockWithRetry(path);
+		const lock = await this.acquireLockWithRetry(path);
 		try {
 			// The wait may have outlived the caller's permission to write (e.g. project trust revoked).
 			underLock?.();
@@ -620,6 +673,7 @@ export class FileSettingsStorage implements SettingsStorage {
 				const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
 				try {
 					await writeFile(tempPath, next, "utf-8");
+					lock.assertHeld();
 					await rename(tempPath, path);
 					// After the rename: a failed publish must not mark identical content as our own write.
 					recordSelfWrite(path, next);
@@ -629,7 +683,7 @@ export class FileSettingsStorage implements SettingsStorage {
 				}
 			}
 		} finally {
-			await release();
+			await lock.release();
 		}
 	}
 
@@ -645,6 +699,28 @@ export class FileSettingsStorage implements SettingsStorage {
 
 	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined, waitForLock = true): void {
 		const path = scope === "global" ? this.globalSettingsPath : this.projectSettingsPath;
+		this.withPathLock(path, fn, waitForLock);
+	}
+
+	withStateLock(fn: (current: string | undefined) => string | undefined): void {
+		this.withPathLock(join(resolvePath(this.agentDir), "state.json"), fn);
+	}
+
+	tryWithStateLock(fn: (current: string | undefined) => string | undefined): boolean {
+		try {
+			this.withPathLock(join(resolvePath(this.agentDir), "state.json"), fn, false);
+			return true;
+		} catch (error) {
+			if (error instanceof SettingsLockBusy) return false;
+			throw error;
+		}
+	}
+
+	private withPathLock(
+		path: string,
+		fn: (current: string | undefined) => string | undefined,
+		waitForLock = true,
+	): void {
 		const dir = dirname(path);
 
 		// Read without the lock: writers publish atomically via temp+rename below, so
@@ -688,6 +764,12 @@ export class FileSettingsStorage implements SettingsStorage {
 export class InMemorySettingsStorage implements SettingsStorage {
 	private global: string | undefined;
 	private project: string | undefined;
+	private state: string | undefined;
+
+	withStateLock(fn: (current: string | undefined) => string | undefined): void {
+		const next = fn(this.state);
+		if (next !== undefined) this.state = next;
+	}
 
 	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void {
 		const current = scope === "global" ? this.global : this.project;
@@ -782,7 +864,7 @@ export class SettingsManager {
 			initialErrors.push(toSettingsError("project", projectLoad.error, settingsPaths.project));
 		}
 
-		return new SettingsManager(
+		const manager = new SettingsManager(
 			storage,
 			globalLoad.settings,
 			projectLoad.settings,
@@ -793,6 +875,8 @@ export class SettingsManager {
 			initialSources,
 			settingsPaths,
 		);
+		manager.trustFromFullAccess = options.trustFromFullAccess === true;
+		return manager;
 	}
 
 	/** Create an in-memory SettingsManager (no file I/O) */
@@ -814,12 +898,14 @@ export class SettingsManager {
 			return undefined;
 		});
 
-		if (!content) {
-			return {};
-		}
-		const raw = parseSettingsJson(content);
+		const raw = content ? parseSettingsJson(content) : {};
 		// A project file belongs to the user's repository: its retired keys are ignored, never rewritten.
 		if (removeRetiredSettingsKeys(raw) && scope === "global") writeRawScopedSettings(storage, scope);
+		if (scope === "global" && storage.withStateLock) {
+			// TODO(PR #3213 follow-up: state-fallback-removal): remove config fallback after the first migration release.
+			if ([...STATE_KEYS].some((key) => Object.hasOwn(raw, key))) migrateSettingsState(storage);
+			Object.assign(raw, readSettingsState(storage));
+		}
 		return SettingsManager.migrateSettings(raw);
 	}
 
@@ -1033,14 +1119,23 @@ export class SettingsManager {
 		};
 	}
 
-	getEngineTurnSettings(): { maxPerUserInput: number; maxToolFreePerMinute: number } {
+	getEngineTurnSettings(): { maxPerUserInput: number; maxToolFreePerMinute: number; maxPerResumeWindow: number } {
 		const configured = this.settings.engineTurns;
 		const limit = (value: unknown, fallback: number): number =>
 			typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : fallback;
 		return {
 			maxPerUserInput: limit(configured?.maxPerUserInput, MAX_ENGINE_TURNS_PER_USER_INPUT),
+			maxPerResumeWindow: limit(configured?.maxPerResumeWindow, MAX_ENGINE_TURNS_PER_RESUME_WINDOW),
 			maxToolFreePerMinute: limit(configured?.maxToolFreePerMinute, MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW),
 		};
+	}
+
+	getTurnInactivityMs(): number | undefined {
+		return this.settings.turn_inactivity_ms;
+	}
+
+	getTurnMaxRuntimeMs(): number | undefined {
+		return this.settings.turn_max_runtime_ms;
 	}
 
 	getTodoFirstTurnPlan(): TodoFirstTurnPlan {
@@ -1057,12 +1152,35 @@ export class SettingsManager {
 		return this.projectTrusted;
 	}
 
+	/**
+	 * True when this session's project trust came only from its Full access preset (never asked, never
+	 * saved): leaving Full access withdraws it, and going back restores it (senpi#3414, #3420).
+	 */
+	private trustFromFullAccess = false;
+
+	isTrustFromFullAccess(): boolean {
+		return this.trustFromFullAccess && this.projectTrusted;
+	}
+
+	/** True when a Full-access-only trust was withdrawn in this session and Full access may restore it. */
+	canRestoreFullAccessTrust(): boolean {
+		return this.trustFromFullAccess && !this.projectTrusted;
+	}
+
+	/** Counts project-trust changes; a reload compares it before installing what it loaded (#3420). */
+	private trustEpoch = 0;
+
+	getTrustEpoch(): number {
+		return this.trustEpoch;
+	}
+
 	setProjectTrusted(trusted: boolean): void {
 		if (this.projectTrusted === trusted) {
 			return;
 		}
 
 		this.projectTrusted = trusted;
+		this.trustEpoch += 1;
 		this.modifiedProjectFields.clear();
 		this.modifiedProjectNestedFields.clear();
 
@@ -1219,9 +1337,11 @@ export class SettingsManager {
 		snapshotSettings: Settings,
 		modifiedFields: Set<keyof Settings>,
 		modifiedNestedFields: Map<keyof Settings, Set<string>>,
+		state = false,
 	): void | Promise<void> {
-		const merge = (current: string | undefined): string => {
-			const currentFileSettings = current ? SettingsManager.migrateSettings(parseSettingsJson(current)) : {};
+		const merge = (current: string | undefined): string | undefined => {
+			const raw = state ? parseStateSettings(this.storage, current) : current ? parseSettingsJson(current) : {};
+			const currentFileSettings = SettingsManager.migrateSettings(structuredClone(raw));
 			const mergedSettings: Settings = { ...currentFileSettings };
 			for (const field of modifiedFields) {
 				const value = snapshotSettings[field];
@@ -1231,17 +1351,31 @@ export class SettingsManager {
 					const inMemoryNested = value as Record<string, unknown>;
 					const mergedNested = { ...baseNested };
 					for (const nestedKey of nestedModified) {
-						mergedNested[nestedKey] = inMemoryNested[nestedKey];
+						if (inMemoryNested[nestedKey] === undefined) delete mergedNested[nestedKey];
+						else mergedNested[nestedKey] = inMemoryNested[nestedKey];
 					}
 					(mergedSettings as Record<string, unknown>)[field] = mergedNested;
+				} else if (value === undefined) {
+					delete mergedSettings[field];
 				} else {
 					(mergedSettings as Record<string, unknown>)[field] = value;
 				}
 			}
 
-			return JSON.stringify(mergedSettings, null, 2);
+			// Compare parsed values, not serialized formatting: no-op saves preserve JSONC and whitespace.
+			return isDeepStrictEqual(currentFileSettings, mergedSettings)
+				? undefined
+				: JSON.stringify(mergedSettings, null, 2);
 		};
 		const storage = this.storage;
+		if (state && storage.withStateLock) {
+			if (!storage.withStateLockAsync || !storage.tryWithStateLock) {
+				storage.withStateLock(merge);
+				return;
+			}
+			if (storage.tryWithStateLock(merge)) return;
+			return storage.withStateLockAsync(merge);
+		}
 		if (!storage.withLockAsync || !storage.tryWithLock) {
 			storage.withLock(scope, merge);
 			return;
@@ -1267,9 +1401,28 @@ export class SettingsManager {
 		const modifiedFields = new Set(this.modifiedFields);
 		const modifiedNestedFields = this.cloneModifiedNestedFields(this.modifiedNestedFields);
 
-		this.enqueueWrite("global", () =>
-			this.persistScopedSettings("global", snapshotGlobalSettings, modifiedFields, modifiedNestedFields),
-		);
+		this.enqueueWrite("global", async () => {
+			if (this.storage.withStateLock) {
+				const stateFields = new Set([...modifiedFields].filter((key) => STATE_KEYS.has(key)));
+				if (stateFields.size > 0) {
+					try {
+						await this.persistScopedSettings(
+							"global",
+							snapshotGlobalSettings,
+							stateFields,
+							modifiedNestedFields,
+							true,
+						);
+					} catch (error) {
+						logStateError(this.storage, error);
+					}
+				}
+				for (const key of STATE_KEYS) modifiedFields.delete(key);
+			}
+			if (modifiedFields.size > 0) {
+				await this.persistScopedSettings("global", snapshotGlobalSettings, modifiedFields, modifiedNestedFields);
+			}
+		});
 	}
 
 	private saveProjectSettings(settings: Settings): void {
@@ -1748,6 +1901,42 @@ export class SettingsManager {
 		this.save();
 	}
 
+	/**
+	 * Total time the host waits on all `session_shutdown` handlers together when the
+	 * process quits; each handler's own cap still applies inside it. 0 disables it.
+	 */
+	getSessionShutdownQuitBudgetMs(): number {
+		return (
+			parseTimeoutSetting(this.settings.sessionShutdownQuitBudgetMs, "sessionShutdownQuitBudgetMs") ??
+			DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS
+		);
+	}
+
+	setSessionShutdownQuitBudgetMs(budgetMs: number): void {
+		if (!Number.isFinite(budgetMs) || budgetMs < 0) {
+			throw new Error(`Invalid sessionShutdownQuitBudgetMs setting: ${String(budgetMs)}`);
+		}
+		this.globalSettings.sessionShutdownQuitBudgetMs = Math.floor(budgetMs);
+		this.markModified("sessionShutdownQuitBudgetMs");
+		this.save();
+	}
+
+	/** How long one agent lifecycle event handler may run before the host reports it as stalled. 0 disables. */
+	getExtensionEventHandlerWarnMs(): number {
+		return (
+			parseTimeoutSetting(this.settings.extensionEventHandlerWarnMs, "extensionEventHandlerWarnMs") ??
+			DEFAULT_EXTENSION_EVENT_HANDLER_WARN_MS
+		);
+	}
+
+	/** Hard cap on one agent lifecycle event handler; past it the session's event queue moves on. 0 disables. */
+	getExtensionEventHandlerTimeoutMs(): number {
+		return (
+			parseTimeoutSetting(this.settings.extensionEventHandlerTimeoutMs, "extensionEventHandlerTimeoutMs") ??
+			DEFAULT_EXTENSION_EVENT_HANDLER_TIMEOUT_MS
+		);
+	}
+
 	getProviderRetrySettings(): {
 		timeoutMs?: number;
 		maxRetries?: number;
@@ -2035,6 +2224,10 @@ export class SettingsManager {
 		this.globalSettings.enableInstallTelemetry = enabled;
 		this.markModified("enableInstallTelemetry");
 		this.save();
+	}
+
+	getEnableSessionShare(): boolean {
+		return this.settings.enableSessionShare ?? true;
 	}
 
 	getEnableAnalytics(): boolean {

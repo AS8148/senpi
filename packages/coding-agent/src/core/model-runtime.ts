@@ -97,6 +97,7 @@ import { createProviderSemaphores } from "./provider-concurrency.ts";
 import { remoteCatalogServesProvider, withRemoteCatalog } from "./remote-catalog-provider.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
 import type { SettingsManager } from "./settings-manager.ts";
+import { limitAccountOf, withLimitCapture } from "./subscription-limits/limit-store.ts";
 import {
 	createVirtualModel,
 	findLatestResponse,
@@ -110,6 +111,10 @@ import {
 // The product's identity must ride outgoing requests. This lives here because the AI package
 // is already part of this module's graph; the CLI bootstrap deliberately does not import it.
 setWireIdentity(BRAND?.userAgent ?? APP_NAME);
+
+/** Availability re-reads after a busy credential store: 250, 500, 1000, 2000, 4000 ms. */
+const BUSY_AVAILABILITY_RETRY_LIMIT = 5;
+const BUSY_AVAILABILITY_RETRY_BASE_MS = 250;
 
 interface RegisteredVirtualModel {
 	model: Model<Api>;
@@ -189,7 +194,7 @@ function mightHoldCredentialPool(
 	providerId: string,
 	credential: Credential | undefined,
 	env: (name: string) => string | undefined,
-	policySlots?: Record<string, { env?: string; value?: string }>,
+	policySlots?: NonNullable<RotationSources["policy"]>["slots"],
 ): boolean {
 	if (credential) {
 		const accounts = Object.entries(credential).find(([key]) => key === "accounts")?.[1];
@@ -294,6 +299,8 @@ export class ModelRuntime implements Models {
 	private availabilityRefreshSeq = 0;
 	private availabilityErrorSeq = 0;
 	private readonly providerAvailabilitySeq = new Map<string, number>();
+	private busyAvailabilityRetries = 0;
+	private busyAvailabilityRetryTimer: ReturnType<typeof setTimeout> | undefined;
 	private availabilityError: string | undefined;
 	private readonly credentialOperations = new Map<string, Promise<unknown>>();
 	/**
@@ -303,6 +310,8 @@ export class ModelRuntime implements Models {
 	 * ModelRuntime, which the import-graph guard forbids.
 	 */
 	private readonly poolStatePath: string | undefined;
+	/** Providers whose stale generic-pool health was already retired in this process (senpi#2081). */
+	private readonly outerSlotStateRetired = new Set<string>();
 	private credentialPoolModules:
 		| Promise<{
 				rotation: typeof import("./credential-pool/rotation-stream.ts");
@@ -329,6 +338,16 @@ export class ModelRuntime implements Models {
 		for (const [providerId, provider] of this.defaultBuiltins) this.builtins.set(providerId, provider);
 		this.models = createModels({ credentials, modelsStore });
 		this.rebuildProviders();
+	}
+
+	/**
+	 * The AuthStorage this runtime's providers register into, when it was built on one. A session
+	 * built on a shared runtime must read this same store, or extension OAuth providers are never
+	 * listed (senpi#3434).
+	 */
+	get authStorage(): DefaultAuthStorage | undefined {
+		const store = this.credentials.backingStore;
+		return store instanceof DefaultAuthStorage ? store : undefined;
 	}
 
 	static async create(options: CreateModelRuntimeOptions = {}): Promise<ModelRuntime> {
@@ -518,6 +537,7 @@ export class ModelRuntime implements Models {
 			auth,
 		};
 		this.availabilityInitialized = true;
+		this.busyAvailabilityRetries = 0;
 		if (errorSeq === this.availabilityErrorSeq) this.availabilityError = undefined;
 	}
 
@@ -601,7 +621,28 @@ export class ModelRuntime implements Models {
 		if (errorSeq === this.availabilityErrorSeq) {
 			this.availabilityError = "Credential store was busy; availability will be re-read on the next refresh";
 		}
+		this.scheduleBusyAvailabilityRetry();
 		return true;
+	}
+
+	/**
+	 * Re-read availability after a busy store, so a lock held during startup does not leave
+	 * every provider unconfigured until some later caller happens to refresh. Bounded: at most
+	 * {@link BUSY_AVAILABILITY_RETRY_LIMIT} attempts with doubling delays, reset by a published
+	 * pass; the timer never keeps the process alive.
+	 */
+	private scheduleBusyAvailabilityRetry(): void {
+		if (this.busyAvailabilityRetryTimer !== undefined) return;
+		if (this.busyAvailabilityRetries >= BUSY_AVAILABILITY_RETRY_LIMIT) return;
+		const delayMs = BUSY_AVAILABILITY_RETRY_BASE_MS * 2 ** this.busyAvailabilityRetries;
+		this.busyAvailabilityRetries += 1;
+		this.busyAvailabilityRetryTimer = setTimeout(() => {
+			this.busyAvailabilityRetryTimer = undefined;
+			this.queueAvailabilityRefresh().catch(() => {
+				// The pass records its own availability error; a later busy read schedules the next attempt.
+			});
+		}, delayMs);
+		this.busyAvailabilityRetryTimer.unref?.();
 	}
 
 	getProviders(): readonly Provider[] {
@@ -854,20 +895,36 @@ export class ModelRuntime implements Models {
 	}
 
 	getProviderAuthStatus(providerId: string): AuthStatus {
-		if (this.credentials.hasRuntimeApiKey(providerId)) return { configured: true, source: "runtime" };
-		if (this.snapshot.storedProviders.has(providerId)) return { configured: true, source: "stored" };
+		return this.resolveProviderAuth(providerId).status;
+	}
+
+	/**
+	 * The provider's auth status plus whether it is a non-stored sign-in (#3537). `signIn` is set
+	 * only by the last branch, the provider's own check resolving `type: "oauth"`, so a runtime key,
+	 * a stored credential or a configured models.json/extension key always wins first.
+	 */
+	resolveProviderAuth(providerId: string): { status: AuthStatus; signIn: boolean } {
+		if (this.credentials.hasRuntimeApiKey(providerId)) {
+			return { status: { configured: true, source: "runtime" }, signIn: false };
+		}
+		if (this.snapshot.storedProviders.has(providerId)) {
+			return { status: { configured: true, source: "stored" }, signIn: false };
+		}
 		const configured = configuredRequestAuthStatus(
 			this.config.getProvider(providerId),
 			this.extensionProviders.get(providerId),
 		);
-		if (configured) return configured;
+		if (configured) return { status: configured, signIn: false };
 		const check = this.snapshot.auth.get(providerId);
-		if (!check) return { configured: false };
+		if (!check) return { status: { configured: false }, signIn: false };
 		return {
-			configured: true,
-			source: "environment",
-			label: check.source,
-			...(check.ambient ? { ambient: true } : {}),
+			status: {
+				configured: true,
+				source: "environment",
+				label: check.source,
+				...(check.ambient ? { ambient: true } : {}),
+			},
+			signIn: check.type === "oauth",
 		};
 	}
 
@@ -967,10 +1024,34 @@ export class ModelRuntime implements Models {
 		if (options?.apiKey !== undefined) return false;
 		if (this.credentials.hasRuntimeApiKey(model.provider)) return false;
 		if (this.config.getProvider(model.provider)?.credentials?.rotation === false) return false;
+		// A provider whose lane picks its own accounts has one owner of account selection: that lane (senpi#2081).
+		if (this.ownsAccountSelection(model.provider)) return false;
 		const env = (name: string) => options?.env?.[name] ?? process.env[name];
 		if (this.snapshot.storedProviders.has(model.provider)) return true;
 		const policySlots = this.config.getProvider(model.provider)?.credentials?.slots;
 		return discoverEnvSlots(model.provider, env).length + Object.keys(policySlots ?? {}).length > 1;
+	}
+
+	private ownsAccountSelection(providerId: string): boolean {
+		return this.extensionProviders.get(providerId)?.ownsAccountSelection === true;
+	}
+
+	/**
+	 * Health the generic pool recorded for a provider before its lane became the only owner of account
+	 * selection is retired before that provider's first request in this process. Older builds pinned the
+	 * lane's verdicts on these slots and left them blocked; an upgrade must heal them with no re-login
+	 * (senpi#2081). A busy state file is retried on the next request.
+	 */
+	private async retireOuterSlotState(providerId: string): Promise<void> {
+		if (this.outerSlotStateRetired.has(providerId)) return;
+		const [{ repository }, { STORE_BUSY, writeHealthUnlessStoreBusy }] = await Promise.all([
+			this.loadCredentialPool(),
+			import("./credential-pool/health-write.ts"),
+		]);
+		const outcome = await writeHealthUnlessStoreBusy(`retire generic-pool health for ${providerId}`, () =>
+			repository.clearProvider(providerId),
+		);
+		if (outcome !== STORE_BUSY) this.outerSlotStateRetired.add(providerId);
 	}
 
 	private async credentialRotationSources(
@@ -1004,6 +1085,7 @@ export class ModelRuntime implements Models {
 		return lazyStream(model, async () => {
 			assertChatModel(model);
 			const streamOptions = options as CredentialRotationStreamOptions | undefined;
+			if (this.ownsAccountSelection(model.provider)) await this.retireOuterSlotState(model.provider);
 			const sources = this.couldRotateCredentials(model, streamOptions)
 				? await this.credentialRotationSources(model, streamOptions)
 				: undefined;
@@ -1068,8 +1150,12 @@ export class ModelRuntime implements Models {
 				options,
 				rejectedAccess === undefined ? slotAuth : { ...slotAuth, rejectedAccess },
 			);
+			const capturing = {
+				...prepared,
+				options: withLimitCapture(prepared.options, prepared.model.provider, limitAccountOf(slotAuth)),
+			};
 			const inner = await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () =>
-				send(prepared),
+				send(capturing),
 			);
 			return {
 				stream: wrapStreamWithModelRecovery(inner, model, getCurrentTools(transcript.messages)),
@@ -1111,6 +1197,7 @@ export class ModelRuntime implements Models {
 		return lazyStream(model, async () => {
 			assertChatModel(model);
 			const streamOptions = options as CredentialRotationStreamOptions | undefined;
+			if (this.ownsAccountSelection(model.provider)) await this.retireOuterSlotState(model.provider);
 			const sources = this.couldRotateCredentials(model, streamOptions)
 				? await this.credentialRotationSources(model, streamOptions)
 				: undefined;

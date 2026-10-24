@@ -14,6 +14,8 @@ import type { RpcSessionEntry } from "./session-registry.ts";
 export interface RpcSessionBinding {
 	handle(command: object): Promise<void>;
 	cancelPendingExtensionUiRequests?(): void;
+	/** A connection of the shared host left this session (`close_session`, a dropped or detached connection). */
+	connectionDetached?(connectionId: string): void;
 	/** `prompt` calls this binding started that have not settled, preflight included. */
 	pendingPrompts?(): readonly Promise<unknown>[];
 	dispose(): Promise<void>;
@@ -28,7 +30,7 @@ export async function createRpcSessionBinding(
 	entry: RpcSessionEntry,
 	writer: SessionEventWriter,
 	requestClose: () => void,
-	options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo"> = {},
+	options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo" | "connectionRoles"> = {},
 ): Promise<RpcSessionBinding> {
 	if (entry.worker) return entry.worker.bind(sessionId, writer, requestClose, options);
 	if (!entry.runtime) throw new Error("Session runtime was not created");
@@ -87,7 +89,22 @@ export async function createRpcSessionBinding(
 			shutdownHandler: bindToProviderScope(requestClose),
 			disposeRuntime: false,
 			eventFlushScheduler: (flush) => flush(),
+			publishLoadedSurfacesChanged: (previous, digest) => {
+				if (entry.scope.state !== "closed") writer.publishLoadedSurfacesChanged(sessionId, previous, digest);
+			},
 			...options,
+			workerSecurityBridge: writer.workerSecurityBridge,
+			grantDialogSettled: (id) => writer.settleGrantDialog(sessionId, id),
+			bindSecurityPresentation: (session, ui) =>
+				writer.bindSecurityPresentations(sessionId, session.sessionId, session.securityNotices, ui),
+			clientInfo:
+				options.clientInfo === undefined
+					? undefined
+					: {
+							...options.clientInfo,
+							hasCapability: (connection, capability) =>
+								writer.getConnectionCapabilities(connection)?.includes(capability) === true,
+						},
 		});
 	});
 	await handler.ready;
@@ -96,6 +113,8 @@ export async function createRpcSessionBinding(
 		cancelPendingExtensionUiRequests: () =>
 			runWithProviderScope(entry.scope, () => handler.cancelPendingExtensionUiRequests()),
 		pendingPrompts: () => handler.pendingPrompts(),
+		connectionDetached: (connectionId) =>
+			runWithProviderScope(entry.scope, () => handler.connectionDetached(connectionId)),
 		dispose: () => {
 			toolSpans.closeAll();
 			return runWithProviderScope(entry.scope, () => handler.dispose());

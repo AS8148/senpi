@@ -15,6 +15,31 @@ describe("stripTurnRetrySuppressionPrefix", () => {
 });
 
 describe("describeProviderFailureForUser", () => {
+	it("explains an account limit with provider, reset time, and model-switch recovery instead of raw JSON", () => {
+		// given
+		const raw = '429 {"error":{"message":"You have hit your session limit; resets 11pm"}}';
+		// when
+		const text = describeProviderFailureForUser(raw, {
+			model: "test-provider/primary",
+			usageLimit: "account",
+		});
+		// then
+		expect(text).toBe(
+			"The test-provider account usage limit has been reached (resets 11pm). Switch to another provider with /model, or configure another provider in retry.fallbackChains.",
+		);
+		expect(text).not.toContain("429");
+	});
+
+	it("keeps the ChatGPT adapter's own limit wording, which already names the next step (#3615)", () => {
+		const adapterText =
+			"You have hit your ChatGPT usage limit (pro plan). This account has ChatGPT credits, but ChatGPT did not apply them to this request. To keep going now, add an OpenAI API key, sign in with another ChatGPT account, or switch providers. Try again in ~42 min.";
+		const text = describeProviderFailureForUser(`${MARKER}${adapterText} (retry-after-ms: 2520000)`, {
+			model: "chatgpt-subscription/gpt-5.5",
+			usageLimit: "account",
+		});
+		expect(text).toBe(adapterText);
+	});
+
 	it("explains an abnormal WebSocket closure in plain language and names the next step", () => {
 		const text = describeProviderFailureForUser("WebSocket closed 1006 Connection ended", {
 			model: "openai-codex/gpt-6-astra",

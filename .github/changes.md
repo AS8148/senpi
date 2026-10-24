@@ -1,3 +1,379 @@
+## 2026-10-23 - Four coding-agent CI shards leave timeout headroom (senpi#4131)
+
+### What changed
+
+- `.github/workflows/ci.yml`: schedule four coding-agent test shards and use `/4` in the Vitest command, job name, and summary. Keep the required `Check and test` fan-in and the existing job and test-step timeouts. Give all four system-dependency steps a five-minute cap and use `scripts/install-ci-system-deps.sh` to bound package transfers and retry once against a different mirror, rewriting both the mirror+file list and direct sources before the retry.
+
+### Why
+
+- `.github/workflows/ci.yml`: three-shard jobs reached 26-30 minutes against the 30-minute job limit. Five successful runs had up to 58.8 minutes of combined test-step time; four equal shares predict 14.7 minutes per shard before setup, rather than 19.6 minutes with three. This estimate assumes equal test cost; the PR's own CI validates actual wall times.
+- `.github/workflows/ci.yml`: run 40020066230 spent about 13 minutes downloading system packages from a slow Azure Ubuntu mirror. A 60-second transfer attempt and one 150-second archive.ubuntu.com retry prevent setup from consuming most of the shard budget; installation runs offline after downloads finish so a transfer timeout cannot interrupt dpkg.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: CI runner partitioning is workflow configuration, outside runtime extension points.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the coding-agent shard matrix, command, name, summary, and system-dependency steps.
+
+## 2026-10-23 - The model catalog publish keeps the last good OpenGateway catalog (senpi#4067)
+
+### What changed
+
+- `.github/workflows/publish-model-catalog.yml`: the `Generate model catalog JSON` step forwards `--keep-last-good-opengateway` to `generate-model-catalog`.
+
+### Why
+
+- `.github/workflows/publish-model-catalog.yml`: a long OpenGateway outage would otherwise turn every publish red; the dedicated OpenGateway catalog refresh workflow is the one job that fails on it.
+
+### Why an extension could not handle it
+
+- `.github/workflows/publish-model-catalog.yml`: workflow configuration is outside runtime extension points.
+
+### Expected merge conflict zones
+
+- `.github/workflows/publish-model-catalog.yml`: the `Generate model catalog JSON` step.
+
+## 2026-10-22 - Static checks have a bounded compiler heap (senpi#4022)
+
+### What changed
+
+- `.github/workflows/ci.yml`: only the `Static checks` job's `Check` step sets `NODE_OPTIONS=--max-old-space-size=10240`.
+
+### Why
+
+- The public GitHub-hosted `ubuntu-latest` runner has 16 GB RAM. A 10 GiB old-space cap leaves 6 GiB for the OS, runner and native allocations while allowing the root compiler to exceed its exhausted default heap. The two compiler commands run sequentially.
+
+### Why an extension could not handle it
+
+- Runner memory limits are workflow configuration, outside runtime extension points.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the `Static checks` job's `Check` step.
+
+## 2026-10-22 - The release job builds the senpi-grep addon before its tests (senpi#3978 follow-up)
+
+### What changed
+
+- `.github/workflows/publish-npm.yml`: the `release` job runs the same `Setup Rust`, `Cache Rust` and `Build native grep addon` steps as `ci.yml`'s `test-workspaces`, before `Run release`. The addon path reaches the release's `npm test` through `SENPI_GREP_NATIVE_PATH` in `$GITHUB_ENV`. The steps are skipped in `publish-only` mode, which runs no tests.
+
+### Why
+
+- Since #3978, `scripts/probe-native-grep.test.mjs` refuses to build the addon inside a test hook when `CI` is set, and fails with a message naming the missing `Build native grep addon` step. `ci.yml` gained that step, but the release job did not. The 2026.10.21-3 release run (39840619411) therefore failed its `npm test` with six probe-native-grep failures before tagging anything.
+
+### Why an extension could not handle it
+
+- Workflow steps are repository CI configuration; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- The `release` job's step list in `publish-npm.yml`, around `Run release`.
+
+## 2026-10-22 - macOS/Windows CI jobs run on pull requests only for platform-specific diffs (senpi#3957)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a `platform-scope` job runs `scripts/ci-platform-scope.mjs` on the PR's changed files and labels. The macOS and Windows-only jobs need it and run only when it outputs `full=true`; the ubuntu+windows matrices keep their Linux leg and add Windows only then. `Check and test` verifies its needs through the same script, which accepts `skipped` only for those jobs and only when the scope said `full=false`. The workflow is also callable (`workflow_call`), and its concurrency group is a fixed per-file prefix plus the workflow name, so a called run never cancels the PR's own run or another called workflow.
+- `.github/workflows/read-summary-binary-parity.yml`, `.github/workflows/session-worker-compile.yml`: the same scope job decides the macOS/Windows matrix legs; both also run on pushes to main with their PR paths, and are callable. Their concurrency groups use their own fixed prefix plus the workflow name; main pushes get one group per commit and are never cancelled.
+- The classifier also counts `packages/coding-agent/src/modes/rpc/**` and every file a macOS/Windows job of the classified workflow names in its steps (the suites it runs), read from the workflow file itself, so editing a Windows-tested suite still runs Windows.
+- `.github/workflows/session-worker-compile.yml` also gets a per-PR concurrency group (workflow + PR number, cancel in progress for PRs) so a new push cancels the superseded run.
+- `.github/workflows/ci-full-label.yml`: the `run-full-ci` label calls the three workflows in full on the labelled PR.
+
+### Why
+
+- Hosted macOS and Windows runners have little concurrency, and every PR ran about a dozen jobs on them, so PRs queued behind each other on platform runners even when they changed no platform code. Pushes to main still run the full set, so a platform regression surfaces right after merge.
+
+### Why an extension could not handle it
+
+- Workflow triggers and job conditions are repository CI configuration; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- The `on:` and `concurrency:` blocks of `ci.yml`, the `needs`/`if` lines of its macOS/Windows jobs and matrices, and the `Check and test` verify step.
+
+## 2026-10-21 - The combined macOS job keeps base per-step caps (senpi#3939)
+
+### What changed
+
+- `.github/workflows/ci.yml`: in `macos-combined`, the process-kernel and WebView suite steps go back to their base `timeout-minutes: 12` (from 20). The job cap drops from 115 to 99, the sum of the suite step caps plus 10 minutes of setup margin. The "Require the WebView suites to have executed" step runs only when the WebView suite step passed, as it did on base.
+
+### Why
+
+- `.github/workflows/ci.yml`: with 20-minute caps, a hung process-kernel suite held the scarce hosted macOS runner 8 minutes longer than before #3910. After a failed WebView suite, the executed check only added a second red step or a JSON read error.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: step timeouts and conditions are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the `macos-combined` job's `timeout-minutes` lines and the WebView executed-check condition.
+
+## 2026-10-22 - Script tests get the senpi-grep addon from one CI build step (senpi#3978)
+
+### What changed
+
+- `.github/workflows/ci.yml`: `test-workspaces` sets up Rust with the Rust cache and builds the senpi-grep N-API addon once ("Build native grep addon"), exporting `SENPI_GREP_NATIVE_PATH` through `$GITHUB_ENV` before both script-test steps.
+
+### Why
+
+- `.github/workflows/ci.yml`: the script tests built the addon inside a test hook (a cold release Rust build with a 300 s timeout) on every run. On a slow runner it timed out and turned main red at 69396c732a (`spawnSync npm ETIMEDOUT`).
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: CI steps are repository configuration.
+
+### Expected merge conflict zones
+
+- None expected: the change is local to this repository's CI and test scripts.
+
+## 2026-10-21 - One macOS runner executes all five CI suites (senpi#3130)
+
+### What changed
+
+- `.github/workflows/ci.yml`: `macos-combined` replaces the macOS legs of WebView, process kernel, RPC supervisor exit, terminal tools and Inspector handoff. One pinned checkout/toolchain setup, install and workspace build serve independent suite steps with their own temp snapshots/checks, execution assertions, diagnostics and timeouts. The required `Check and test` fan-in includes the combined job; Linux and Windows matrix legs stay unchanged.
+
+### Why
+
+- `.github/workflows/ci.yml`: five macOS jobs per head saturate the hosted runner quota. Combining them reduces the CI workflow to one macOS job without skipping coverage. Process kernel, terminal tools and Inspector handoff on macOS intentionally become required through the combined job; their remaining matrix legs are not added to the fan-in. WebView runs last because stopped/killed Chrome tests can wedge hosted macOS runners (#2290).
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: runner allocation and required-status wiring are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the five OS matrices, combined job and `check-and-test` needs/summary lists.
+
+## 2026-10-19 - CI runs the tool child's Job Object containment tests on Windows (senpi#3566)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a `tool-child-windows` job (`Tool child Job Object (Windows)`, `windows-latest`, Bun `1.4.3`) runs the tool child's Windows containment tests (`windows-job.win32.test.ts`, `launch-barrier.win32.test.ts`, `child-containment.test.ts`, `windows-breakaway.test.ts`, `windows-command-line.test.ts`) under Bun between the OS-temp snapshot and check steps. A follow-up step fails the job unless both real-kernel files executed and every test in them passed, because a suite that skips itself exits 0. The job is listed in the `Check and test` fan-in.
+
+### Why
+
+- The tool child holds every command it launches in a Windows Job Object through `bun:ffi` calls into kernel32. Those tests skip themselves under Node and on other platforms, so no existing job ran them against the real kernel.
+
+### Why an extension could not handle it
+
+- CI jobs are repository workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the new job block and the `Check and test` `needs` list.
+
+## 2026-10-18 - CI runs the main-screen wheel and ask-user hint tests on Windows (senpi#3604)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a `tui-mouse-windows` job (`TUI mouse wheel and hint (Windows)`, `windows-latest`) runs `packages/tui/test/tui-main-screen-mouse.test.ts` and `packages/coding-agent/test/suite/ask-user-widget-mouse.test.ts` between the OS-temp snapshot and check steps, and is listed in the `Check and test` fan-in.
+
+### Why
+
+- Main-screen mouse tracking is gated on `WT_SESSION` on win32, and the reporter of #3604 was on Windows Terminal. The wheel-yield state machine and the Shift selection hint need a Windows run, which no other job covered.
+
+### Why an extension could not handle it
+
+- CI jobs are repository workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the new job block and the `Check and test` `needs` list.
+
+## 2026-10-17 - CI and release workflows pin Bun 1.4.3
+
+### What changed
+
+- `.github/workflows/build-binaries.yml`: the `oven-sh/setup-bun` step installs Bun `1.4.3` instead of `1.4.2`.
+- `.github/workflows/ci.yml`, `publish-npm.yml`, `releasability.yml`, `read-summary-binary-parity.yml` and `session-worker-compile.yml`: every `oven-sh/setup-bun` step installs Bun `1.4.3` instead of `1.4.2` (senpi#3078).
+
+### Why
+
+Bun 1.4.3 carries the idle-GC fixes oven-sh/bun#43681 and oven-sh/bun#43174: idle JS threads, Workers included, now run their own full collections. CI and the release binaries must build and test on the runtime users get. The codemode kernel's own idle collection (#2261) already gates itself to Bun `<1.4.3` and Node, so on 1.4.3 it no longer runs.
+
+### Why an extension could not handle it
+
+The toolchain version CI installs is repository workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `bun-version` lines in the six workflows above, if upstream changes its Bun pin.
+
+
+## 2026-10-13 - Catalog refresh branches regenerate on main data changes and refuse hand commits (#3243)
+
+### What changed
+
+- `.github/workflows/opengateway-catalog-refresh.yml`: also runs on a push to `main` that touches `packages/ai/src/providers/data/**`, so the refresh branch is regenerated on top of the new main (or its PR closed when main already matches the gateway).
+- `.github/workflows/automation-branch-guard.yml` (new): on a pull request from `automation/opengateway-catalog-refresh`, `scripts/check-bot-branch-commits.mjs` fails when any commit between base and head was not written by the bot (`actions@github.com`), including a hand merge of main.
+- Review delta (Opus on a73f822521): the guard refuses a PR whose head repository is not this one (a fork can reuse the branch name), and runs the checker from the base commit, not the branch under review. The checker compares real file URLs to decide it was started directly, because a hand-built `file://` URL missed paths with spaces or symlinks and then exited 0 without checking. It requires both the author and committer email to be the bot's and passes `--end-of-options` before the range. `scripts/check-bot-branch-commits.test.mjs` adds two cases, a person-committed bot commit and a start through a symlinked path with a space, and both fail on the reviewed script.
+- Delta review nits (Opus on 393e302e74): the workflow comments now say that running the checker from the base commit protects the script, not the workflow file. A pull request can still edit or delete the workflow, because GitHub reads it from the PR's merge ref, so the guard stops accidents, not forgery, and only a required check makes a missing guard fail.
+
+### Why
+
+- `.github/workflows/opengateway-catalog-refresh.yml`: #3243 was opened at 01:55Z; #3248 and #3256 then refreshed the catalog on main, and a hand merge of main into the bot branch kept the branch's older manifest and `opengateway.json` over the newer data. That left a manifest `check:model-data` rejects and put `maxTokens` 943718 back to 393216, under a title that still read as a routine refresh. Regenerating on main data changes keeps the branch current without hand edits; the guard keeps a hand-edited branch from merging.
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behavior.
+
+### Expected merge conflict zones
+
+- The `on:` block of `.github/workflows/opengateway-catalog-refresh.yml`.
+
+## 2026-10-13 - Catalog drift is advisory in the releasability gate
+
+### What changed
+
+- `.github/workflows/releasability.yml`: the `Model catalog regeneration` job reports generated drift as a warning (`Report generated drift`) instead of failing the job; the warning step prints the catalog diff (first 400 lines) and the step summary says the drift is advisory, with the changed files in a details block. Regeneration, the Claude-id check, static checks, build and both test suites against the regenerated catalog still fail the job.
+
+### Why
+
+- `.github/workflows/releasability.yml`: provider listings and prices move within hours, so the committed catalog went stale between the regeneration commit and the end of the gate's ~50 min test step repeatedly on 2026-10-13: three data-only PRs and two blocked release cuts, each needing another gate run. `scripts/release.mjs` already regenerates the catalog, commits any change to main and waits for that commit's green CI before tagging, so drift never ships; the gate only needs to prove the regenerated catalog builds and passes tests.
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behavior.
+
+### Expected merge conflict zones
+
+- The drift steps of the `model-catalog-regen` job in `.github/workflows/releasability.yml`.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Replace the retired app-server daemon job target with the shared process identity suite on Windows.
+
+- `.github/workflows/ci.yml`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
+## 2026-10-12 - The Windows zip install fails in its own step when Chocolatey is down (senpi#3088)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `Install archive tool` step of the `Compiled extensions (Windows)` job retries `choco install zip` up to four times with a short backoff and fails the step unless `zip` is on PATH afterwards, naming the likely cause.
+
+### Why
+
+- `.github/workflows/ci.yml`: when the Chocolatey community feed returns 503, `choco install` reports "installed 0/0 packages" and exits 0, so the job continued until `scripts/build-binaries.sh` failed with `zip: command not found` (exit 127) inside an unrelated test, sending reviewers to the PR's code.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: CI tool installation is repository configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the `Install archive tool` step of the `compiled-extensions-windows` job.
+
+## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
+
+### What changed
+
+- `.github/workflows/ci.yml`, `.github/workflows/releasability.yml`: test invocations use scripts/run-tests.mjs so TMPDIR/TEMP/TMP are scoped before the test runtime starts and cleaned after exit.
+- `.github/workflows/ci.yml`, `.github/workflows/releasability.yml`: every test job snapshots the OS temp directory before its first test step and runs final teardown/check with `always()` when that snapshot succeeded. Unowned leftovers fail the job and are named; snapshots live under gitignored local-ignore.
+- `.github/workflows/ci.yml`, `.github/workflows/releasability.yml`: snapshot setup explicitly exports a creator-owned cleanup journal. Final teardown retires only recorded run roots before checking for unowned residue, including a run root recreated by late Windows child activity.
+- `.github/workflows/ci.yml`, `.github/workflows/releasability.yml`: exported TMPDIR/TEMP/TMP make the job's count an exclusive measurement, not a count of unrelated host daemons. Final teardown removes its own job parent and restores the host temp environment before post-job actions.
+- `.github/workflows/ci.yml`: the real CLI recovery self-test added on main also runs inside the temp owner, between snapshot setup and an always-run final count, before the workspace build.
+
+### Why
+
+- Vitest SSR copies and interrupted fixture writes must not accumulate in the OS temp directory.
+
+### Why an extension could not handle it
+
+- Test-process bootstrap is repository tooling, before runtime extensions load.
+
+### Expected merge conflict zones
+
+- Test command arguments and runtime selection; preserve existing reporters, shards and test filters.
+
+## 2026-10-11 - Require the real CLI text-tool recovery self-test (senpi#3109)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Ubuntu `Static checks` job runs the 22-assertion Anthropic real-CLI mock-loop self-test with a five-minute timeout. The existing required `Check and test` fan-in includes this job; the step has no skip condition or failure tolerance.
+
+### Why
+
+- `.github/workflows/ci.yml`: the leaked-call scenario stopped declaring its scripted shell tool after eval-only routing became the default, but no CI step ran it. The scenario now selects the direct `bash` tool surface explicitly. This required self-test covers complete and truncated leaked calls, the Anthropic API round-trip, credential isolation, sandbox cleanup, and command dispatch.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: required checks and their failure propagation are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the `check` job's steps between static validation and the workspace build.
+
+## 2026-10-10 - A failing WebView suite prints its vitest output (senpi#3092)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `Run eval kernel WebView suites (Bun)` step captures the background suite's exit status with `wait "$suite" || status=$?` instead of a bare `wait` followed by `status=$?`, then prints the vitest output and exits with that status.
+
+### Why
+
+- `.github/workflows/ci.yml`: the step runs under `bash -eo pipefail` (GitHub `shell: bash` default), so a failing `wait` ended the step before `cat "$out"`. A failing suite showed no test output at all (seen on PR #3091), only the hang path printed it.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: CI step scripting is repository configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the WebView step's `run` script in the eval-kernel WebView job.
+
+## 2026-10-10 - Bash-tool grandchildren stay console-free on Windows, and a known upstream window is documented (omo#7691)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a new job, `bash-grandchild-console-windows` (`Bash grandchild consoles (Windows)`), runs `test/bash-grandchild-console-windows.test.ts` on `windows-latest` with the JSON reporter. A following step fails unless all 12 cases ran, and prints the raw console-probe measurements. The required `Check and test` fan-in includes the job.
+
+### Why
+
+- `.github/workflows/ci.yml`: omo#7691 reported focus-stealing console windows from bash-tool commands. The suite proves on a real Windows runner that a bash command's node and its children stay console-free in every common launch shape, with a no-windowsHide control that must show a window. It also documents firebase-tools' detached shell spawn (firebase/firebase-tools#11261), which opens a window that no flag on senpi's spawn can reach. Only a Windows runner can measure console windows.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: runner selection and required-status fan-in are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: job definitions, the `check-and-test.needs` array and its summary list.
+
+## 2026-10-10 - POSIX supervisor exit tests run on Linux and macOS (senpi#3054)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `rpc-owner-lifetime` matrix runs the owner-lifetime, owner-review, child-exit, missing-compiler and legacy-drain regressions on `ubuntu-latest` and `macos-latest`. A compiler preflight fails explicitly when `cc` is absent; tests compile the native exit waiter on demand. The required `Check and test` fan-in includes this matrix. Windows is excluded from this POSIX job.
+
+### Why
+
+- `.github/workflows/ci.yml`: the normal coding-agent shards cover Linux only. The kqueue branch also needs macOS coverage, and a missing C compiler must fail rather than silently skipping exit observation.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: runner selection, compiler availability and required-status fan-in are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: job definitions, the `check-and-test.needs` array and its summary list.
+
 ## 2026-10-09 - The changelog gate audits the whole tree against the upstream pin (senpi#3006)
 
 ### What changed

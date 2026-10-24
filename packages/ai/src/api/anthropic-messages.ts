@@ -60,6 +60,7 @@ import {
 	limitGitHubCopilotTools,
 	recordGitHubCopilotToolLimit,
 } from "../utils/github-copilot-tool-limit.ts";
+import { withGzipRequestBodies } from "../utils/gzip-request-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
@@ -95,8 +96,18 @@ import {
 	resolveTranscript,
 	type TranscriptContext,
 } from "../utils/transcript.ts";
+import {
+	isAnthropicWebSearchReplayBlock,
+	isReplayableAnthropicProviderNativeBlock,
+} from "./anthropic-native-replay-blocks.ts";
+import { logAnthropicRequestShape } from "./anthropic-request-shape-log.ts";
 import { sanitizeAnthropicToolPairs } from "./anthropic-tool-pairs.ts";
 import { demoteToolReferenceReplay, demoteUnavailableToolReferences } from "./anthropic-tool-references.ts";
+import {
+	demoteExpiredWebSearchReplay,
+	expiredWebSearchReplayIds,
+	isExpiredWebSearchContentError,
+} from "./anthropic-web-search-expiry.ts";
 import { resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import {
 	getJsonSchemaToolParameters,
@@ -161,7 +172,7 @@ function getCacheControl(
 // The bundled Claude Code version and the floor of the advertised `claude-cli/<version>`
 // (see utils/claude-code-version.ts). Keep this exact declaration: a downstream installer
 // (oh-my-openagent) rewrites it byte-for-byte in the installed dist and bundle.
-const claudeCodeVersion = "2.1.292";
+const claudeCodeVersion = "2.1.306";
 
 // Claude Code 2.x tool names (canonical casing)
 // Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
@@ -384,6 +395,8 @@ type UnsignedThinkingReplay = "text" | "empty-signature";
 const unsignedThinkingTextReplayFallbacks = new Set<string>();
 // Endpoints that rejected a replayed tool_reference for one conversation (senpi #2568).
 const toolReferenceReplayFallbacks = new Set<string>();
+// `${fallbackKey}\u0000${tool_use_id}` of web search results whose encrypted payload expired (senpi #3201).
+const expiredWebSearchReplays = new Set<string>();
 
 registerSessionResourceCleanup((sessionId?: string) => {
 	// One small entry per (session, base URL, model) that ever hit the fallback;
@@ -392,10 +405,15 @@ registerSessionResourceCleanup((sessionId?: string) => {
 	if (sessionId === undefined) {
 		unsignedThinkingTextReplayFallbacks.clear();
 		toolReferenceReplayFallbacks.clear();
+		expiredWebSearchReplays.clear();
 		return;
 	}
 	const prefix = `${sessionId}\u0000`;
-	for (const fallbacks of [unsignedThinkingTextReplayFallbacks, toolReferenceReplayFallbacks]) {
+	for (const fallbacks of [
+		unsignedThinkingTextReplayFallbacks,
+		toolReferenceReplayFallbacks,
+		expiredWebSearchReplays,
+	]) {
 		for (const key of fallbacks) {
 			if (key.startsWith(prefix)) fallbacks.delete(key);
 		}
@@ -608,28 +626,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
-const REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES: ReadonlySet<string> = new Set([
-	"server_tool_use",
-	"web_search_tool_result",
-	"web_fetch_tool_result",
-	"code_execution_tool_result",
-	"bash_code_execution_tool_result",
-	"text_editor_code_execution_tool_result",
-	"tool_search_tool_result",
-	"container_upload",
-	// The server-side fallback marker (`fallback`, server-side-fallback-2026-06-01
-	// beta) is deliberately absent: the Messages API rejects it as an *input* tag
-	// ("Input tag 'fallback' found using 'type' does not match any of the expected
-	// tags"), so replaying it 400s every subsequent same-model request. The stored
-	// marker is audit metadata and still drives declined-attempt pruning in
-	// convertMessages (see lastAnthropicFallbackBoundary and
-	// collectDiscardedFallbackToolCallIds); blocks after it replay verbatim.
-]);
-
-function isReplayableAnthropicProviderNativeBlock(raw: unknown): raw is ContentBlockParam {
-	return isRecord(raw) && typeof raw.type === "string" && REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES.has(raw.type);
-}
-
 function isSameAnthropicModel(message: AssistantMessage, model: Model<"anthropic-messages">): boolean {
 	return message.provider === model.provider && message.api === model.api && message.model === model.id;
 }
@@ -674,12 +670,6 @@ function isProviderNativeToolUseBlock(raw: unknown): boolean {
 // blocks (kimi-coding 400s with `tool_call_id is not found`), wedging every
 // subsequent request of the session. Dropping the pair loses the searched
 // context but keeps the conversation usable.
-function isAnthropicWebSearchReplayBlock(raw: unknown): boolean {
-	if (!isRecord(raw)) return false;
-	if (raw.type === "web_search_tool_result") return true;
-	return raw.type === "server_tool_use" && raw.name === "web_search";
-}
-
 // Anthropic validates server-tool pairing per request: a `server_tool_use` /
 // `mcp_tool_use` must be answered by its `*_tool_result`, and a result must
 // have its use — otherwise the API answers `400 ... \`web_search\` tool use
@@ -741,13 +731,13 @@ function collectProviderNativeToolPairing(
 			for (const block of message.content) {
 				if (block.type !== "providerNative" || !isRecord(block.raw)) continue;
 				const raw = block.raw;
-				if (typeof raw.type !== "string" || !REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES.has(raw.type)) continue;
+				if (!isReplayableAnthropicProviderNativeBlock(raw)) continue;
 				if (isProviderNativeToolUseBlock(raw) && typeof raw.id === "string") pendingUseIds.add(raw.id);
 			}
 			for (const block of message.content) {
 				if (block.type !== "providerNative" || !isRecord(block.raw)) continue;
 				const raw = block.raw;
-				if (typeof raw.type !== "string" || !REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES.has(raw.type)) continue;
+				if (!isReplayableAnthropicProviderNativeBlock(raw)) continue;
 				const toolUseId = raw.tool_use_id;
 				if (typeof toolUseId !== "string") continue;
 				if (priorUseIds.has(toolUseId) || pendingUseIds.has(toolUseId)) {
@@ -1108,6 +1098,22 @@ function markSystemMessageCacheCheckpoint(message: MessageParam, cacheControl: C
 	}
 }
 
+/** Marks the last block that accepts `cache_control` (thinking blocks do not); false when none does. */
+function markAssistantMessageCacheCheckpoint(
+	blocks: ContentBlockParam[],
+	cacheControl: CacheControlEphemeral,
+): boolean {
+	for (let index = blocks.length - 1; index >= 0; index--) {
+		const block = blocks[index];
+		if (block.type === "text" || block.type === "tool_use") {
+			block.cache_control = cacheControl;
+			return true;
+		}
+		if (block.type === "thinking" || block.type === "redacted_thinking") return false;
+	}
+	return false;
+}
+
 function markUserMessageCacheCheckpoint(message: MessageParam, cacheControl: CacheControlEphemeral): boolean {
 	if (message.role !== "user") return false;
 	if (Array.isArray(message.content)) {
@@ -1382,7 +1388,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						shouldUseFineGrainedToolStreamingBeta(model, normalizedContext),
 						options?.refusalFallbacks !== undefined && configuredBetaHeader(model, options) !== null,
 						optionsHeaders,
-						options?.fetch,
+						getAnthropicCompat(model).supportsGzipRequestBody
+							? withGzipRequestBodies(options?.fetch)
+							: options?.fetch,
 						copilotDynamicHeaders,
 						cacheSessionId,
 						options?.env,
@@ -1429,6 +1437,14 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					: getAnthropicCompat(model).unsignedThinkingReplay;
 			let demoteReferenceReplay = fallbackKey !== undefined && toolReferenceReplayFallbacks.has(fallbackKey);
 			let requestReplaysReferences = false;
+			const expiredSearchPrefix = fallbackKey === undefined ? undefined : `${fallbackKey}\u0000`;
+			const expiredSearchIds = new Set<string>();
+			if (expiredSearchPrefix !== undefined) {
+				for (const key of expiredWebSearchReplays) {
+					if (key.startsWith(expiredSearchPrefix)) expiredSearchIds.add(key.slice(expiredSearchPrefix.length));
+				}
+			}
+			let lastSentParams: MessageCreateParamsStreaming | undefined;
 			const createRequest = async (): Promise<{ params: MessageCreateParamsStreaming; response: Response }> => {
 				let params = buildParams(model, normalizedContext, isOAuth, options, unsignedThinkingReplay);
 				const nextParams = await options?.onPayload?.(params, model);
@@ -1441,6 +1457,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				const withoutReferenceReplay = demoteToolReferenceReplay(params);
 				requestReplaysReferences = withoutReferenceReplay !== params;
 				if (demoteReferenceReplay) params = withoutReferenceReplay;
+				params = demoteExpiredWebSearchReplay(params, expiredSearchIds);
+				lastSentParams = params;
 				params = sanitizeAnthropicToolPairs(params) as MessageCreateParamsStreaming;
 				const payloadRequestMetadata = extractPayloadRequestMetadata(params);
 				params = payloadRequestMetadata.params;
@@ -1455,11 +1473,14 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					maxRetries: 0,
 					...(payloadRequestMetadata.headers ? { headers: payloadRequestMetadata.headers } : {}),
 				};
-				const send = (body: MessageCreateParamsStreaming) =>
-					awaitProviderTransport(
+				// Logged before the call: the SDK throws on a non-2xx, and a rejected attempt is the one worth rebuilding.
+				const send = (body: MessageCreateParamsStreaming) => {
+					logAnthropicRequestShape(model, body);
+					return awaitProviderTransport(
 						() => client.beta.messages.create({ ...body, stream: true }, requestOptions).asResponse(),
 						anthropicProviderDiagnosticFromError,
 					);
+				};
 				const sent = await sendWithForcedToolChoiceFallback({
 					target: model,
 					params,
@@ -1468,6 +1489,29 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					send,
 				});
 				return { params: sent.params, response: sent.result };
+			};
+			// True when the error names web search payloads this request had not demoted yet.
+			const markNewlyExpiredSearches = (error: unknown): boolean => {
+				if (!isExpiredWebSearchContentError(error) || lastSentParams === undefined) return false;
+				const newlyExpired = expiredWebSearchReplayIds(lastSentParams, error).filter(
+					(id) => !expiredSearchIds.has(id),
+				);
+				for (const id of newlyExpired) {
+					expiredSearchIds.add(id);
+					if (expiredSearchPrefix !== undefined) expiredWebSearchReplays.add(expiredSearchPrefix + id);
+				}
+				return newlyExpired.length > 0;
+			};
+			const createRequestDemotingExpiredSearches = async (): Promise<{
+				params: MessageCreateParamsStreaming;
+				response: Response;
+			}> => {
+				try {
+					return await createRequest();
+				} catch (error) {
+					if (markNewlyExpiredSearches(error)) return createRequestDemotingExpiredSearches();
+					throw error;
+				}
 			};
 			let requestOutcome: { params: MessageCreateParamsStreaming; response: Response };
 			try {
@@ -1486,6 +1530,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 								if (fallbackKey) toolReferenceReplayFallbacks.add(fallbackKey);
 								return createRequest();
 							}
+							if (markNewlyExpiredSearches(error)) return createRequestDemotingExpiredSearches();
 							if (await retryWithNewerClaudeCode(error)) {
 								try {
 									return await createRequest();
@@ -2305,6 +2350,15 @@ function buildParams(
 	});
 	// The prompt travels in `params.system`; the leading system message is not a turn.
 	const conversationMessages = initialSystemMessage ? transformedMessages.slice(1) : transformedMessages;
+	// Context reduction marks the last message its frontier leaves unchanged: on a frontier step both the
+	// old boundary (read) and the new one (written for the next step) are marked. Two checkpoints fit
+	// only when the system block holds one, which then also covers the tools before it (senpi#3242).
+	const stablePrefixMarkers = conversationMessages.filter(
+		(message) => message.role === "assistant" && message.promptCacheBreakpoint === true,
+	).length;
+	const systemHoldsCheckpoint = isOAuthToken || initialSystemText.length > 0;
+	const stablePrefixCheckpointLimit =
+		stablePrefixMarkers >= 2 && systemHoldsCheckpoint ? 2 : Math.min(1, stablePrefixMarkers);
 	// Native tool changes reference tools by name, so a redefined name cannot be expressed,
 	// and Anthropic rejects a tool list where every tool is deferred, so there must be an
 	// initial active tool to anchor the deferred ones. Otherwise the current tool list is sent.
@@ -2374,6 +2428,7 @@ function buildParams(
 		normalizeToolName,
 		midConvoEffort ? model.provider : undefined,
 		nativeToolChanges,
+		stablePrefixCheckpointLimit,
 	);
 	const messages = midConvoEffort
 		? insertThinkingLevelMessages(convertedMessages, activeEffort)
@@ -2437,7 +2492,8 @@ function buildParams(
 		});
 	}
 
-	const toolCacheControl = compat.supportsCacheControlOnTools ? cacheControl : undefined;
+	const toolCacheControl =
+		compat.supportsCacheControlOnTools && stablePrefixCheckpointLimit < 2 ? cacheControl : undefined;
 	if (nativeToolChanges) {
 		// Initial tools stay active with the cache breakpoint on the last one. Every later
 		// declaration is deferred and only surfaced by its `tool_addition` block; removed
@@ -2662,10 +2718,12 @@ function convertMessages(
 	normalizeToolName: (name: string) => string = (name) => name,
 	managedProvider?: string,
 	nativeToolChanges = false,
+	stablePrefixCheckpointLimit = 0,
 ): ConvertedAnthropicMessages {
 	const params: MessageParam[] = [];
 	const assistantLevels = new Map<number, AnthropicEffort>();
 	const loadedToolNames = new Set<string>();
+	let stablePrefixCheckpoints = 0;
 	// Later system messages are held back and emitted directly before the next assistant
 	// message (or at the end of the transcript). Anthropic requires `tool_result` blocks to
 	// immediately follow their `tool_use`, so a system message between them is rejected; this
@@ -2857,6 +2915,14 @@ function convertMessages(
 				content: blocks,
 			});
 			if (
+				cacheControl &&
+				msg.promptCacheBreakpoint === true &&
+				stablePrefixCheckpoints < stablePrefixCheckpointLimit &&
+				markAssistantMessageCacheCheckpoint(blocks, cacheControl)
+			) {
+				stablePrefixCheckpoints++;
+			}
+			if (
 				managedProvider !== undefined &&
 				msg.api === "anthropic-messages" &&
 				msg.provider === managedProvider &&
@@ -2905,7 +2971,11 @@ function convertMessages(
 		markSystemMessageCacheCheckpoint(lastParam, cacheControl);
 		return { messages: params, assistantLevels };
 	}
-	const retainPrecedingCheckpoint = isToolLoopContinuation(params);
+	// Four breakpoints at most: system, tools or a second stable-prefix checkpoint, a stable-prefix
+	// checkpoint and the final user turn. A stable-prefix checkpoint takes the preceding tool-loop
+	// checkpoint's slot; the final checkpoint's lookback already reaches the previous request's entry
+	// two blocks back (senpi#3242).
+	const retainPrecedingCheckpoint = stablePrefixCheckpoints === 0 && isToolLoopContinuation(params);
 	if (cacheControl && params.length > 0 && markUserMessageCacheCheckpoint(params[params.length - 1], cacheControl)) {
 		if (retainPrecedingCheckpoint) {
 			for (let index = params.length - 2; index >= 0; index--) {

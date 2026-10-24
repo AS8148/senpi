@@ -1,6 +1,119 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#3612": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/kernel-globals-ledger.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/py/death-reason.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/host-memory-state.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/kernel-globals-ledger.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/py/death-reason.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/host-memory-state.ts",
+				"legacyContracts/test/kernel-death-reason.test.ts/pythonDeathReason names the prelude's parent watch when it stopped the kernel itself",
+				"legacyContracts/test/kernel-death-reason.test.ts/pythonDeathReason is the exit status with the last memory reading otherwise",
+				"legacyContracts/test/kernel-death-reason.test.ts/host memory state reads the macOS pressure level and swap in use",
+				"legacyContracts/test/kernel-death-reason.test.ts/host memory state reads Linux available memory and swap in use",
+				"legacyContracts/test/py-kernel-global-names.test.ts/a Python result names the user globals defined so far (senpi#3612) lists what cells defined, never the prelude's own helpers",
+				"legacyContracts/test/py-kernel-global-names.test.ts/a Python result names the user globals defined so far (senpi#3612) caps the names it lists but still counts every global",
+				"legacyContracts/test/py-kernel-lost-globals-notice.test.ts/restart notices name the globals a lost Python kernel held a SIGKILL from outside names the lost globals, the last reading, and the host's memory state",
+				"legacyContracts/test/py-kernel-lost-globals-notice.test.ts/restart notices name the globals a lost Python kernel held a later generation of the same session names what the previous kernel held, once",
+				"legacyContracts/test/py-kernel-lost-globals-notice.test.ts/restart notices name the globals a lost Python kernel held a reset leaves nothing for a later generation to announce",
+				"legacyContracts/test/py-kernel-pipe-error-death.test.ts/a Python interpreter whose death surfaces as a pipe error before its exit between cells: the next cell runs on a replacement that carries the restart notice",
+				"legacyContracts/test/py-kernel-pipe-error-death.test.ts/a Python interpreter whose death surfaces as a pipe error before its exit during a cell: that cell is lost, and the next one carries the restart notice",
+				"legacyContracts/test/py-kernel-pipe-error-death.test.ts/a Python interpreter whose death surfaces as a pipe error before its exit with no exit after it: the pipe error alone is the death, announced on the next cell"
+			],
+			"reason": "Refs senpi#3612: reviewed additive changes. Three new modules enter the extension and first-kernel import scopes (the per-session lost-globals ledger, the Python death reason, the host memory reader); new contracts prove a pipe error before the exit is still a reported, announced death, restart notices name the lost globals and the cause of an outside SIGKILL with the host memory state, a later session generation announces what the previous kernel held, a reset clears it, and Python results name the user globals."
+		},
+		"senpi#3205": {
+			"additions": [
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost does not parse a cell whose only import text is inside data",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites real static and dynamic imports",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites a comment before a dynamic call",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites a block comment before named bindings",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites a line comment before a default binding",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites a non-ASCII binding",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost prepares a large data cell full of comment-like import text in linear time"
+			],
+			"reason": "senpi#3205 adds contracts proving a cell whose only import text is data is prepared without a Babel parse, that real static and dynamic imports are still rewritten (including after a comment and with a non-ASCII binding, which the review found the first gate skipped), and that a large data cell full of comment-like import text is prepared in linear time. The frozen baseline and every existing contract remain unchanged."
+		},
+		"senpi#3064": {
+			"additions": [
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root pip scratch is owned and removed after success (#3064)",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root pip scratch is owned and removed after failure (#3064)",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root pip scratch is owned and removed after cancel (#3064)",
+				"legacyContracts/test/js-process-fixtures.test.ts/awaits a fixture kernel child before removing its cwd (#3064)",
+				"legacyContracts/test/environments/py-installer-cleanup.test.ts/pip scratch cleanup errors preserves success and reports exhausted cleanup retries (#3064)",
+				"legacyContracts/test/environments/py-installer-cleanup.test.ts/pip scratch cleanup errors preserves failure and reports exhausted cleanup retries (#3064)",
+				"legacyContracts/test/environments/py-installer-cleanup.test.ts/pip scratch cleanup errors preserves cancel and reports exhausted cleanup retries (#3064)"
+			],
+			"reason": "senpi#3064 adds real pip subprocess contracts proving scratch containment and removal after success, failure, and cancellation, preserves install outcomes when cleanup fails, and awaits kernel exit before removing its cwd. Every existing approval and contract remains unchanged."
+		},
+		"senpi#3072": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/eval-cells-rpc.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/eval-cells-rpc.ts"
+			],
+			"reason": "senpi#3072: reviewed session-scoped, model-invisible RPC handlers share the existing eval cell manager. Record only this module's additive import membership in the frozen baseline."
+		},
+		"senpi#3048": {
+			"additions": [
+				"legacyContracts/test/kernels/jl/lazy-globals.test.ts/Julia lazy globals declarations (Refs senpi#3048) installs zero sizing declarations before a below-threshold first result",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) installs zero handle declarations before the first result",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) returns empty globals when the sizing asset is missing",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) returns empty globals when the sizing asset is invalid",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) creates the first handle inside @async from an empty cwd",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) creates the first handle inside Threads.@spawn from an empty cwd",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) includes once when two real tasks create their first handles concurrently",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) keeps task waiting lazy before any handle is created",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) loads named handle types before annotations and isa checks are evaluated",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) serializes and displays a first handle inside a user function",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) restarts with zero declarations and recreates a saved handle reference",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) wraps the first completion handle without predeclared types",
+				"legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement refuses legacy embedded-clock samples instead of treating them as post-result CPU",
+				"legacyContracts/test/bench/session-postresult.test.ts/benchmark post-result CPU boundary (Refs senpi#3048) counts cold encoding before-value and flush work before sampling the received result",
+				"legacyContracts/test/bench/session-postresult.test.ts/benchmark post-result CPU boundary (Refs senpi#3048) counts cold encoding during-result and flush work before sampling the received result",
+				"legacyContracts/test/kernels/jl/startup-frames.test.ts/Julia startup frames (Refs senpi#3048) reports every startup stage without running the frame encoder in the first or the replacement interpreter"
+			],
+			"reason": "Refs senpi#3048: reviewed additive real-Julia contracts cover zero eager sizing bindings below the memory threshold, zero eager handle declarations, empty-cwd first use in async and threaded tasks, empty diagnostic replies for missing/invalid sizing assets, atomic concurrent first inclusion, named types, first-use serialization/display and reference recreation after reset; existing contracts prove complete post-result CPU sampling and refuse legacy saved CPU boundaries without changing the frozen baseline; a real-Julia interrupt contract proves pre-encoded startup frames keep the first and replacement interpreters from running the frame encoder before their first cell."
+		},
+		"senpi#3034": {
+			"additions": [
+				"legacyContracts/test/py-kernel-bookkeeping.test.ts/Python per-cell bookkeeping uses two FIFO operations zero Python queue locks and one capture scope per cell"
+			],
+			"reason": "senpi#3034, plan row 45 fix c: deterministic reader/main work counts retain two FIFO operations and one owner acquire/release while removing Python queue condition work and halving capture-scope setups."
+		},
+		"senpi#3028": {
+			"additions": [
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals jl does no globals work or payload serialization below threshold",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals jl preserves above threshold notice and globals payload",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals jl collects globals above threshold when hysteresis suppresses notice",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals rb does no globals work or payload serialization below threshold",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals rb preserves above threshold notice and globals payload",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals rb collects globals above threshold when hysteresis suppresses notice",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request retains ownership until a matching reply and reads the footprint once",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request ignores replies from a different process cell or pending run",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request bounds a missing reply without skipping the footprint notice",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request retires the pending deadline on reset without formatting a stale notice",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request requests globals at an enabled ceiling even when the notice threshold is disabled",
+				"legacyContracts/test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (rb) memory ceiling Given a finished cell waiting for globals when it is stopped then its result settles and kernel state survives",
+				"legacyContracts/test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given a finished cell waiting for globals when it is stopped then its result settles and kernel state survives",
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/subprocess-memory-globals.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/subprocess-memory-globals.ts"
+			],
+			"reason": "senpi#3028 separates every-cell footprint accounting from bounded, cell-owned globals diagnostics; below-threshold work counts and main notice snapshots prove parity."
+		},
+		"senpi#3033": {
+			"additions": [
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips performs zero async stat round trips on each warm cell",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips refuses the very next cell when the cwd is deleted",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips refuses the very next cell when the cwd is replaced by a file",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original EACCES error on warm reuse",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original ELOOP error on warm reuse",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original EMFILE error on warm reuse",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original EIO error on warm reuse"
+			],
+			"reason": "senpi#3033, plan row 45 fix b: warm cells check the real cwd on every reuse without an async filesystem round trip; deletion and replacement refuse the next cell with the existing error, and unrelated I/O errors retain their identity."
+		},
 		"1": {
 			"additions": [],
 			"reason": "The initial harness preserves the merge-base surfaces without additive production changes."
@@ -1544,6 +1657,1012 @@
 				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) tests the wall ceiling through --inject-slow, keeping the recorded observations"
 			],
 			"reason": "senpi#3025: the bench judges crash-queue-100 on rb and jl by an absolute head budget (all 100 queued cells run once after one replacement, within a median-wall ceiling), because their base never recovered from the crash and the head/base ratio compares a failure path with the real work. The listed contracts are the new comparator tests."
+		},
+		"senpi#3261": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/tool/display-json-bounds.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/display-json-size.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/display-json-bounds.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/display-json-size.ts",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) a 100,000-character key is trimmed, the sibling is kept, and the budget holds",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) a key after an escaped string is kept",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) a key of 3,000 control characters is trimmed, the sibling is kept, and the budget holds",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) a paginated response keeps its scalars after a large rows array",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) emoji keys stay keys and a trimmed emoji string never splits a surrogate pair",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) emoji-heavy records keep their scalars and the budget holds",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) kept records keep all their own fields",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) too many keys to show still stays within the budget with a visible count",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given a displayed object wrapping a large Buffer when the cell settles then the stored jsonOutputs entry is bounded",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given a legacy oversized stored Buffer entry when rendered then a bounded placeholder line is shown",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given a legacy oversized stored entry when rendered then a bounded summary replaces the tree",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given a malformed stored entry when rendered then the failure stays local to the entry",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given the real legacy shape with the Buffer nested under a key when rendered then the placeholder shows for the buffer key",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a Buffer nested under a key becomes a placeholder summary with its sibling keys",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a control-character string keeps its sibling keys and stays inside the budget",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a deeply nested value keeps its top-level keys with a depth marker",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a long array of records stays a non-empty partial array with an elision marker",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a long string under a key truncates with a marker and keeps its sibling keys",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a wide object keeps its leading keys with an elision marker, not a dropped value",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display wrapped image detection (#3261) Given an object holding only image bytes under buffer when displayed then just the frame resolves",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display wrapped image detection (#3261) Given an object whose buffer field holds BM-prefixed non-BMP bytes when displayed then it stays on the JSON path",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display wrapped image detection (#3261) Given an object whose buffer field holds image bytes when displayed then it resolves to an image frame plus metadata text",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display wrapped image detection (#3261) Given an object whose buffer field holds non-image bytes when displayed then it stays on the JSON path"
+			],
+			"reason": "senpi#3261 adds contracts proving stored display jsonOutputs follow the display text budget (serialized Buffers collapse to placeholders), legacy oversized or malformed entries render a bounded local summary instead of throwing, and { buffer: <image bytes>, ...metadata } displays as an image frame plus metadata text. The frozen baseline and every existing contract remain unchanged. The review rounds add the display-json-bounds/display-json-size modules (split for size) and contracts proving every top-level key survives trimming, keys are trimmed within the budget, and characters above U+FFFF count at their serialized length. The frozen baseline and every existing contract remain unchanged."
+		},
+		"senpi#3748": {
+			"additions": [
+				"legacyContracts/test/bench/workload-spill-sizes.test.ts/output-spill candidates (codemode-gate race on main 46d15a1c93) never stats a kernel temp file, which the kernel can rename away between listing and stat",
+				"legacyContracts/test/bench/workload-spill-sizes.test.ts/output-spill candidates (codemode-gate race on main 46d15a1c93) never picks a temp file as the spill even when it exists and is the largest",
+				"legacyContracts/test/bench/workload-spill-sizes.test.ts/output-spill candidates (codemode-gate race on main 46d15a1c93) still fails when a final path cannot be stat'ed"
+			],
+			"reason": "senpi#3748 fixes the output-spill bench race (a kernel ledger written as <path>.<pid>.tmp and renamed could vanish between listing and stat) and adds contracts proving a temp file is never stat'ed or picked as the spill, and a stat error on a final path still rejects. The frozen baseline and every existing contract remain unchanged."
+		},
+		"senpi#4040": {
+			"additions": [],
+			"reason": "senpi#4040 adopts no-em-dash-copy and intentionally normalizes punctuation in every eval prompt variant. Each prompt cell is measured by measureSurfaces and its bytes/tokens are recomputed. Schemas, runtimes, helpers, imports and invariants remain unchanged.",
+			"changes": [
+				{
+					"key": "prompts/default/false/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				}
+			]
 		}
 	}
 }

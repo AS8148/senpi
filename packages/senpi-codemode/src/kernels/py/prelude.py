@@ -162,7 +162,7 @@ def _display_image_dict(value: dict[str, Any]) -> bool:
         return False
     encoded = _image_base64(payload)
     if encoded is None:
-        print(f"[display: image dropped \u2014 `data` must be base64, a data: URL, or bytes; got {type(payload).__name__}]")
+        print(f"[display: image dropped - `data` must be base64, a data: URL, or bytes; got {type(payload).__name__}]")
         return True
     emit({"type": "display", "mimeType": mime_type, "dataBase64": encoded[0]})
     return True
@@ -661,25 +661,6 @@ class ThreadRoutedStream(io.TextIOBase):
         )
         self.cell_target: io.StringIO | None = None
 
-    @contextlib.contextmanager
-    def capture(self, buffer: io.StringIO, *, cell: bool) -> Iterator[None]:
-        me = threading.get_ident()
-        previous = self._targets.get(me)
-        self._targets[me] = buffer
-        inherited = self._inherited.set(buffer)
-        if cell:
-            self.cell_target = buffer
-        try:
-            yield
-        finally:
-            self._inherited.reset(inherited)
-            if previous is None:
-                self._targets.pop(me, None)
-            else:
-                self._targets[me] = previous
-            if cell:
-                self.cell_target = None
-
     def write(self, text: str) -> int:
         target = self._targets.get(threading.get_ident()) or self._inherited.get() or self.cell_target
         if target is None:
@@ -692,6 +673,38 @@ class ThreadRoutedStream(io.TextIOBase):
     @property
     def encoding(self) -> None:
         return None
+
+
+@contextlib.contextmanager
+def capture_streams(
+    streams: tuple[ThreadRoutedStream, ThreadRoutedStream],
+    buffers: tuple[io.StringIO, io.StringIO],
+    *,
+    cell: bool,
+) -> Iterator[None]:
+    stdout, stderr = streams
+    out, err = buffers
+    me = threading.get_ident()
+    previous_out, previous_err = stdout._targets.get(me), stderr._targets.get(me)
+    stdout._targets[me], stderr._targets[me] = out, err
+    inherited_out, inherited_err = stdout._inherited.set(out), stderr._inherited.set(err)
+    if cell:
+        stdout.cell_target, stderr.cell_target = out, err
+    try:
+        yield
+    finally:
+        stderr._inherited.reset(inherited_err)
+        stdout._inherited.reset(inherited_out)
+        if previous_err is None:
+            stderr._targets.pop(me, None)
+        else:
+            stderr._targets[me] = previous_err
+        if previous_out is None:
+            stdout._targets.pop(me, None)
+        else:
+            stdout._targets[me] = previous_out
+        if cell:
+            stdout.cell_target, stderr.cell_target = None, None
 
 
 @dataclass
@@ -905,8 +918,7 @@ class KernelToolRunner:
                 if invocation.cancelled.is_set():
                     raise Cancelled(CANCELLED_BEFORE_START)
                 CURRENT.set(invocation)
-                stdout, stderr = self._streams
-                with stdout.capture(output, cell=False), stderr.capture(output, cell=False):
+                with capture_streams(self._streams, (output, output), cell=False):
                     value = self._call(invocation, entry.fn, args)
             finally:
                 CURRENT.set(None)
@@ -2160,6 +2172,12 @@ async def run_code(code: Any, want_value: bool) -> Any:
     return None
 
 
+# Globals a tool prelude installs: the host reinstalls them on a fresh kernel, so they are never reported as lost.
+_PRELUDE_EXPORTS: set[str] = set()
+# The host keeps the newest list so a notice can name what a dead or replaced kernel took with it.
+_REPORTED_GLOBAL_NAMES = 64
+
+
 def apply_preludes(preludes: Any) -> None:
     # Host-computed per cell: globals of tools deactivated since the last cell are dropped,
     # and an active tool's snippet runs only while one of its exports is missing.
@@ -2167,9 +2185,20 @@ def apply_preludes(preludes: Any) -> None:
         return
     for name in preludes.get("remove", []):
         USER_NS.pop(name, None)
+        _PRELUDE_EXPORTS.discard(name)
     for contribution in preludes.get("install", []):
-        if any(name not in USER_NS for name in contribution.get("exports", [])):
+        exports = contribution.get("exports", [])
+        _PRELUDE_EXPORTS.update(exports)
+        if any(name not in USER_NS for name in exports):
             exec(compile(contribution.get("python", ""), "<kernel-prelude>", "exec"), USER_NS)
+
+
+def _user_global_names() -> list[str]:
+    return sorted(
+        name
+        for name in list(USER_NS)
+        if name not in _MEMORY_BASELINE and name not in _PRELUDE_EXPORTS and not name.startswith("__")
+    )
 
 
 def _enter_source_file(source_file: str | None) -> Callable[[], None]:
@@ -2218,8 +2247,7 @@ def run_cell(
     cell_scope = CURRENT_CELL_TOKEN.set(cell_token)
     try:
         KERNEL_TOOL_TOKEN.acquire()
-        cell_stdout, cell_stderr = KERNEL_TOOL_STREAMS
-        with cell_stdout.capture(stdout, cell=True), cell_stderr.capture(stderr, cell=True):
+        with capture_streams(KERNEL_TOOL_STREAMS, (stdout, stderr), cell=True):
             apply_preludes(preludes)
             leave_source_file = _enter_source_file(source_file)
             body, expression = compile_cell(code, source_file or "<cell>")
@@ -2261,6 +2289,9 @@ def run_cell(
         text("stderr", f"[senpi] kernel memory measurement failed: {exc}\n")
     if memory is not None:
         result["memory"] = memory
+    names = _user_global_names()
+    result["globalCount"] = len(names)
+    result["globalNames"] = names[:_REPORTED_GLOBAL_NAMES]
     emit(result)
 
 
@@ -2323,12 +2354,21 @@ def _activate_env_root(root: str) -> None:
     importlib.invalidate_caches()
 
 
-def _terminate_process_group() -> None:
+PARENT_WATCH_MARKER = "[senpi] parent watch:"
+
+
+def _terminate_process_group(reason: str) -> None:
     # The kernel is spawned into its own session (setsid), so its pid is its process
     # group id and a cell's subprocesses inherit that group. Killing the group takes
     # those children down with the kernel instead of orphaning them to init.
+    # The reason goes to the real stderr first: a host that is still alive names it in its restart notice.
     if os.name != "posix":
         return
+    stream = sys.__stderr__
+    if stream is not None:
+        with contextlib.suppress(OSError, ValueError):
+            stream.write(f"{PARENT_WATCH_MARKER} {reason}; stopping the kernel\n")
+            stream.flush()
     with contextlib.suppress(OSError):
         os.killpg(os.getpgrp(), signal.SIGKILL)
 
@@ -2339,8 +2379,9 @@ def _watch_parent(initial_ppid: int) -> None:
     # daemon thread notices the reparenting instead and takes the whole group down.
     while True:
         time.sleep(1.0)
-        if os.getppid() != initial_ppid:
-            _terminate_process_group()
+        current_ppid = os.getppid()
+        if current_ppid != initial_ppid:
+            _terminate_process_group(f"its parent process changed from {initial_ppid} to {current_ppid}")
             return
 
 
@@ -2355,7 +2396,7 @@ def _watch_named_parent(parent_pid: int) -> None:
         try:
             os.kill(parent_pid, 0)
         except ProcessLookupError:
-            _terminate_process_group()
+            _terminate_process_group(f"its host process {parent_pid} is gone")
             return
 
 
@@ -2373,7 +2414,7 @@ def _start_parent_watch() -> None:
         ).start()
 
 
-def _read_control(commands: queue.Queue[tuple[str, Any]]) -> None:
+def _read_control(commands: queue.SimpleQueue[tuple[str, Any]]) -> None:
     # Kernel-tool frames are served here, so a callback can be admitted while the main thread is inside a cell.
     for raw in sys.stdin:
         try:
@@ -2392,7 +2433,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     _start_parent_watch()
     sys.stdout, sys.stderr = KERNEL_TOOL_STREAMS
-    commands: queue.Queue[tuple[str, Any]] = queue.Queue()
+    commands: queue.SimpleQueue[tuple[str, Any]] = queue.SimpleQueue()
     threading.Thread(target=_read_control, args=(commands,), name="senpi-control-reader", daemon=True).start()
     host_closed = False
     while True:
@@ -2411,7 +2452,7 @@ def main() -> None:
     # Reaching here without a close frame means the host's pipe hit EOF: it is gone,
     # so retire any subprocess the last cell left running before the interpreter exits.
     if not host_closed:
-        _terminate_process_group()
+        _terminate_process_group("its host closed the control pipe")
 
 
 if __name__ == "__main__":

@@ -233,6 +233,7 @@ export class AnthropicSubscriptionSessionRegistry {
 			pendingForkReason: null,
 			lastUsedAt: now,
 		};
+		// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 		let entry!: AnthropicSubscriptionSessionEntry;
 		entry = new Proxy(target, {
 			set: (current, property, value) => {
@@ -321,8 +322,8 @@ export function markTainted(senpiSessionId: string, reason: string): void {
 	annotateTainted(sessionRegistry, senpiSessionId, reason);
 }
 
-export async function switchSessionModel(senpiSessionId: string, modelId: string): Promise<boolean> {
-	return switchEntryModel(sessionRegistry, senpiSessionId, modelId);
+export async function switchSessionModel(senpiSessionId: string, modelId: string, sdkModel?: string): Promise<boolean> {
+	return switchEntryModel(sessionRegistry, senpiSessionId, modelId, sdkModel);
 }
 
 export function recordPendingFork(senpiSessionId: string, reason: string): void {
