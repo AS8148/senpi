@@ -54,6 +54,7 @@ export interface MaterializeMcpTransportOptions {
 	readonly logger: McpLogger;
 	readonly sink: McpAsyncErrorSink;
 	readonly elicitationUiProvider: McpElicitationUiProvider | undefined;
+	readonly elicitationEnabled?: boolean;
 	/** Invoked once the stdio child has started, so the caller can capture its pid. */
 	readonly onStart: () => void;
 }
@@ -62,8 +63,11 @@ export async function materializeMcpTransport(
 	options: MaterializeMcpTransportOptions,
 	protocol: ModernProtocolState = {},
 ): Promise<McpMaterializedTransport> {
-	const client = await createMcpRequestClient(protocol, options.elicitationUiProvider, () =>
-		modernCredentialSnapshot(options.spec.authProvider?.tokens()),
+	const client = await createMcpRequestClient(
+		protocol,
+		options.elicitationUiProvider,
+		() => modernCredentialSnapshot(options.spec.authProvider?.tokens()),
+		options.elicitationEnabled,
 	);
 	if (options.spec.kind === "stdio") return materializeStdio(options.spec, options, client, protocol);
 	return materializeHttp(options.spec, client);

@@ -4,7 +4,7 @@ import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.j
 import type { Request } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { McpElicitationUiProvider } from "../elicitation.ts";
-import { configureMcpElicitation, MCP_CLIENT_ELICITATION_CAPABILITY } from "../elicitation.ts";
+import { configureMcpElicitation, mcpClientCapabilities } from "../elicitation.ts";
 import { type McpRequestOrigin, physicalMcpClient, takeMcpRequestOrigin } from "../request-origin.ts";
 import { AuthError } from "../errors.ts";
 import { loadMcpSdkClient, loadMcpSdkZodCompat } from "../sdk.lazy.ts";
@@ -155,13 +155,14 @@ export async function createMcpRequestClient(
 	protocol: ModernProtocolState,
 	uiProvider: McpElicitationUiProvider | undefined,
 	readCredential: () => string | undefined = () => undefined,
+	elicitationEnabled = true,
 ): Promise<Client> {
 	const { Client } = await loadMcpSdkClient();
 	const client = new Client(
 		{ name: "senpi-mcp-client", version: "0.0.0" },
-		{ capabilities: MCP_CLIENT_ELICITATION_CAPABILITY },
+		{ capabilities: mcpClientCapabilities(elicitationEnabled) },
 	);
-	await configureMcpElicitation(client, uiProvider);
+	await configureMcpElicitation(client, uiProvider, undefined, elicitationEnabled);
 	installModernRequestAdapter(client, protocol, mcpElapsedClock, readCredential);
 	return client;
 }

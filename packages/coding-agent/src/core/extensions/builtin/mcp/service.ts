@@ -829,6 +829,7 @@ export class McpService {
 					await this.#resyncToLiveSessions(owner);
 				},
 				session: options,
+				elicitationEnabled: declarer.context.mode !== "print" && declarer.context.mode !== "json",
 				cwd: declarer.context.cwd,
 				ui: () => this.getMcpElicitationUi(),
 				artifacts: this.#outputArtifacts,

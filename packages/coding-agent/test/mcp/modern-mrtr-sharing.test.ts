@@ -18,7 +18,7 @@ const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
 	for (const stop of cleanup.splice(0).reverse()) await stop();
 });
-async function pooled(results: unknown[]) {
+async function pooled(results: unknown[], elicitationEnabled = true) {
 	const script = new MrtrScript(results);
 	const server = await startMrtrServer(script);
 	cleanup.push(server.close);
@@ -35,6 +35,7 @@ async function pooled(results: unknown[]) {
 				serverName: "fixture",
 				config,
 				configHash: "same",
+				elicitationEnabled,
 				agentDir: root,
 				logger: createMcpLogger("fixture", { logDir: root }),
 			},
@@ -48,6 +49,29 @@ async function pooled(results: unknown[]) {
 }
 
 describe("MRTR request ownership", () => {
+	it("keeps modern human capability request-local when legacy elicitation is disabled", async () => {
+		const { a, b, script } = await pooled([inputResult(), undefined, inputResult()], false);
+		const ui = mrtrTui();
+		const origin = createMcpRequestOrigin({
+			binding: {},
+			connection: a,
+			signal: a.requestLifetimeSignal,
+			presentation: ui.presentation,
+			serverLabel: "fixture",
+			isCurrent: () => a.state === "connected",
+			resolveAuthority: async () => null,
+		});
+		expect((await a.client.callTool({ name: "fixture" }, undefined, mcpRequestOptions(origin))).content).toEqual([
+			{ type: "text", text: "final tool" },
+		]);
+		await expect(b.client.callTool({ name: "fixture" })).rejects.toMatchObject({
+			code: "MCP_MRTR_UNSUPPORTED_INPUT",
+		});
+		const capabilities = ["_meta", "io.modelcontextprotocol/clientCapabilities"];
+		expect(script.requests[0]?.params).toHaveProperty(capabilities, { elicitation: {} });
+		expect(script.requests[2]?.params).toHaveProperty(capabilities, {});
+		expect(script.requests).toHaveLength(3);
+	});
 	it.each(["tool", "resource", "prompt", "tool-disconnect"])(
 		"the real service propagates the originating TUI through %s registration",
 		async (kind) => {

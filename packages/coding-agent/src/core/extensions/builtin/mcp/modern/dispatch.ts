@@ -44,8 +44,11 @@ export async function materializeNegotiatedTransport(
 				});
 			}
 			protocol.version = outcome.version;
-			const client = await createMcpRequestClient(protocol, options.elicitationUiProvider, () =>
-				modernCredentialSnapshot(spec.authProvider?.tokens()),
+			const client = await createMcpRequestClient(
+				protocol,
+				options.elicitationUiProvider,
+				() => modernCredentialSnapshot(spec.authProvider?.tokens()),
+				options.elicitationEnabled,
 			);
 			const transport = new ModernSdkBridge(
 				new ModernHttpTransport({

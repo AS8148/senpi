@@ -144,7 +144,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 					await attachPromise;
 				} else {
 					// Elicitation (todo 41): point mid-call forms at this session's UI.
-					service.setMcpElicitationUiProvider(() => ctx.ui);
+					service.setMcpElicitationUiProvider(() => (ctx.hasUI ? ctx.ui : undefined));
 					await (attachPromise ?? attach({ type: "session_start", reason: "startup" }, ctx));
 					service.bindMcpMrtrPresentation(pi, ctx.ui);
 				}
