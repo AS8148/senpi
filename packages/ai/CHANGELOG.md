@@ -4,6 +4,18 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.23-1] - 2026-10-23
+
+### Breaking Changes
+
 - Removed the `llama-cpp-classify` API (`api/llama-cpp-classify.ts` and its `.lazy.ts` wrapper), which existed only to serve the removed `/llama` llama.cpp extension, and dropped `"llama-cpp-classify"` from `KnownClassifierApi` ([#3202](https://github.com/code-yeongyu/senpi/issues/3202), requested by @code-yeongyu).
 
 ### Added

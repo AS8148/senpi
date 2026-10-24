@@ -1,3 +1,22 @@
+## 2026-10-23 - Four coding-agent CI shards leave timeout headroom (senpi#4131)
+
+### What changed
+
+- `.github/workflows/ci.yml`: schedule four coding-agent test shards and use `/4` in the Vitest command, job name, and summary. Keep the required `Check and test` fan-in and the existing job and test-step timeouts. Give all four system-dependency steps a five-minute cap and use `scripts/install-ci-system-deps.sh` to bound package transfers and retry once against a different mirror, rewriting both the mirror+file list and direct sources before the retry.
+
+### Why
+
+- `.github/workflows/ci.yml`: three-shard jobs reached 26-30 minutes against the 30-minute job limit. Five successful runs had up to 58.8 minutes of combined test-step time; four equal shares predict 14.7 minutes per shard before setup, rather than 19.6 minutes with three. This estimate assumes equal test cost; the PR's own CI validates actual wall times.
+- `.github/workflows/ci.yml`: run 40020066230 spent about 13 minutes downloading system packages from a slow Azure Ubuntu mirror. A 60-second transfer attempt and one 150-second archive.ubuntu.com retry prevent setup from consuming most of the shard budget; installation runs offline after downloads finish so a transfer timeout cannot interrupt dpkg.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: CI runner partitioning is workflow configuration, outside runtime extension points.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the coding-agent shard matrix, command, name, summary, and system-dependency steps.
+
 ## 2026-10-23 - The model catalog publish keeps the last good OpenGateway catalog (senpi#4067)
 
 ### What changed
