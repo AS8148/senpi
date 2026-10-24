@@ -1,6 +1,6 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { McpCachedServerCatalog } from "./catalog-cache.ts";
-import type { McpServerConfig, McpSettings } from "./config-schema.ts";
+import type { McpServerDeclaredConfig, McpSettings } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
 import { collectAllPages } from "./expose/pagination.ts";
 import type { McpOutputArtifacts } from "./guard/output-guard.ts";
@@ -33,7 +33,7 @@ type McpToolCatalogOptions = Pick<
 export async function collectToolCatalog(
 	server: string,
 	connection: ServerConnection,
-	config: McpServerConfig,
+	config: McpServerDeclaredConfig,
 	options: McpToolCatalogOptions = {},
 ): Promise<McpToolCatalogEntry[]> {
 	const result = await collectAllPages<ListedTool>((cursor) =>
