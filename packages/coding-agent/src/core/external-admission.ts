@@ -110,6 +110,12 @@ export class ExternalAdmission {
 		return () => this.emittedListeners.delete(listener);
 	}
 
+	/** Durable custody will replay this delivery: reserve its id before asynchronous recovery or gateway admission. */
+	restoreQueued(deliveryId: string): void {
+		if (this.pending.has(deliveryId) || this.emitted.has(deliveryId) || this.failed.has(deliveryId)) return;
+		this.pending.set(deliveryId, "followUp");
+	}
+
 	/**
 	 * From here on every `admit` throws `reason` and changes nothing: the runtime is being handed to
 	 * another writer, so the delivery stays with its sender and is delivered there instead.
