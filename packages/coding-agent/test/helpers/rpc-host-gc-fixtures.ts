@@ -59,7 +59,8 @@ export async function exitedPid(): Promise<number> {
 export async function heldZombie(
 	timeoutMs = 10_000,
 ): Promise<{ pid: number; processStartTime: string; release: () => void }> {
-	const script = "pipe(R,W); my $p = fork(); if (!$p) { close R; exit 0 } close W; my $x = <R>; $| = 1; print \"$p\\n\"; sleep 600";
+	const script =
+		'pipe(R,W); my $p = fork(); if (!$p) { close R; exit 0 } close W; my $x = <R>; $| = 1; print "$p\\n"; sleep 600';
 	const parent = spawn("perl", ["-e", script], { stdio: ["ignore", "pipe", "inherit"] });
 	const release = (): void => {
 		parent.kill("SIGKILL");
@@ -94,7 +95,9 @@ export async function heldZombie(
 
 function processState(pid: number): string {
 	try {
-		return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim().charAt(0);
+		return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" })
+			.trim()
+			.charAt(0);
 	} catch {
 		return "";
 	}
