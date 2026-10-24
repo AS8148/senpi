@@ -14,7 +14,6 @@
 
 ### Fixed
 
-- Forking a session file whose line-1 header was lost no longer fails with "source session file is empty or invalid". A file whose every entry is a session entry is forked whole under a new header, and an empty file and a file that is not a session now get distinct errors ([omo#10375](https://github.com/code-yeongyu/oh-my-openagent/issues/10375)).
 - A session move on a shared RPC host no longer blocks every other session while it copies, removes or scans the session: export, finish, import and the rebind an import commits through read the session, copy it and its resident blobs, and clean up bundles with asynchronous I/O, and the rebind reads only the header line where only the header is needed. A session path that is slow to resolve (for example on a stalled network mount) no longer delays moves of other sessions ([#3676](https://github.com/code-yeongyu/senpi/issues/3676)).
 - Concurrent prompts after a pause no longer duplicate held input or discard a newer update. A failed skill preparation no longer blocks later prompts, and a parent pause arriving during a skill read keeps commands and manual continues held until the parent resumes them ([#4047](https://github.com/code-yeongyu/senpi/pull/4047)).
 - Invoking a project skill no longer stalls the other sessions on a shared host while its file is read and checked; the link checks from #3796 are unchanged ([#3796](https://github.com/code-yeongyu/senpi/issues/3796)).
