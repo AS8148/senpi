@@ -9,6 +9,7 @@ import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.t
 import { takeOverStdout } from "../../core/output-guard.ts";
 import type { SecurityNoticeSnapshot } from "../../core/security-notices.ts";
 import { getDefaultSessionDir } from "../../core/session-manager.ts";
+import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { liveSessionWritePaths } from "../../core/session-write-reservation.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
 import { registerWebViewBroker } from "../../core/webview/webview-broker.ts";
@@ -168,6 +169,7 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 	switch (message.type) {
 		case "prepare": {
 			if (prepared) throw new Error("Session worker already prepared");
+			for (const limits of message.subscriptionLimits) subscriptionLimits.adopt(limits);
 			// Resolved here, not on the host loop, which never inspects caller paths (senpi#2898).
 			const profile = resolveMovedProfile(message.profile);
 			const path =
@@ -260,6 +262,9 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			entry.runtime.setPermissionPreset(message.preset);
 			send({ type: "result", request: message.request });
 			return;
+		case "subscription_limits":
+			for (const limits of message.accounts) subscriptionLimits.adopt(limits);
+			return;
 		case "cancel_ui":
 			binding?.cancelPendingExtensionUiRequests?.();
 			send({ type: "control_done", control: "cancel_ui" });
@@ -282,6 +287,9 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			process.exit(0);
 	}
 }
+
+// A turn in this isolate reports into its own store; the host mirrors it so its clients see it (senpi#3695).
+subscriptionLimits.subscribeMirror((limits) => send({ type: "subscription_limits", limits }));
 
 port.on("message", (message: HostToSessionWorker) => {
 	void handle(message).catch((cause: unknown) => {
