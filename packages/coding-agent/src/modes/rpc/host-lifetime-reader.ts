@@ -24,8 +24,13 @@ export function watchHostLifetime(fd: number, gone: () => void, unavailable: () 
 		return () => {
 			if (stopped) return;
 			stopped = true;
-			void reader.cancel().catch(() => undefined);
-			closeSync(fd);
+			// One owner closes the fd, after the cancel settles: Bun's file stream never closes a descriptor it was handed
+			// (probe, Bun 1.4.3: open after an awaited reader.cancel(), and closeSync then succeeds), but closing it under a
+			// read still in flight could let that read land on a reused descriptor number (senpi#3816 review).
+			void reader
+				.cancel()
+				.catch(() => undefined)
+				.finally(() => closeSync(fd));
 		};
 	}
 	const socket = new Socket({ fd, readable: true, writable: false });

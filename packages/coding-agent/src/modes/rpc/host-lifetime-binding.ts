@@ -10,7 +10,7 @@
  * shutdown removes the hop directory with it.
  */
 import { execFileSync } from "node:child_process";
-import { closeSync, constants, openSync, rmSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { watchHostLifetime } from "./host-lifetime-reader.ts";
 
@@ -63,9 +63,17 @@ export function armLifetimeBinding(
 /** O_NONBLOCK returns at once with or without a writer, so the host's event loop never blocks on the open. */
 function openFifoReadEnd(path: string | undefined): number | undefined {
 	if (path === undefined) return undefined;
+	let fd: number;
 	try {
-		return openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+		// O_NOFOLLOW: a symlink at the path is refused, never followed (senpi#3816 review).
+		fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
 	} catch {
 		return undefined;
 	}
+	// Only this user's own 0600 FIFO is the binding; anything else (a regular file reads EOF at once) is refused.
+	const stat = fstatSync(fd);
+	const owned = typeof process.getuid !== "function" || stat.uid === process.getuid();
+	if (stat.isFIFO() && owned && (stat.mode & 0o777) === 0o600) return fd;
+	closeSync(fd);
+	return undefined;
 }

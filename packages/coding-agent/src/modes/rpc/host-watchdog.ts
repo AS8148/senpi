@@ -17,12 +17,15 @@ import { rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { Socket } from "node:net";
 import { envValue } from "../../core/brand.ts";
-import { readProcessStartTime } from "../../utils/process-identity.ts";
-import { compareRecordedStart, readProcessStartTicks } from "../../utils/process-start-identity.ts";
 import { recordHostCrash } from "./host-crash-record.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { armLifetimeBinding, HOST_WATCH_LIFETIME_FIFO_ENV } from "./host-lifetime-binding.ts";
+import {
+	HOST_WATCH_BACKSTOP_INTERVAL_MS,
+	HOST_WATCH_PPID_BACKUP_INTERVAL_MS,
+	supervisorPoll,
+} from "./host-supervisor-poll.ts";
 
 /** Inherited fd whose EOF means "the supervisor died"; set by the supervisor only. */
 export const HOST_WATCH_FD_ENV = "SENPI_RPC_HOST_WATCH_FD";
@@ -36,30 +39,14 @@ export const HOST_WATCH_PSTART_ENV = "SENPI_RPC_HOST_WATCH_PSTART";
 /** Linux: the supervisor's `/proc` start ticks, compared on the boot clock (senpi#3816 review). */
 export const HOST_WATCH_PSTART_TICKS_ENV = "SENPI_RPC_HOST_WATCH_PSTART_TICKS";
 export { HOST_WATCH_LIFETIME_FIFO_ENV } from "./host-lifetime-binding.ts";
-/** While an event binding (lifetime FIFO or reopened stdin) is armed, the identity check is one long backstop. */
-export const HOST_WATCH_BACKSTOP_INTERVAL_MS = 30_000;
-/** Poll cadence for the recorded-supervisor poll when it is the only binding. */
-export const HOST_WATCH_PPID_INTERVAL_MS = 250;
-/**
- * Poll cadence for the ppid check while the inherited pipe is armed (senpi#3738). EOF on the pipe is
- * the primary signal and arrives from kqueue/epoll at once; the ppid check then only backs it up, so
- * an idle host does not wake four times a second for a signal the pipe already delivers.
- */
-export const HOST_WATCH_PPID_BACKUP_INTERVAL_MS = 5_000;
-/**
- * How often the recorded supervisor's start is compared (senpi#3816 review). The liveness check runs every tick and
- * catches a dead supervisor (ESRCH); its pid can only be reused after that death, so the start comparison only has to
- * catch a death between ticks and runs rarely: every 5 s on Linux (`/proc` start ticks, nothing spawned), every 60 s
- * elsewhere (`ps`), so an idle host spawns no processes (senpi#3738). Counted in ticks, so no clock step moves it.
- */
-export const HOST_WATCH_IDENTITY_INTERVAL_MS = 5_000;
-/**
- * Liveness cadence when the recorded supervisor identity is the host's ONLY binding (senpi#3816 review, senpi#3738):
- * on Linux a supervised host has no stdin lifetime fd and no slot 3. One free `kill(pid, 0)` a second; supervisor
- * death is then noticed within about a second instead of 250 ms, for a quarter of the idle wakeups.
- */
-export const HOST_WATCH_IDENTITY_ONLY_INTERVAL_MS = 1_000;
-export const HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS = 60_000;
+export {
+	HOST_WATCH_BACKSTOP_INTERVAL_MS,
+	HOST_WATCH_IDENTITY_INTERVAL_MS,
+	HOST_WATCH_IDENTITY_ONLY_INTERVAL_MS,
+	HOST_WATCH_PPID_BACKUP_INTERVAL_MS,
+	HOST_WATCH_PPID_INTERVAL_MS,
+	HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS,
+} from "./host-supervisor-poll.ts";
 export const HOST_CLEANUP_PATHS_ENV = "SENPI_RPC_HOST_CLEANUP_PATHS";
 
 export interface HostWatchdogConfig {
@@ -190,33 +177,26 @@ export function armHostWatchdog(
 		stopped = true;
 		for (const stop of disarmers.splice(0)) stop();
 	};
-	const ppid = config.ppid;
-	let stopPpid: (() => void) | undefined;
-	let ppidIntervalMs: number | undefined;
-	const armPpid = (intervalMs: number): void => {
-		if (stopped || ppid === undefined || ppidIntervalMs === intervalMs) return;
-		stopPpid?.();
-		ppidIntervalMs = intervalMs;
-		stopPpid = watchPpid(ppid, { ticks: config.processStartTicks, time: config.processStartTime }, fire, intervalMs);
-	};
-	disarmers.push(() => stopPpid?.());
-	// The poll runs only when the stdin lifetime reader is absent or failed. While a legacy inherited
-	// pipe is armed it merely backs that pipe up (senpi#3738); a pipe that cannot be read (never
-	// inherited, or failed later) leaves the poll as the only binding, so it goes back to the fast cadence.
-	// Sole binding: a recorded supervisor identity polls at the identity-only cadence; a bare legacy ppid keeps 250 ms.
-	const recordedIdentity = config.processStartTicks !== undefined || config.processStartTime !== undefined;
-	const soleInterval = recordedIdentity ? HOST_WATCH_IDENTITY_ONLY_INTERVAL_MS : HOST_WATCH_PPID_INTERVAL_MS;
+	const poll = supervisorPoll(
+		config.ppid,
+		{ ticks: config.processStartTicks, time: config.processStartTime },
+		fire,
+		() => stopped,
+	);
+	disarmers.push(() => poll.stop());
+	// The poll runs only when the lifetime binding is absent or failed. While a legacy inherited pipe is armed it merely
+	// backs that pipe up (senpi#3738); a pipe that cannot be read leaves the poll as the only binding (poll.soleInterval).
 	let pollWanted = false;
 	let pipeLive = false;
 	if (config.fd !== undefined) {
 		pipeLive = watchFdForEof(config.fd, fire, disarmers, () => {
 			pipeLive = false;
-			if (pollWanted) armPpid(soleInterval);
+			if (pollWanted) poll.arm(poll.soleInterval);
 		});
 	}
 	const fallback = (): void => {
 		pollWanted = true;
-		armPpid(pipeLive ? HOST_WATCH_PPID_BACKUP_INTERVAL_MS : soleInterval);
+		poll.arm(pipeLive ? HOST_WATCH_PPID_BACKUP_INTERVAL_MS : poll.soleInterval);
 	};
 	let stopLifetime: (() => void) | undefined;
 	try {
@@ -226,7 +206,7 @@ export function armHostWatchdog(
 	}
 	if (stopLifetime !== undefined) {
 		disarmers.push(stopLifetime);
-		armPpid(HOST_WATCH_BACKSTOP_INTERVAL_MS);
+		poll.arm(HOST_WATCH_BACKSTOP_INTERVAL_MS);
 	} else fallback();
 	return disarm;
 }
@@ -285,70 +265,6 @@ function watchFdForEof(
 		stream.destroy();
 	});
 	return true;
-}
-
-/**
- * Poll only the recorded supervisor, never process.ppid (a wrapper may be the parent). Every tick is a free
- * `kill(pid, 0)`: ESRCH is death. The recorded start is compared rarely, on one clock per platform
- * (`compareRecordedStart`); only an observed change is death, and an unreadable or missing identity is unknown.
- */
-function watchPpid(
-	supervisorPid: number,
-	recorded: { readonly ticks?: string; readonly time?: string },
-	fire: (reason: string) => void,
-	intervalMs: number,
-): () => void {
-	// Tests and embedders may bind the watchdog to this process itself; that
-	// is a valid live binding rather than evidence of supervisor loss.
-	if (supervisorPid === process.pid) return () => {};
-	const linux = process.platform === "linux";
-	const comparable = linux ? recorded.ticks !== undefined : recorded.time !== undefined;
-	const identityEveryTicks = Math.max(
-		1,
-		Math.round((linux ? HOST_WATCH_IDENTITY_INTERVAL_MS : HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS) / intervalMs),
-	);
-	const probe = {
-		ticks: (pid: number) => readProcessStartTicks(pid),
-		time: (pid: number) => readProcessStartTime(pid, process.platform, 1000),
-	};
-	let ticks = 0;
-	let stopped = false;
-	let probing = false;
-	const timer = setInterval(() => {
-		if (stopped) return;
-		if (!processAlive(supervisorPid)) {
-			fire(`supervisor pid ${supervisorPid} is gone`);
-			return;
-		}
-		ticks += 1;
-		if (!comparable || probing || ticks % identityEveryTicks !== 0) return;
-		probing = true;
-		void compareRecordedStart(supervisorPid, recorded, process.platform, probe)
-			.then(
-				(result) => {
-					if (!stopped && result === "changed") fire(`supervisor pid ${supervisorPid} start time changed`);
-				},
-				// Permission, timeout and probe failures are unknown, never death.
-				() => {},
-			)
-			.finally(() => {
-				probing = false;
-			});
-	}, intervalMs);
-	timer.unref?.();
-	return () => {
-		stopped = true;
-		clearInterval(timer);
-	};
-}
-
-function processAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (cause) {
-		return !(cause instanceof Error && "code" in cause && cause.code === "ESRCH");
-	}
 }
 
 // A failing capture must never block the cleanup or the shutdown it precedes.

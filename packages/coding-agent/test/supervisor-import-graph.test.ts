@@ -67,6 +67,10 @@ const INTERNAL_HOP_LEAVES = new Set(
 		// 62 modules with it (6 hop leaves before it), 3,404 source / 3,198 built bytes, 44 code lines; it imports only
 		// Node builtins and host-lifetime-reader, already a leaf.
 		"host-lifetime-binding",
+		// The recorded-supervisor poll, split out of host-watchdog.ts for its size (senpi#3816 review M2): moved code,
+		// no new dependency. Measured: 63 modules with it (7 hop leaves before it), 5,369 source / 5,081 built bytes,
+		// 89 code lines; it imports only process-identity and process-start-identity, both already in the graph.
+		"host-supervisor-poll",
 	]
 		.map((name) => `packages/coding-agent/dist/modes/rpc/${name}.js`)
 		// One clock domain per platform for the recorded supervisor start (senpi#3816 delta review): /proc start ticks

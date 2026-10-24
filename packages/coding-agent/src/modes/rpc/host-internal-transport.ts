@@ -5,6 +5,7 @@
 import type { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { VERSION } from "../../config.ts";
+import { HOST_WATCH_LIFETIME_FIFO_ENV } from "./host-lifetime-binding.ts";
 import type { HostWatchdogConfig } from "./host-watchdog.ts";
 import { getInternalHostBootstrap } from "./internal-bootstrap.ts";
 import { acceptInternalConnection } from "./internal-channel.ts";
@@ -22,6 +23,9 @@ export function internalHostTransport(
 	secret: Uint8Array | undefined,
 ): InternalHostTransport {
 	const bootstrap = getInternalHostBootstrap();
+	// The FIFO path is the host's alone: it is in `configured` now, so no tool or shell the host runs inherits it and
+	// could open the FIFO for writing to hold off shutdown (senpi#3816 review).
+	delete process.env[HOST_WATCH_LIFETIME_FIFO_ENV];
 	return {
 		watchdogConfig: configured && {
 			...configured,
