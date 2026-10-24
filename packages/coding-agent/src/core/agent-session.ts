@@ -6955,7 +6955,7 @@ export class AgentSession {
 			}
 			await this._deliverCustomMessage(
 				deliveryMessage,
-				{ ...options, ticket },
+				{ ...options, ticket, ...(queuedCarrier !== undefined ? { joinsQueuedCarrier: true } : {}) },
 				deferredTurnClaim,
 				releasedWake,
 				delivery,
@@ -7005,13 +7005,28 @@ export class AgentSession {
 		}
 	}
 
-	private _retireLifecycleDelivery(ticket: string, producerOwned: boolean): void {
-		for (const queued of this.agent.peekQueuedMessages({ all: true })) {
-			if (queued.role === "custom" && messageTicket(queued) === ticket) this.agent.removeQueuedMessage(queued);
+	/** A removed itemized message is never written: every send waiting on it settles now (senpi#4106). */
+	private _settleRemovedCarriers(removed: readonly AgentMessage[]): void {
+		for (const message of removed) {
+			const watcher = this._takePersistWatcher(message);
+			watcher?.failed(new QueuedDeliveryCleared(watcher.itemIds));
 		}
-		this._pendingNextTurnMessages = this._pendingNextTurnMessages.filter(
-			(queued) => messageTicket(queued) !== ticket,
-		);
+	}
+
+	private _retireLifecycleDelivery(ticket: string, producerOwned: boolean): void {
+		const removed: AgentMessage[] = [];
+		for (const queued of this.agent.peekQueuedMessages({ all: true })) {
+			if (queued.role === "custom" && messageTicket(queued) === ticket) {
+				this.agent.removeQueuedMessage(queued);
+				removed.push(queued);
+			}
+		}
+		this._pendingNextTurnMessages = this._pendingNextTurnMessages.filter((queued) => {
+			const carriesTicket = messageTicket(queued) === ticket;
+			if (carriesTicket) removed.push(queued);
+			return !carriesTicket;
+		});
+		this._settleRemovedCarriers(removed);
 		if (producerOwned) this.workObligations.retire(ticket);
 		else this.workObligations.cancel(ticket);
 	}
@@ -7022,6 +7037,8 @@ export class AgentSession {
 			triggerTurn?: boolean;
 			deliverAs?: "steer" | "followUp" | "nextTurn";
 			ticket?: string;
+			/** The send found the ticket's message queued when it was admitted, so it expects to join that carrier. */
+			joinsQueuedCarrier?: boolean;
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
 		releasedWake?: () => boolean,
@@ -7033,6 +7050,13 @@ export class AgentSession {
 			// The ticket's message is already queued: this send's receipts settle when that message is written.
 			if (itemized !== undefined) this._joinPersistWatcher(queuedCarrier, itemized);
 			deferredTurnClaim?.resolve("delegated");
+			return;
+		}
+		// A re-send that found the ticket's carrier queued, which a clear removed while it waited, must not be written
+		// with the retired ticket: it settles as cleared, like the send it would have joined (senpi#4125 review).
+		if (itemized !== undefined && options?.joinsQueuedCarrier === true) {
+			deferredTurnClaim?.resolve("finished-without-start");
+			itemized.failed(new QueuedDeliveryCleared(itemized.itemIds));
 			return;
 		}
 		const appMessage = {
@@ -8186,11 +8210,7 @@ export class AgentSession {
 		const clearedMessages = this.agent.peekQueuedMessages({ all: true });
 		this.agent.clearAllQueues();
 		this._releaseQueuedDeliveries(clearedDeliveries, "cleared");
-		// A cleared itemized message is never written: every send waiting on it settles now (senpi#4106).
-		for (const cleared of clearedMessages) {
-			const watcher = this._takePersistWatcher(cleared);
-			watcher?.failed(new QueuedDeliveryCleared(watcher.itemIds));
-		}
+		this._settleRemovedCarriers(clearedMessages);
 		this.externalAdmission.dropQueued();
 		this._emitQueueUpdate();
 		const cleared = { steering, followUp } as ClearedQueue;

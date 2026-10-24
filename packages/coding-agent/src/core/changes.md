@@ -65,6 +65,8 @@ The session owns the release array, prompt admission and held-input settlement b
 - `packages/coding-agent/src/core/agent-session.ts`: `clearQueue` takes the persist watcher of every queued message it removes and fails it with `QueuedDeliveryCleared`. The watcher map holds the narrower `PersistWatcher`, and `_joinPersistWatcher` no longer builds a `droppedByAbort` branch nothing could call.
 - `packages/coding-agent/src/core/itemized-send.ts`: adds `PersistWatcher` and the `QueuedDeliveryCleared` error (with the batch's `itemIds`).
 
+- `packages/coding-agent/src/core/agent-session.ts` (senpi#4125 review): `_settleRemovedCarriers` fails the persist watchers of every removed queued message; `clearQueue` and `_retireLifecycleDelivery` (an abort during a re-send) both use it, so no send waits on a message that will never be written. `_deliverCustomMessage` rejects an itemized send whose ticket a clear closed while it waited, instead of writing the retired ticket.
+
 ### Why
 
 - `packages/coding-agent/src/core/agent-session.ts`: a watcher settled only when its message was written or its write failed, so a queued itemized message removed by `clearQueue` left the send, and every re-send joined to it, waiting forever. Watchers in the map are only ever settled through `persisted` or `failed`, so the joined `droppedByAbort` was dead code.

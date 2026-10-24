@@ -1,5 +1,5 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SendMessageItem, SendMessageReceipt } from "../../../src/core/extensions/types.ts";
 import { QueuedDeliveryCleared } from "../../../src/core/itemized-send.ts";
 import { DeliveryTicketRefused } from "../../../src/core/work-obligations.ts";
@@ -349,5 +349,89 @@ describe("itemized sendMessage with a delivery ticket", () => {
 
 		// Then item b gets no receipt: the re-send is refused
 		expect(await settlesWithin(again, "re-send refusal")).toBeInstanceOf(DeliveryTicketRefused);
+	});
+
+	it("settles the queued batch when an abort during a re-send retires the ticket and removes its queued message", async () => {
+		// Given a running turn, a ticketed batch queued behind it, and a re-send held while its header is persisted
+		const fixture = await resumeFixture();
+		fixtures.push(fixture);
+		const ticket = openTicket(fixture, "result:abort-retire");
+		const toolStarted = fixture.toolStarted();
+		const running = fixture.h.session.prompt("start");
+		await toolStarted;
+		const ended = deliveryEnded(fixture, ticket);
+		const first = Promise.resolve(sendWithTicket(fixture, ticket)).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		await ended;
+		const manager = fixture.h.session.sessionManager;
+		const persistHeaderNow = manager.persistHeaderNow.bind(manager);
+		const headerHeld = Promise.withResolvers<void>();
+		const headerReached = Promise.withResolvers<void>();
+		vi.spyOn(manager, "persistHeaderNow").mockImplementationOnce(async () => {
+			headerReached.resolve();
+			await headerHeld.promise;
+			return persistHeaderNow();
+		});
+		const again = Promise.resolve(sendWithTicket(fixture, ticket)).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		await headerReached.promise;
+
+		// When the person aborts while the re-send waits, so the re-send retires the ticket and removes the queued message
+		await fixture.h.session.abort();
+		headerHeld.resolve();
+		fixture.releaseTool();
+		await running.catch(() => undefined);
+		await settle(fixture);
+		await again;
+
+		// Then the first send settles as cleared instead of waiting forever on a message that will never be written
+		expect(await settlesWithin(first, "first send after its carrier was removed")).toBeInstanceOf(
+			QueuedDeliveryCleared,
+		);
+	});
+
+	it("rejects a re-send whose queued carrier a clear removed while it waited, instead of writing the retired ticket", async () => {
+		// Given a running turn, a ticketed batch queued behind it, and a re-send held while its header is persisted
+		const fixture = await resumeFixture();
+		fixtures.push(fixture);
+		const ticket = openTicket(fixture, "result:clear-race");
+		const toolStarted = fixture.toolStarted();
+		const running = fixture.h.session.prompt("start");
+		await toolStarted;
+		const ended = deliveryEnded(fixture, ticket);
+		const first = Promise.resolve(sendWithTicket(fixture, ticket)).catch(() => undefined);
+		await ended;
+		const manager = fixture.h.session.sessionManager;
+		const persistHeaderNow = manager.persistHeaderNow.bind(manager);
+		const headerHeld = Promise.withResolvers<void>();
+		const headerReached = Promise.withResolvers<void>();
+		vi.spyOn(manager, "persistHeaderNow").mockImplementationOnce(async () => {
+			headerReached.resolve();
+			await headerHeld.promise;
+			return persistHeaderNow();
+		});
+		const again = Promise.resolve(sendWithTicket(fixture, ticket)).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		await headerReached.promise;
+
+		// When the queue is cleared while the re-send waits
+		fixture.h.session.clearQueue();
+		headerHeld.resolve();
+		fixture.releaseTool();
+		await running;
+		await settle(fixture);
+		await first;
+
+		// Then the re-send is rejected as cleared and nothing is written with the retired ticket
+		expect(await settlesWithin(again, "re-send after the clear")).toBeInstanceOf(QueuedDeliveryCleared);
+		expect(
+			fixture.h.session.messages.some((message) => message.role === "custom" && message.customType === WAKE),
+		).toBe(false);
 	});
 });
