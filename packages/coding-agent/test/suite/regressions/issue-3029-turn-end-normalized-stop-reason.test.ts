@@ -23,40 +23,43 @@ describe("turn_end boundary when the loop normalizes a response's stop reason (s
 			response: () => fauxAssistantMessage("done", { stopReason: "toolUse" }),
 			turns: 1,
 		},
-	])("Given $label when the turn ends then turn_end handlers get its persisted entry ID", async ({ response, turns }) => {
-		// given
-		const tool: AgentTool = {
-			name: "noop",
-			label: "Noop",
-			description: "Noop",
-			parameters: Type.Object({}),
-			execute: async () => ({ content: [{ type: "text", text: "done" }], details: {} }),
-		};
-		const entryIds: Array<string | undefined> = [];
-		const harness = await createHarness({
-			tools: [tool],
-			extensionFactories: [
-				(pi) => {
-					pi.on("turn_end", (event) => {
-						entryIds.push(event.messageEntryId);
-					});
-				},
-			],
-		});
-		harnesses.push(harness);
-		const errors: ExtensionError[] = [];
-		harness.getExtensionRunner().onError((error) => errors.push(error));
-		harness.setResponses([response(), fauxAssistantMessage("finished")]);
+	])(
+		"Given $label when the turn ends then turn_end handlers get its persisted entry ID",
+		async ({ response, turns }) => {
+			// given
+			const tool: AgentTool = {
+				name: "noop",
+				label: "Noop",
+				description: "Noop",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [{ type: "text", text: "done" }], details: {} }),
+			};
+			const entryIds: Array<string | undefined> = [];
+			const harness = await createHarness({
+				tools: [tool],
+				extensionFactories: [
+					(pi) => {
+						pi.on("turn_end", (event) => {
+							entryIds.push(event.messageEntryId);
+						});
+					},
+				],
+			});
+			harnesses.push(harness);
+			const errors: ExtensionError[] = [];
+			harness.getExtensionRunner().onError((error) => errors.push(error));
+			harness.setResponses([response(), fauxAssistantMessage("finished")]);
 
-		// when
-		await harness.session.prompt("go");
+			// when
+			await harness.session.prompt("go");
 
-		// then
-		expect(errors.filter((error) => error.extensionPath === "<boundary>")).toEqual([]);
-		expect(entryIds).toHaveLength(turns);
-		for (const id of entryIds) {
-			const entry = id === undefined ? undefined : harness.sessionManager.getEntry(id);
-			expect(entry?.type === "message" ? entry.message.role : undefined).toBe("assistant");
-		}
-	});
+			// then
+			expect(errors.filter((error) => error.extensionPath === "<boundary>")).toEqual([]);
+			expect(entryIds).toHaveLength(turns);
+			for (const id of entryIds) {
+				const entry = id === undefined ? undefined : harness.sessionManager.getEntry(id);
+				expect(entry?.type === "message" ? entry.message.role : undefined).toBe("assistant");
+			}
+		},
+	);
 });
