@@ -1,5 +1,4 @@
 import { once } from "node:events";
-import * as fs from "node:fs/promises";
 import { chmod, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -9,8 +8,32 @@ import { PublicRpcConnection } from "../../src/modes/rpc/rpc-public-auth.ts";
 import { RpcPublicEndpoint } from "../../src/modes/rpc/rpc-public-key.ts";
 import { Peer, sandbox, teardown } from "./rpc-public-auth-harness.ts";
 
+// node:fs/promises is an ESM namespace that vi.spyOn cannot redefine; the module mock routes every importer
+// (the code under test included) through these per-test hooks, which run before the real call.
+const fsHooks = vi.hoisted(() => ({
+	beforeOpen: undefined as ((path: string) => Promise<void> | void) | undefined,
+	lstatUid: undefined as ((path: string) => number | undefined) | undefined,
+}));
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>();
+	return {
+		...actual,
+		open: async (path: string, flags?: string | number, mode?: number) => {
+			await fsHooks.beforeOpen?.(path);
+			return actual.open(path, flags, mode);
+		},
+		lstat: async (path: string) => {
+			const info = await actual.lstat(path);
+			const uid = fsHooks.lstatUid?.(path);
+			return uid === undefined ? info : Object.assign(info, { uid });
+		},
+	};
+});
+
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
+	fsHooks.beforeOpen = undefined;
+	fsHooks.lstatUid = undefined;
 	vi.restoreAllMocks();
 	for (const close of cleanup.splice(0).reverse()) await close();
 });
@@ -59,14 +82,12 @@ describe.skipIf(process.platform === "win32")("public RPC launch key records", (
 		const publishing = new Promise<void>((resolve) => {
 			reached = resolve;
 		});
-		const realOpen = fs.open;
-		vi.spyOn(fs, "open").mockImplementation(async (...args) => {
-			if (args[0] === qa.endpoint.recordPath) {
+		fsHooks.beforeOpen = async (path) => {
+			if (path === qa.endpoint.recordPath) {
 				reached();
 				await held;
 			}
-			return realOpen(...args);
-		});
+		};
 		let answered = 0;
 		const server = createServer((socket) => {
 			const auth = new PublicRpcConnection(socket, qa.endpoint);
@@ -98,7 +119,7 @@ describe.skipIf(process.platform === "win32")("public RPC launch key records", (
 	it("closes held connections when publication fails", async () => {
 		const qa = await endpoint();
 		await mkdir(join(qa.agentDir, "rpc", "keys"), { recursive: true, mode: 0o700 });
-		await chmod(join(qa.agentDir, "rpc", "keys"), 0o755);
+		await chmod(join(qa.agentDir, "rpc"), 0o777);
 		const server = createServer((socket) => {
 			new PublicRpcConnection(socket, qa.endpoint);
 		});
@@ -108,6 +129,16 @@ describe.skipIf(process.platform === "win32")("public RPC launch key records", (
 		const closed = once(client.socket, "close");
 		await expect(qa.endpoint.publish()).rejects.toMatchObject({ code: "key_publication_failed" });
 		await closed;
+	});
+
+	it("tightens an existing user-owned keys directory before publishing", async () => {
+		const qa = await endpoint();
+		const keys = join(qa.agentDir, "rpc", "keys");
+		await mkdir(keys, { recursive: true, mode: 0o755 });
+		await chmod(keys, 0o755);
+		await qa.endpoint.publish();
+		expect((await stat(keys)).mode & 0o7777).toBe(0o700);
+		expect((await stat(qa.endpoint.recordPath)).mode & 0o7777).toBe(0o600);
 	});
 
 	it("collects only dead or reused-pid records in the existing gc pass", async () => {

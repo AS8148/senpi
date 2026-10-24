@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { chmod, mkdir, symlink, unlink, writeFile } from "node:fs/promises";
-import * as fs from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -13,8 +13,32 @@ import { RpcClient } from "../../src/modes/rpc/rpc-client.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import { proof, sandbox, teardown, type Wire } from "./rpc-public-auth-harness.ts";
 
+// node:fs/promises is an ESM namespace that vi.spyOn cannot redefine; the module mock routes every importer
+// (the code under test included) through these per-test hooks, which run before the real call.
+const fsHooks = vi.hoisted(() => ({
+	beforeOpen: undefined as ((path: string) => Promise<void> | void) | undefined,
+	lstatUid: undefined as ((path: string) => number | undefined) | undefined,
+}));
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>();
+	return {
+		...actual,
+		open: async (path: string, flags?: string | number, mode?: number) => {
+			await fsHooks.beforeOpen?.(path);
+			return actual.open(path, flags, mode);
+		},
+		lstat: async (path: string) => {
+			const info = await actual.lstat(path);
+			const uid = fsHooks.lstatUid?.(path);
+			return uid === undefined ? info : Object.assign(info, { uid });
+		},
+	};
+});
+
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
+	fsHooks.beforeOpen = undefined;
+	fsHooks.lstatUid = undefined;
 	vi.restoreAllMocks();
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
@@ -53,7 +77,12 @@ describe.skipIf(process.platform === "win32")("public RPC client verification", 
 		"mode",
 		"size",
 		"directory",
+		"root-0755",
 		"root-mode",
+		"root-other-write",
+		"root-owner",
+		"rpc-mode",
+		"rpc-world-write",
 		"version",
 		"launch-id",
 		"owner",
@@ -114,29 +143,35 @@ describe.skipIf(process.platform === "win32")("public RPC client verification", 
 			}
 			if (state === "mode") await chmod(record, 0o644);
 			if (state === "directory") await chmod(keys, 0o755);
-			if (state === "root-mode") await chmod(qa.agentDir, 0o755);
+			// Key root rule (#3795): realpath'd, user-owned, no group/other write; 0755 is accepted.
+			if (state === "root-0755") {
+				await chmod(qa.agentDir, 0o755);
+				await chmod(join(qa.agentDir, "rpc"), 0o755);
+			}
+			if (state === "root-mode") await chmod(qa.agentDir, 0o775);
+			if (state === "root-other-write") await chmod(qa.agentDir, 0o757);
+			if (state === "rpc-mode") await chmod(join(qa.agentDir, "rpc"), 0o775);
+			if (state === "rpc-world-write") await chmod(join(qa.agentDir, "rpc"), 0o777);
+			if (state === "root-owner") {
+				const root = realpathSync(qa.agentDir);
+				fsHooks.lstatUid = (path) => (path === root ? (process.getuid?.() ?? 0) + 1 : undefined);
+			}
 			if (state === "unreadable") {
-				const realOpen = fs.open;
-				vi.spyOn(fs, "open").mockImplementation((...args) => {
-					if (args[0] === record) return Promise.reject(Object.assign(new Error("denied"), { code: "EACCES" }));
-					return realOpen(...args);
-				});
+				fsHooks.beforeOpen = (path) => {
+					if (path === record) throw Object.assign(new Error("denied"), { code: "EACCES" });
+				};
 			}
 			if (state === "owner") {
-				const realStat = fs.lstat;
-				vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
-					const info = await realStat(...args);
-					return args[0] === keys ? Object.assign(info, { uid: (process.getuid?.() ?? 0) + 1 }) : info;
-				});
+				fsHooks.lstatUid = (path) => (path === keys ? (process.getuid?.() ?? 0) + 1 : undefined);
 			}
 			const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 			const options = { socketPath: qa.socket, keyRoot: qa.agentDir };
 			const client = new RpcClient(options);
 			cleanups.push(() => client.stop());
-			if (state === "valid" || state === "missing") {
+			if (state === "valid" || state === "missing" || state === "root-0755") {
 				await client.start();
 				expect(await client.listSessions()).toEqual([]);
-				expect(requests.some((request) => request.type === "authenticate")).toBe(state === "valid");
+				expect(requests.some((request) => request.type === "authenticate")).toBe(state !== "missing");
 				if (state === "missing")
 					expect(stderr.mock.calls.map(([text]) => String(text)).join("")).toContain(
 						`senpi rpc client: no key record for launch ${launchId} under ${qa.agentDir}; continuing unauthenticated (refused from the next release; set SENPI_RPC_KEY_ROOT to the host's agent dir)`,
