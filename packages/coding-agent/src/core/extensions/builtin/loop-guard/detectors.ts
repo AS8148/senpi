@@ -192,7 +192,9 @@ export function detectCycle(records: readonly ToolCallRecord[]): LoopGuardDetect
 function canonicalRotation(signatures: readonly string[]): readonly string[] {
 	let smallest = 0;
 	for (let i = 1; i < signatures.length; i++) {
-		if (signatures[i]! < signatures[smallest]!) smallest = i;
+		const current = signatures[i];
+		const best = signatures[smallest];
+		if (current !== undefined && best !== undefined && current < best) smallest = i;
 	}
 	return [...signatures.slice(smallest), ...signatures.slice(0, smallest)];
 }

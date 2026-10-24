@@ -37,7 +37,6 @@ describe("issue 3629: property sweep across repeat spacings", () => {
 				if (isBlockResult(result)) blockedCount++;
 			}
 			const notices = harness.customMessages.filter((message) => message.customType === "loop-guard:notice");
-			console.log(`spacing=${fillers} notices=${notices.length} blocked=${blockedCount}`);
 			// spacing 0 rides the consecutive ladder (base doubles 3/6/12/24/48/sat);
 			// every wider spacing rides the windowed path, which must stay bounded too.
 			expect(notices.length).toBeLessThanOrEqual(12);
