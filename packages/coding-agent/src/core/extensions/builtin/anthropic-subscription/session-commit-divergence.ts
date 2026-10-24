@@ -9,6 +9,16 @@ export type AssistantSemanticProjection = {
 };
 
 const MAX_DIVERGENCE_DEPTH = 16;
+// The walk starts at `arguments`, one level below the block the snapshot starts at, and still compares one level past
+// its cap; the snapshot copies two levels further so every value the walk can reach is a copy, not a shared reference.
+const MAX_SNAPSHOT_DEPTH = MAX_DIVERGENCE_DEPTH + 2;
+// Argument keys are model-produced data: only a short plain identifier is named in a path. Anything else (long,
+// or containing `.`/`[` that would make the path ambiguous) is named by its sorted position, never by its text.
+const PLAIN_KEY = /^[A-Za-z_$][A-Za-z0-9_$-]{0,63}$/;
+
+function keySegment(key: string, position: number): string {
+	return PLAIN_KEY.test(key) ? `.${key}` : `.<key#${position}>`;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -25,7 +35,7 @@ export function snapshotProjection(projection: AssistantSemanticProjection): Ass
 }
 
 function snapshotValue(value: unknown, depth: number): unknown {
-	if (depth > MAX_DIVERGENCE_DEPTH) return value;
+	if (depth > MAX_SNAPSHOT_DEPTH) return value;
 	if (Array.isArray(value)) return value.map((item) => snapshotValue(item, depth + 1));
 	if (!isRecord(value)) return value;
 	return Object.fromEntries(Object.keys(value).map((key) => [key, snapshotValue(value[key], depth + 1)]));
@@ -54,9 +64,10 @@ function firstDivergedSegment(left: unknown, right: unknown, depth: number): str
 		return left.length === right.length ? undefined : `[${shared}]`;
 	}
 	if (isRecord(left) && isRecord(right)) {
-		for (const key of [...new Set([...Object.keys(left), ...Object.keys(right)])].sort()) {
+		const keys = [...new Set([...Object.keys(left), ...Object.keys(right)])].sort();
+		for (const [position, key] of keys.entries()) {
 			const inner = firstDivergedSegment(left[key], right[key], depth + 1);
-			if (inner !== undefined) return `.${key}${inner}`;
+			if (inner !== undefined) return `${keySegment(key, position)}${inner}`;
 		}
 		return undefined;
 	}

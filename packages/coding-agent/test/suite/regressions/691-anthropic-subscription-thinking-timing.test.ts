@@ -49,7 +49,7 @@ describe("issue #691: Claude SDK OAuth thinking timing continuity", () => {
 			const timingEnriched = assistantMessage(timing);
 			timingOnlyCommit.captureProviderFinal(key, streamed);
 
-			expect(timingOnlyCommit.commit(key, timingEnriched, streamed.model)).toEqual({ outcome: "clean" });
+			expect(timingOnlyCommit.commit(key, timingEnriched, streamed.model)).toStrictEqual({ outcome: "clean" });
 			expect(timingEnriched.content[0]).toMatchObject(timing);
 		}
 

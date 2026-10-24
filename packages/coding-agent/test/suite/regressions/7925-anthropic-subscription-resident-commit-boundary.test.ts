@@ -176,7 +176,7 @@ describe("oh-my-openagent#7925 resident commit boundary", () => {
 		const committed = { ...streamed, content: [thinking, text, toolCall] };
 		const boundary = new AssistantCommitBoundary();
 		boundary.captureProviderFinal("metadata", streamed);
-		expect(boundary.commit("metadata", committed, MODEL_ID)).toEqual({ outcome: "clean" });
+		expect(boundary.commit("metadata", committed, MODEL_ID)).toStrictEqual({ outcome: "clean" });
 
 		const rewrites = {
 			"content[1].text": [thinking, { ...text, text: "other" }, toolCall],

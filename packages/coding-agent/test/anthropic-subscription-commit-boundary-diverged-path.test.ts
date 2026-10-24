@@ -71,14 +71,14 @@ describe("issue #1975: assistant_rewritten names the first diverged path", () =>
 		const boundary = new AssistantCommitBoundary();
 		boundary.captureProviderFinal("clean", toolCallAssistant(SUMMARY_80));
 
-		expect(boundary.commit("clean", toolCallAssistant(SUMMARY_80), MODEL_ID)).toEqual({ outcome: "clean" });
+		expect(boundary.commit("clean", toolCallAssistant(SUMMARY_80), MODEL_ID)).toStrictEqual({ outcome: "clean" });
 	});
 
 	it("keeps a non-resident commit path-free", () => {
 		const boundary = new AssistantCommitBoundary();
 		boundary.captureProviderFinal("foreign", toolCallAssistant(SUMMARY_80));
 
-		expect(boundary.commit("foreign", toolCallAssistant(SUMMARY_80), "claude-other")).toEqual({
+		expect(boundary.commit("foreign", toolCallAssistant(SUMMARY_80), "claude-other")).toStrictEqual({
 			outcome: "not-resident",
 		});
 	});
@@ -134,6 +134,16 @@ describe("issue #1975: assistant_rewritten names the first diverged path", () =>
 			"content[0].arguments.items[1]",
 			[{ type: "toolCall", id: "t1", name: "eval", arguments: { items: ["a"] } }],
 			[{ type: "toolCall", id: "t1", name: "eval", arguments: { items: ["a", "c"] } }],
+		],
+		[
+			"content[0].arguments.<key#1>",
+			[{ type: "toolCall", id: "t1", name: "eval", arguments: { a: "x", "b.c[0]": "y" } }],
+			[{ type: "toolCall", id: "t1", name: "eval", arguments: { a: "x", "b.c[0]": "z" } }],
+		],
+		[
+			"content[0].arguments.<key#0>",
+			[{ type: "toolCall", id: "t1", name: "eval", arguments: { ["k".repeat(65)]: "x" } }],
+			[{ type: "toolCall", id: "t1", name: "eval", arguments: { ["k".repeat(65)]: "y" } }],
 		],
 		["model", [{ type: "text", text: "a" }], [{ type: "text", text: "a" }]],
 	] as const)("names %s first", (path, providerContent, committedContent) => {

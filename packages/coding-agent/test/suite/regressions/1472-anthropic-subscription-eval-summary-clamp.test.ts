@@ -72,7 +72,7 @@ describe("issue #1472: preparing eval arguments must not break Claude SDK contin
 
 		const { outcome, executed } = commitAfterPreparing(message);
 
-		expect(outcome).toEqual({ outcome: "clean" });
+		expect(outcome).toStrictEqual({ outcome: "clean" });
 		expect(toolCallOf(message).arguments.summary).toBe(summary);
 		expect(executed.summary).toBe("inspect the cache state");
 	});
@@ -83,7 +83,7 @@ describe("issue #1472: preparing eval arguments must not break Claude SDK contin
 
 		const { outcome, executed } = commitAfterPreparing(message);
 
-		expect(outcome).toEqual({ outcome: "clean" });
+		expect(outcome).toStrictEqual({ outcome: "clean" });
 		expect(toolCallOf(message).arguments.summary).toBe(summary);
 		expect(executed.summary).toBe(summary);
 	});
@@ -93,7 +93,7 @@ describe("issue #1472: preparing eval arguments must not break Claude SDK contin
 
 		const { outcome } = commitAfterPreparing(message);
 
-		expect(outcome).toEqual({ outcome: "clean" });
+		expect(outcome).toStrictEqual({ outcome: "clean" });
 		expect(toolCallOf(message).arguments).toEqual({ action: "peek", cell_id: "cell-1" });
 	});
 
