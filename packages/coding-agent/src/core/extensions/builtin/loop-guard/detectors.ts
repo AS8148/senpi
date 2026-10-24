@@ -201,7 +201,7 @@ function maximumObservableCount(detection: LoopGuardDetection): number {
 export class NoticeGate {
 	private entries = new Map<string, GateEntry>();
 
-	private static key(detection: LoopGuardDetection): string {
+	static key(detection: LoopGuardDetection): string {
 		// Windowed and consecutive detections of one signature throttle separately:
 		// a windowed entry must survive filler calls (its count keeps growing), while
 		// a consecutive entry must expire on any break so a new run notifies at 3 again
