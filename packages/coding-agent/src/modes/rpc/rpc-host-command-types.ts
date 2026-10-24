@@ -21,6 +21,8 @@ export type RpcCommand =
 	| {
 			id?: string;
 			type: "get_protocol_info";
+			/** Public POSIX endpoint challenge (wire contract v1.1); ignored by hosts that predate authentication. */
+			auth?: { readonly client_nonce: string };
 			/** An observing read: this connection never counts as host activity (docs/rpc.md, idle exit). */
 			observe?: boolean;
 	  }

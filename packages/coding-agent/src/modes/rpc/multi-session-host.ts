@@ -1,4 +1,3 @@
-import { chmod } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { basename, dirname, join } from "node:path";
 import type { Duplex } from "node:stream";
@@ -27,14 +26,14 @@ import { reopenHandoverParkedSessions } from "./host-handover-reopen.ts";
 import { performIdleHandover } from "./host-handover-wire.ts";
 import { EXPECTED_RUNTIME_BUILD_ID_ENV } from "./host-idle-handover.ts";
 import { type HostIdleOverrides, RPC_CLOSE_GRACE_MS_ENV, resolveHostIdlePolicy } from "./host-idle-policy.ts";
-import { internalHostTransport } from "./host-internal-transport.ts";
+import { hostWatchdogBinding, internalHostTransport } from "./host-internal-transport.ts";
 import { parseIdleExitMs } from "./host-lifecycle.ts";
 import { prepareSocketPath } from "./host-lifecycle-proxy.ts";
 import { createZeroSessionTrim, startHostObservers } from "./host-observers.ts";
 import { runAsHostGenerationProcess } from "./host-process-role.ts";
 import { createEndpointReservations } from "./host-reservations.ts";
 import { hostChildDrainRequestFile, watchDrainRequest } from "./host-stop-intent.ts";
-import { armHostWatchdog, readHostWatchdogConfigFromBrandEnv } from "./host-watchdog.ts";
+import { armHostWatchdog } from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { hostGeneration, hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import { rpcCommandShapeError } from "./rpc-input-validation.ts";
@@ -50,17 +49,12 @@ import {
 	type SocketFileIdentity,
 	shieldSocketDuringClose,
 	socketEntryReplaced,
-	statSocketIdentity,
 	unlinkOwnedSocket,
 	waitForSocketIdentityFile,
 } from "./socket-ownership.ts";
+import { formatSocketAddress, listen, resolveSocketPath } from "./host-socket-bind.ts";
 import { socketSink } from "./socket-sink.ts";
-import {
-	ensureSocketSecret,
-	resolveSocketTransportAddress,
-	SOCKET_SECRET_FILE_ENV,
-	socketSecretPath,
-} from "./socket-transport.ts";
+import { ensureSocketSecret, SOCKET_SECRET_FILE_ENV, socketSecretPath } from "./socket-transport.ts";
 import { WorkerSessionRegistry } from "./worker-session-registry.ts";
 
 export interface MultiSessionHostOptions {
@@ -331,7 +325,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			...(canHandOver && {
 				endpoint: {
 					agentDir: options.agentDir,
-					socket: readHostWatchdogConfigFromBrandEnv()?.publicSocket ?? socketPath,
+					socket: hostWatchdogBinding()?.publicSocket ?? socketPath,
 				},
 				handover: {
 					identity: () => ({
@@ -342,7 +336,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 					perform: (request) =>
 						performIdleHandover({
 							request,
-							socket: readHostWatchdogConfigFromBrandEnv()?.publicSocket ?? socketPath,
+							socket: hostWatchdogBinding()?.publicSocket ?? socketPath,
 							agentDir: options.agentDir,
 						}),
 					log: hostLog,
@@ -367,7 +361,12 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		process.platform === "win32"
 			? await ensureSocketSecret(process.env[SOCKET_SECRET_FILE_ENV] ?? socketSecretPath(socketPath))
 			: undefined;
-	const { watchdogConfig, admit } = internalHostTransport(readHostWatchdogConfigFromBrandEnv(), secret);
+	const transport = internalHostTransport(hostWatchdogBinding(), secret, {
+		agentDir: options.agentDir,
+		socket: socketPath,
+		log: hostLog,
+	});
+	const { watchdogConfig, admit } = transport;
 	// This host's OWN copy of the crash-path cleanup list. A drain empties it: once a successor
 	// generation is registered, the daemon state files under those paths describe the successor,
 	// and a crash of this (already replaced) host must not take them with it.
@@ -491,6 +490,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			}
 			if (watchdogCleanup) await watchdogCleanup;
 		} finally {
+			await transport.dispose();
 			// Explicitly terminate after every shutdown trigger. Windows named-pipe
 			// handles are not fully controllable from JS, and an unresolved cleanup
 			// must not leave this daemon or its public endpoint alive.
@@ -560,6 +560,8 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		setImmediate(killTrackedDetachedChildren);
 	});
 	boundIdentity = await listen(server, socketPath, secret);
+	// A key record that cannot be published safely ends this host: held connections are refused, never served keyless.
+	await transport.publish(() => shutdown(1));
 	if (supervisorPublicOwnerFile) {
 		// The supervisor publishes its public-socket token after this internal
 		// listener is ready, so a short bounded wait keeps the lifecycles in step
@@ -616,7 +618,7 @@ function errorMessage(cause: unknown): string {
  * (abstract sockets, a supervised win32 host, whose supervisor publishes none).
  */
 function hostSessionContext(socketPath: string): SessionContext {
-	const supervised = readHostWatchdogConfigFromBrandEnv();
+	const supervised = hostWatchdogBinding();
 	const endpoint = supervised === undefined ? socketPath : supervised.publicSocket;
 	if (endpoint === undefined || endpoint.startsWith("\0")) return { host_instance: hostInstanceId() };
 	const directory = canonicalSessionPath(dirname(endpoint));
@@ -635,44 +637,9 @@ function listenSocketPath(options: MultiSessionHostOptions): string | undefined 
  * socket or every generation hashes a different directory (senpi#3282). Bare hosts bind the path.
  */
 function publicEndpointSocket(options: MultiSessionHostOptions): string | undefined {
-	const supervised = readHostWatchdogConfigFromBrandEnv();
+	const supervised = hostWatchdogBinding();
 	if (supervised !== undefined) return supervised.publicSocket;
 	return listenSocketPath(options);
-}
-
-function resolveSocketPath(value: string, agentDir: string): string {
-	if (value === "unix://") return join(agentDir, "rpc", "rpc.sock");
-	if (value.startsWith("unix://")) {
-		const path = value.slice("unix://".length);
-		if (path.length === 0) return join(agentDir, "rpc", "rpc.sock");
-		if (path.startsWith("@") && process.platform === "linux") return `\0${path.slice(1)}`;
-		return path;
-	}
-	return value;
-}
-
-function formatSocketAddress(socketPath: string): string {
-	return socketPath.startsWith("\0") ? `unix://@${socketPath.slice(1)}` : `unix://${socketPath}`;
-}
-
-function listen(server: Server, socketPath: string, secret?: Uint8Array): Promise<SocketFileIdentity | undefined> {
-	return new Promise((resolve, reject) => {
-		server.once("error", reject);
-		server.listen(resolveSocketTransportAddress(socketPath, process.platform, secret), async () => {
-			server.off("error", reject);
-			try {
-				if (process.platform !== "win32" && !socketPath.startsWith("\0")) {
-					await chmod(socketPath, 0o600);
-					// Record which filesystem entry THIS listener created; shutdown
-					// removes the path only while this identity still matches.
-					return resolve(await statSocketIdentity(socketPath));
-				}
-				resolve(undefined);
-			} catch (cause) {
-				reject(cause);
-			}
-		});
-	});
 }
 
 function closeServer(server: Server): Promise<void> {
