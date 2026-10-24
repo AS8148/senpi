@@ -1,3 +1,40 @@
+## 2026-10-18 - A key release alone does not re-arm a yielded main-screen mouse (senpi#3604 follow-up)
+
+### What changed
+
+- `packages/tui/src/tui-main-screen.ts`: while the mouse is yielded to the terminal, input re-arms tracking only when it is neither a terminal report nor a Kitty key release (`isKeyRelease`).
+
+### Why
+
+- With the Kitty keyboard protocol, a key held while the first wheel notch arrives sends its release afterwards, which re-armed tracking at once and cost another notch. Regression: `packages/tui/test/tui-main-screen-mouse.test.ts` ("a Kitty key release alone does not re-arm after a yield").
+
+### Why an extension could not handle it
+
+- Mouse tracking and input routing belong to the renderer.
+
+### Expected merge conflict zones
+
+- LOW: the re-arm condition in `TuiMainScreen.handleMouseInput`.
+
+## 2026-10-23 - Product copy punctuation (senpi#4040)
+
+### What changed
+
+- `packages/tui/src/utils.ts`: replace em dashes in copy with ordinary punctuation, or document an intentional non-copy lint exception.
+
+### Why
+
+- The product-copy oxlint rule rejects em dashes in strings, templates and JSX text. Existing copy must pass it without changing control flow or punctuation matching.
+
+### Why an extension could not handle it
+
+- These source strings and lint directives are read before runtime extensions can rewrite them.
+
+### Expected merge conflict zones
+
+- The listed copy strings and adjacent lint comments only.
+
+
 ## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
 
 ### What changed

@@ -1,3 +1,21 @@
+## 2026-10-12 - Remove the /llama llama.cpp integration (senpi#3202)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `KnownClassifierApi` drops the `"llama-cpp-classify"` member.
+
+### Why
+
+- `packages/ai/src/types.ts`: Q ordered removal of the `/llama` feature, including its dedicated classifier API.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: an extension cannot narrow the shared `KnownClassifierApi` type union.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the `KnownClassifierApi` union.
+
 ## 2026-10-21 - ModelCost.unknown and Usage.costUnknown (senpi#3844)
 
 ### What changed

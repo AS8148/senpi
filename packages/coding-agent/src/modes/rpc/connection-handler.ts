@@ -631,6 +631,16 @@ export function createRpcConnectionHandler(
 			} as RpcExtensionUIRequest);
 		},
 
+		setSubagentCost(costUsd: number | undefined): void {
+			// Fire and forget, like setStatus: a client that renders the footer cost adds it there.
+			output({
+				type: "extension_ui_request",
+				id: crypto.randomUUID(),
+				method: "setSubagentCost",
+				costUsd: costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0 ? costUsd : undefined,
+			} as RpcExtensionUIRequest);
+		},
+
 		setWorkingMessage(_message?: string): void {
 			// Working message not supported in RPC mode - requires TUI loader access
 		},

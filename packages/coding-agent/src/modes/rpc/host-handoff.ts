@@ -34,6 +34,7 @@ import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
 import { STOP_WAIT_BUDGET_MS } from "./host-ensure-stop.ts";
 import { handoffUnregisteredHost, SESSION_COUNT_TIMEOUT_MS } from "./host-handoff-unregistered.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
+import { electPointer } from "./host-pointer-election.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
 import { SUCCESSOR_START_BUDGET_MS, startSuccessor } from "./host-successor.ts";
 
@@ -143,6 +144,8 @@ export async function handoffHostLocked(options: HandoffHostOptions): Promise<Ha
 	if (!host.capabilities.includes(GENERATION_HANDOFF_CAPABILITY)) {
 		return { action: "refuse", reason: "handoff_unsupported", upgradeable: false };
 	}
+	// A pointer an earlier prune dropped is given back to the one proven live generation (senpi#1911).
+	await electPointer(paths);
 	const registered = await readHostRegistration(paths);
 	const owner = await provenOwner(registered, options.socket);
 	if (!owner) return handoffUnregisteredHost(options, paths, host);

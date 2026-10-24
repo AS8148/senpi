@@ -1629,6 +1629,12 @@ export type RpcExtensionUIRequest =
 	| {
 			type: "extension_ui_request";
 			id: string;
+			method: "setSubagentCost";
+			costUsd: number | undefined;
+	  }
+	| {
+			type: "extension_ui_request";
+			id: string;
 			method: "setWidget";
 			widgetKey: string;
 			widgetLines: string[] | undefined;

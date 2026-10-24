@@ -1074,7 +1074,7 @@ which prints the bare socket path).
   `senpi host handoff` command.
 - `status` prints `{ reachable, lifecycle, socket, pid, instanceId, generation, engineVersion, capabilities,
   launchProfile, runtimeBuildId, handover, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
-  zombies, rss_mb, host_rss_mb, host_footprint_mb, open_fds, memory_pressure, env_keys, generations, crashes, shard, session_rows,
+  zombies, rss_mb, host_rss_mb, host_footprint_mb, open_fds, memory_pressure, env_keys, generations, pointer, crashes, shard, session_rows,
   claims_live, claims }` and exits 3 when nothing answers - with the same
   field set, so a caller parses one shape and branches on one boolean. The additive `lifecycle` field is
   `"ready"` while an answering supervised host accepts opens, `"stopping"` while it shuts down or drains,
@@ -1097,6 +1097,16 @@ which prints the bare socket path).
   still claims in `reservations/` - the one occupancy number that is observable for a generation which no
   longer answers on the socket. Records of generations that ended are pruned by the read itself, so a status
   never lists a dead pid.
+
+  `pointer` (additive) says which generation the daemon directory names as the one serving the socket:
+  `{ state: "current", instanceId, candidates: [] }` normally. When the pruned pointer named a dead generation
+  (or none exists), the read gives it back to the ONE generation whose record proves it still serves this socket
+  (its own instance id and this public socket path, a live pid with the recorded start time, and no stop intent or
+  drain request), reported as `{ state: "elected", instanceId, candidates: [instanceId] }`. With zero or several
+  such generations nothing is elected: `{ state: "missing", instanceId: null, candidates }` lists the ones it saw,
+  and `host stop` / `host handoff` then refuse `unknown_owner`. `host stop` and `host handoff` run the same
+  election under the ensure lock; `status --all` only reports it. An election never replaces a pointer another
+  writer created meanwhile, and a prune never removes a pointer a registration replaced after the prune read it.
 
   The last five fields and `memory_pressure` are additive (a client that does not know them ignores them):
   - `memory_pressure`: whether the ANSWERING generation's memory sampler currently reads its footprint above
@@ -2244,7 +2254,9 @@ The agent's tool results are typed in `details`: `{ status: "listed", targets }`
 
 It comes after the run's `agent_end`, and only when no new run has started meanwhile; if one has, the notice follows that run's settle instead. At that point `release_session` finds the session quiet. The host then runs the ordinary move: `release_session { reason: "move", moveId, target }` from its own attached connection (which does not count as another client, so no `force` is needed; another attached client makes it refuse `attached` and the session stays writable), `move_session export`, the transport to the receiver, `import`, `status` and `finish`. The release ends this runtime: `session_released` records `move_id`, `target` and `session_id`, and the thread keeps its id, conversation and queued input (`dropped.user_messages` travels with `export`). A host that decides not to move after `relocation_due` changes nothing; the session stays writable here, and the host should tell the agent (for example with a follow-up prompt).
 
-`relocation_due` is delivered **at most once**. The scheduled move lives only in the running host: it is dropped, and no notice follows, when the user aborts any run while the move is scheduled (the run that asked for it, or a later run the notice was waiting behind: the user's control wins), when the session closes or its runtime is replaced, when the connection that accepted it leaves the session before the notice (`close_session`, `detach_connection`, a dropped socket) or no longer offers relocation, and when the host process ends. A host must therefore time out an accepted move that never receives `relocation_due` and roll back what it prepared (a readied receiver expires after 10 minutes on its own).
+`relocation_due` is delivered **at most once**. The schedule lives only in the running host: no due event follows when the user aborts any run while it is scheduled (the run that asked for it, or a later run the notice was waiting behind: the user's control wins), when the session closes or its runtime is replaced, when the connection that accepted it leaves the session before the notice (`close_session`, `detach_connection`, a dropped socket) or no longer offers relocation, and when the host process ends. A host must therefore time out an accepted request that never receives `relocation_due` and roll back what it prepared (a readied receiver expires after 10 minutes on its own).
+
+If the schedule is cleared because the offering connection left, the user aborted, or the offering capability was withdrawn or taken over by another connection, the agent receives exactly one custom session message of type `session_relocation`, with `details: { status: "dropped", reason, moveId, target }`. The reason is respectively `disconnected`, `aborted`, or `withdrawn`; `moveId` and `target` identify the accepted request. A withdrawal during a long run is reported when the run settles. After a user abort, the notice is appended at `agent_settled`, before another prompt is needed, and is saved even if the session then closes. The message says the session stays on this computer and the agent should keep working here. It is context only (`display: false`, `triggerTurn: false`): it never starts another turn or resumes a user-stopped run. This is a session message through the existing message events, not another host request or a new RPC event type. Session disposal and process exit still have no later agent notice.
 
 ### Host self-observation (event-loop stalls and memory pressure)
 
@@ -5264,6 +5276,21 @@ Set or clear a status entry in the footer/status bar. Fire-and-forget.
 ```
 
 Send `statusText: undefined` (or omit it) to clear the status entry for that key.
+
+#### setSubagentCost
+
+Report the USD the subagent tree under this session has spent, which the TUI footer shows after the session's own cost as `$0.380 (+1.270)`. Fire-and-forget.
+
+```json
+{
+  "type": "extension_ui_request",
+  "id": "uuid-7",
+  "method": "setSubagentCost",
+  "costUsd": 1.27
+}
+```
+
+`costUsd: undefined` (or omitted) clears it. A negative or non-finite figure is sent as `undefined`.
 
 #### setWidget
 
