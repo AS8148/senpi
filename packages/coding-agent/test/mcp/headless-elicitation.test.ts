@@ -65,7 +65,7 @@ describe("headless MCP elicitation (senpi#4185)", () => {
 		const ui = {
 			confirm: vi.fn(async () => false),
 			input: vi.fn(async () => undefined),
-			select: vi.fn(async () => undefined),
+			select: vi.fn(async () => "No"),
 		};
 		for (const handler of extension.handlers.get("before_agent_start") ?? []) {
 			await handler(
@@ -84,9 +84,9 @@ describe("headless MCP elicitation (senpi#4185)", () => {
 		expect(await handle(booleanForm)).toEqual(
 			hasUI ? { action: "accept", content: { confirmed: false } } : { action: "decline" },
 		);
-		expect(ui.confirm).toHaveBeenCalledTimes(hasUI ? 1 : 0);
+		expect(ui.confirm).not.toHaveBeenCalled();
 		expect(ui.input).not.toHaveBeenCalled();
-		expect(ui.select).not.toHaveBeenCalled();
+		expect(ui.select).toHaveBeenCalledTimes(hasUI ? 1 : 0);
 	});
 
 	it.each(["legacy", "modern"] as const)("advertises UI support only in UI modes over %s HTTP", async (era) => {

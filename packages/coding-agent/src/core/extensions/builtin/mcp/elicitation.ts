@@ -3,8 +3,8 @@
 // The client declares the capability as an EMPTY object — Spring-AI servers
 // reject richer shapes (FieldCoding lesson from the comparison corpus) — and
 // answers elicitation/create requests mid tool-call by walking the requested
-// flat-primitive schema through sequential ctx.ui primitives (input/select/
-// confirm; NEVER ctx.ui.custom, which is undefined in RPC mode). Without a UI
+// flat-primitive schema through sequential ctx.ui primitives (input/select;
+// NEVER ctx.ui.custom, which is undefined in RPC mode). Without a UI
 // (print mode) the request is declined immediately — spec-correct, no hang.
 // The whole form is bounded by a timeout that resolves to cancel so a wedged
 // dialog can never wedge the tool-call pipeline. URL mode is deliberately not
@@ -25,7 +25,7 @@ export function mcpClientCapabilities(elicitationEnabled = true): { elicitation?
 
 export const MCP_ELICITATION_TIMEOUT_MS = 5 * 60 * 1000;
 
-type ElicitationUi = Pick<ExtensionUIContext, "input" | "select" | "confirm">;
+type ElicitationUi = Pick<ExtensionUIContext, "input" | "select">;
 
 export type McpElicitationUiProvider = () => ElicitationUi | undefined;
 export interface McpElicitationUiOwner {
@@ -116,7 +116,27 @@ async function collectForm(
 	for (const [name, property] of Object.entries(requestedSchema.properties ?? {})) {
 		const title = `${message} - ${property.title ?? name}`;
 		if (property.type === "boolean") {
-			content[name] = await ui.confirm(title, property.description ?? name);
+			// confirm collapses cancellation into false, including automated RPC replies.
+			// A selection preserves decline separately from a human's explicit No.
+			const picked = await ui.select(property.description ? `${title}\n${property.description}` : title, [
+				"Yes",
+				"No",
+			]);
+			// The thread gateway also accepts y/n and true/false, ignoring case and whitespace.
+			switch (picked?.trim().toLowerCase()) {
+				case "yes":
+				case "y":
+				case "true":
+					content[name] = true;
+					break;
+				case "no":
+				case "n":
+				case "false":
+					content[name] = false;
+					break;
+				default:
+					return { action: "decline" };
+			}
 			continue;
 		}
 		if (Array.isArray(property.enum) && property.enum.length > 0) {
@@ -126,7 +146,8 @@ async function collectForm(
 			continue;
 		}
 		const answer = await ui.input(title, property.description);
-		if (answer === undefined || answer.length === 0) {
+		if (answer === undefined) return { action: "decline" };
+		if (answer.length === 0) {
 			if (required.has(name)) return { action: "decline" };
 			continue;
 		}
@@ -137,6 +158,10 @@ async function collectForm(
 			continue;
 		}
 		content[name] = answer;
+	}
+	// Even a fieldless form needs an explicit submission rather than an automatic accept.
+	if (Object.keys(content).length === 0 && (await ui.select(message, ["Submit", "Decline"])) !== "Submit") {
+		return { action: "decline" };
 	}
 	return { action: "accept", content };
 }
