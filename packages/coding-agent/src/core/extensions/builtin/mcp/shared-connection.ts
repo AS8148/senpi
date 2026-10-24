@@ -72,13 +72,25 @@ export class SharedMcpConnection {
 							},
 						},
 			logger,
-			elicitationUiProvider: () => {
-				// SDK server requests carry no originating tool-call id.
-				const owners = [...this.#calls.keys()];
-				return owners.length === 1 && this.leases.has(owners[0])
-					? owners[0].options.elicitationUiProvider?.()
-					: undefined;
-			},
+			elicitationUiProvider: Object.assign(
+				() => {
+					// SDK server requests carry no originating tool-call id.
+					const owners = [...this.#calls.keys()];
+					return owners.length === 1 && this.leases.has(owners[0])
+						? owners[0].options.elicitationUiProvider?.()
+						: undefined;
+				},
+				{
+					enforced: () => [...this.leases].some((lease) => lease.options.elicitationUiProvider?.enforced?.()),
+					eligible: () =>
+						this.leases.size > 0 &&
+						[...this.leases].every(
+							(lease) =>
+								lease.options.elicitationEnabled !== false &&
+								lease.options.elicitationUiProvider?.eligible?.() !== false,
+						),
+				},
+			),
 		});
 		this.connection.onToolsChanged(() => {
 			this.#catalog = undefined;

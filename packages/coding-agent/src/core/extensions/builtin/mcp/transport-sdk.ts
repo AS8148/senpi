@@ -175,7 +175,7 @@ function pipeStderr(
 		for (const line of lines) if (line.length > 0) logger.stderr(line);
 	};
 	protocol.resolveStdioDiagnostics = (modern) => {
-		if (!modern) {
+		if (!modern && !protocol.privateForms) {
 			append(undecided);
 			if (stderrEnded && pending.length > 0) {
 				logger.stderr(pending);
@@ -190,7 +190,7 @@ function pipeStderr(
 		"data",
 		"transport.stderr.data",
 		(chunk) => {
-			if (protocol.version !== undefined) {
+			if (protocol.version !== undefined || protocol.privateForms) {
 				pending = "";
 				undecided = "";
 				return;
@@ -212,7 +212,8 @@ function pipeStderr(
 		"transport.stderr.end",
 		() => {
 			stderrEnded = true;
-			if (protocol.legacy && protocol.version === undefined && pending.length > 0) logger.stderr(pending);
+			if (protocol.legacy && protocol.version === undefined && !protocol.privateForms && pending.length > 0)
+				logger.stderr(pending);
 			pending = "";
 			// A crashed probe is classified after EOF; only that decision may release or discard its buffer.
 			if (protocol.legacy || protocol.version !== undefined) undecided = "";

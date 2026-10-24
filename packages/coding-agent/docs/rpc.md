@@ -5425,11 +5425,58 @@ A provider holds logins of one kind. If it had an OAuth login, the key replaces 
 
 ## Extension UI Protocol
 
-MCP 2026-07-28 multi-round-trip form answering is terminal-only in v1.
+Without presenter enforcement, MCP 2026-07-28 multi-round-trip form answering is terminal-only in v1.
 RPC-originated modern requests advertise no elicitation and terminate locally
 if input is required; they never fabricate a decline or retry incomplete input.
 Client roles and capability declarations do not enable this form channel.
 Existing legacy MCP dialogs and their RPC request/response shapes remain unchanged.
+
+### Opt-in private MCP forms
+
+A multi-session RPC host can opt in with `--mcp-presenter-enforcement`. This is a
+deployment option, not a project setting. It defaults to off; existing desktop and
+gateway clients keep their current behavior until they implement the private
+presenter protocol. The `mcp_form_presenter_v1` capability reports protocol support,
+not authority to present or answer a form.
+
+The native launch owner enrolls an Ed25519 public key through an inherited private
+bootstrap channel. Descriptor 4 is reserved for this channel; descriptor 3 remains
+the separate owner-lifetime channel. Enrollment and management proofs sign the
+host's exact returned transcript. No secret is passed in an argument, environment
+variable, launch specification, or session state. Reusing a host does not enroll the
+caller, and a successor requires fresh enrollment and fresh grants.
+The lifecycle supervisor loads the bootstrap helper only when the reserved
+descriptor is supplied, keeping ordinary supervisors within their import budget.
+
+`mcp_presenter_context` returns the caller's current connection nonce and attachment
+context. These identifiers confer no authority. Acquisition and revocation use the
+separate authenticated management endpoint, with a fresh challenge for each
+`mcp_presenter_acquire` or `mcp_presenter_revoke` command. An acquisition binds the
+current host, session, binding epoch, connection nonce, attachment ID and epoch, and
+`purpose: "mcp_form"`. Only one holder is active for a session binding.
+
+The granted connection receives `mcp_form_request` privately. Its envelope contains
+`sessionId`, `bindingEpoch`, `attachmentEpoch`, `grantId`, `dialogId`, `dialogToken`,
+and `formRevision`; the request also carries `server` (`label` and `source`),
+`message`, `schema`, and `deadlineAtMs`. The presenter returns that exact envelope
+with `mcp_form_presented` only after rendering, then `mcp_form_response` with
+`action: "accept" | "decline" | "cancel"` and accepted `content` when applicable.
+`mcp_form_sync` uses the current session, binding epoch, attachment epoch, and grant
+to recover the holder's still-live form. It is not a public replay API.
+
+Unknown and stolen-dialog submissions from a non-holder both return
+`presenter_not_authorized` before private dialog lookup. The host validates a whole
+form before admitting a human answer, and a synchronous terminal latch accepts only
+one outcome. `mcp_form_resolved` carries the session, grant, dialog, and a reason:
+`answered`, `declined`, `cancelled`, `processing_failed`, or `operation_aborted`.
+
+No presenter, or loss before actual presentation, is a processing failure. Only
+explicit human refusal produces decline. Dismissal after presentation is cancel;
+host timeout or presentation loss after presentation also cancels, without human
+admission. Operation abort terminates the operation. Private records, schemas,
+tokens, drafts, and answers never enter general extension UI events, session
+snapshots, replay, or ordinary output queues. Native desktop registration, WSL
+relay, and a gateway form page require separate client implementation.
 
 Extensions can request user interaction via `ctx.ui.select()`, `ctx.ui.confirm()`, etc. In RPC mode, these are translated into a request/response sub-protocol on top of the base command/event flow.
 
