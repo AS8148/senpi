@@ -283,7 +283,13 @@ import { HELD_INPUT_ENTRY, type HeldInput, HeldInputs, type HoldInputResult, hel
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { customTurnOrigin, type InputOrigin, inputOriginOf } from "./input-origin.ts";
 import { markInterrupted, type StopInterrupt } from "./interrupted-tool-result.ts";
-import { deliveredReceipts, type ItemizedAdmission, itemNoticeMessage } from "./itemized-send.ts";
+import {
+	deliveredReceipts,
+	type ItemizedAdmission,
+	itemNoticeMessage,
+	type PersistWatcher,
+	QueuedDeliveryCleared,
+} from "./itemized-send.ts";
 import { LazyToolActivation } from "./lazy-tool-activation.ts";
 import { heldLifecycleNotice, messageTicket } from "./lifecycle-delivery.ts";
 import { lifecycleEditLeaf } from "./lifecycle-edit-leaf.ts";
@@ -443,7 +449,7 @@ import {
 	VIRTUAL_MODEL_STATE_ENTRY,
 	type VirtualModelStateData,
 } from "./virtual-models.ts";
-import { CustodyViolation, DeliveryTicketRefused } from "./work-obligations.ts";
+import { CustodyViolation, DeliveryTicketRefused, ENGINE_DELIVERY_KEY_PREFIX } from "./work-obligations.ts";
 
 /** Externally registered tools routed through eval in addition to declared eval exposure. */
 const EVAL_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set(["workflow", "monitor"]);
@@ -1294,8 +1300,12 @@ function promptKind(options: PromptOptions | undefined): HumanInputAdmittedEvent
 	return "prompt";
 }
 
-/** senpi#3864: custody key prefix of a delivery ticket the engine opened itself (a producer keys its own). */
-const ENGINE_DELIVERY_KEY_PREFIX = "delivery:";
+/** Whether two batches carry the same items, in any order; duplicate ids count, so [a, a] is not [a, b]. */
+function sameItems(a: readonly string[], b: readonly string[]): boolean {
+	const left = [...a].sort();
+	const right = [...b].sort();
+	return left.length === right.length && left.every((id, index) => id === right[index]);
+}
 
 export class AgentSession {
 	readonly agent: Agent;
@@ -1347,7 +1357,15 @@ export class AgentSession {
 	private readonly _engineTurnHold: EngineTurnHold;
 	private _lifecycleBinding: LifecycleSessionBinding;
 	/** Itemized batches waiting for the entry their one message is written to (senpi#3811). */
-	private readonly _persistWatchers = new WeakMap<object, ItemizedAdmission>();
+	private readonly _persistWatchers = new WeakMap<object, PersistWatcher>();
+	/**
+	 * The entry a ticket's queued message was written as, kept only while a re-send that joined that queued message is
+	 * still in flight, so a re-send that lost the race still gets its receipt. The last such re-send removes it, so the
+	 * map holds at most one entry per in-flight re-send (senpi#4125 review).
+	 */
+	private readonly _writtenTicketEntries = new Map<string, string>();
+	/** How many sends that joined each ticket's queued message are still in flight. */
+	private readonly _carrierJoiners = new Map<string, number>();
 	private _resumeSettlement: Promise<void> = Promise.resolve();
 	private readonly _engineTurnRelease = new EngineTurnRelease();
 	private readonly _engineTurnInput: EngineTurnInput;
@@ -1429,11 +1447,29 @@ export class AgentSession {
 	private _postCompactionDeferredFollowUpMessages: AgentMessage[] = [];
 
 	// Compaction state
-	private _compactionAbortController: AbortController | undefined = undefined;
-	private _autoCompactionAbortController: AbortController | undefined = undefined;
+	// Each abort controller below is an isCompacting fact; setting or clearing one is a lifecycle edge (senpi#3980).
+	private _compactionAbortControllerValue: AbortController | undefined = undefined;
+	private _autoCompactionAbortControllerValue: AbortController | undefined = undefined;
+	private get _compactionAbortController(): AbortController | undefined {
+		return this._compactionAbortControllerValue;
+	}
+	private set _compactionAbortController(controller: AbortController | undefined) {
+		if (this._compactionAbortControllerValue === controller) return;
+		this._compactionAbortControllerValue = controller;
+		this.refreshLifecycle();
+	}
+	private get _autoCompactionAbortController(): AbortController | undefined {
+		return this._autoCompactionAbortControllerValue;
+	}
+	private set _autoCompactionAbortController(controller: AbortController | undefined) {
+		if (this._autoCompactionAbortControllerValue === controller) return;
+		this._autoCompactionAbortControllerValue = controller;
+		this.refreshLifecycle();
+	}
 	private _pendingCompactionAdmission: PendingCompactionAdmission | undefined = undefined;
 	private readonly _compactionLifecycle = new CompactionLifecycleCoordinator();
-	private readonly _sessionWorkBarrier = new SessionWorkBarrier();
+	// Work held by the barrier is a lifecycle fact: its release is an edge (senpi#3980).
+	private readonly _sessionWorkBarrier = new SessionWorkBarrier(() => this.refreshLifecycle());
 	/**
 	 * Extension-published activity that outlives a turn (background terminal
 	 * jobs, terminal monitors, loop-guard holds). Counts persist across extension
@@ -1477,7 +1513,19 @@ export class AgentSession {
 	private _messageRevision = 0;
 
 	// Branch summarization state
-	private _branchSummaryAbortController: AbortController | undefined = undefined;
+	// Only the end of a tree navigation is a lifecycle edge. Its start is not: a lifecycle record written while the
+	// navigation runs would become the session leaf under it, so the navigation would land on, or cancel to, the
+	// wrong entry. The navigation is the person's own foreground action, so the session keeps its settled state
+	// until it ends (senpi#4120).
+	private _branchSummaryAbortControllerValue: AbortController | undefined = undefined;
+	private get _branchSummaryAbortController(): AbortController | undefined {
+		return this._branchSummaryAbortControllerValue;
+	}
+	private set _branchSummaryAbortController(controller: AbortController | undefined) {
+		if (this._branchSummaryAbortControllerValue === controller) return;
+		this._branchSummaryAbortControllerValue = controller;
+		if (controller === undefined) this.refreshLifecycle();
+	}
 
 	private _sessionTitleAbortController: AbortController | undefined = undefined;
 	private _sessionTitlePromise: Promise<void> | undefined = undefined;
@@ -2782,7 +2830,13 @@ export class AgentSession {
 	}
 
 	private _emit(event: AgentSessionEvent): void {
-		if (event.type === "session_paused" || event.type === "session_resumed") this.refreshLifecycle();
+		if (
+			event.type === "session_paused" ||
+			event.type === "session_resumed" ||
+			event.type === "compaction_start" ||
+			event.type === "compaction_end"
+		)
+			this.refreshLifecycle();
 		this._logSessionEvent(event);
 		if (event.type === "entry_appended") {
 			event = { ...event, entry: describeUsageLimitEntry(event.entry) };
@@ -3849,6 +3903,7 @@ export class AgentSession {
 						);
 					this._incrementMessageRevision();
 					this.externalAdmission.observePersisted(event.message);
+					this._recordWrittenTicket(event.message, entryId);
 					this._takePersistWatcher(event.message)?.persisted(entryId);
 				} else if (
 					event.message.role === "user" ||
@@ -6799,12 +6854,13 @@ export class AgentSession {
 			droppedByAbort: () => {
 				this._admitItemized(message, options).then(outcome.resolve, outcome.reject);
 			},
+			itemIds: items.map((item) => item.itemId),
 		}).catch(outcome.reject);
 		return outcome.promise;
 	}
 
 	/** A re-send of a queued ticket shares the queued message's outcome instead of waiting on a message never written. */
-	private _joinPersistWatcher(carrier: AgentMessage, joined: ItemizedAdmission): void {
+	private _joinPersistWatcher(carrier: AgentMessage, joined: PersistWatcher): void {
 		const first = this._persistWatchers.get(carrier);
 		this._persistWatchers.set(
 			carrier,
@@ -6819,15 +6875,24 @@ export class AgentSession {
 							first.failed(error);
 							joined.failed(error);
 						},
-						droppedByAbort: () => {
-							first.droppedByAbort();
-							joined.droppedByAbort();
-						},
+						itemIds: first.itemIds,
 					},
 		);
 	}
 
-	private _takePersistWatcher(message: AgentMessage): ItemizedAdmission | undefined {
+	/** The queued message that already carries this ticket, if any. */
+	private _queuedTicketCarrier(ticket: string): AgentMessage | undefined {
+		return [...this.agent.peekQueuedMessages({ all: true }), ...this._pendingNextTurnMessages].find(
+			(queued) => queued.role === "custom" && messageTicket(queued) === ticket,
+		);
+	}
+
+	private _recordWrittenTicket(message: AgentMessage, entryId: string): void {
+		const ticket = message.role === "custom" ? messageTicket(message) : undefined;
+		if (ticket !== undefined && this._carrierJoiners.has(ticket)) this._writtenTicketEntries.set(ticket, entryId);
+	}
+
+	private _takePersistWatcher(message: AgentMessage): PersistWatcher | undefined {
 		const watcher = this._persistWatchers.get(message);
 		this._persistWatchers.delete(message);
 		return watcher;
@@ -6889,7 +6954,27 @@ export class AgentSession {
 			if (admission === "unknown") throw new CustodyViolation(ticket);
 			return;
 		}
-		if (ticket) obligations.queue(ticket, { message: deliveryMessage, deliverAs: options?.deliverAs });
+		// A re-send of a queued ticket must not replace the payload that queued message will write (senpi#4106).
+		const queuedCarrier = ticket === undefined ? undefined : this._queuedTicketCarrier(ticket);
+		// A carrier restored after a restart has no watcher; its custody payload still records the batch's items.
+		const carrierItems =
+			queuedCarrier && ticket !== undefined
+				? (this._persistWatchers.get(queuedCarrier)?.itemIds ?? obligations.queuedItemIds(ticket))
+				: undefined;
+		if (ticket !== undefined && itemized?.itemIds && carrierItems && !sameItems(carrierItems, itemized.itemIds)) {
+			deferredTurnClaim?.resolve("finished-without-start");
+			itemized.failed(new DeliveryTicketRefused(ticket, "different_items"));
+			return;
+		}
+		if (ticket && queuedCarrier === undefined) this._writtenTicketEntries.delete(ticket);
+		const joinsCarrier = ticket !== undefined && queuedCarrier !== undefined;
+		if (joinsCarrier) this._carrierJoiners.set(ticket, (this._carrierJoiners.get(ticket) ?? 0) + 1);
+		if (ticket && queuedCarrier === undefined)
+			obligations.queue(ticket, {
+				message: deliveryMessage,
+				deliverAs: options?.deliverAs,
+				...(itemized?.itemIds ? { itemIds: itemized.itemIds } : {}),
+			});
 		onQueued?.();
 		// A batch a user abort (Esc or Stop) dropped is decided again only after this delivery releases its ticket.
 		let readmit = false;
@@ -6902,6 +6987,7 @@ export class AgentSession {
 						droppedByAbort: () => {
 							readmit = true;
 						},
+						itemIds: itemized.itemIds,
 					};
 		try {
 			const startsTurn = options?.triggerTurn === true && !this.isStreaming;
@@ -6919,7 +7005,7 @@ export class AgentSession {
 			}
 			await this._deliverCustomMessage(
 				deliveryMessage,
-				{ ...options, ticket },
+				{ ...options, ticket, ...(queuedCarrier !== undefined ? { joinsQueuedCarrier: true } : {}) },
 				deferredTurnClaim,
 				releasedWake,
 				delivery,
@@ -6936,8 +7022,19 @@ export class AgentSession {
 			throw error;
 		} finally {
 			if (ticket) obligations.endDelivery(ticket);
+			if (joinsCarrier) this._leaveCarrier(ticket);
 			if (readmit) itemized?.droppedByAbort();
 		}
+	}
+
+	private _leaveCarrier(ticket: string): void {
+		const joiners = (this._carrierJoiners.get(ticket) ?? 1) - 1;
+		if (joiners > 0) {
+			this._carrierJoiners.set(ticket, joiners);
+			return;
+		}
+		this._carrierJoiners.delete(ticket);
+		this._writtenTicketEntries.delete(ticket);
 	}
 
 	private _queuedDeliveryTickets(): string[] {
@@ -6947,11 +7044,6 @@ export class AgentSession {
 		});
 	}
 
-	/**
-	 * senpi#3864: a queued delivery that leaves the queue unconsumed is no longer work the engine owes. A cleared
-	 * one is cancelled (a producer keeps its own ticket open without the payload); one an abort left queued waits
-	 * for a person's turn, so its engine ticket turns passive.
-	 */
 	/** Read from the durable custody key, so a delivery re-sent from custody after a restart is still the engine's. */
 	private _isEngineDelivery(ticket: string): boolean {
 		return this.workObligations.active.some(
@@ -6959,6 +7051,11 @@ export class AgentSession {
 		);
 	}
 
+	/**
+	 * senpi#3864: a queued delivery that leaves the queue unconsumed is no longer work the engine owes. A cleared
+	 * one is cancelled (a producer keeps its own ticket open without the payload); one an abort left queued waits
+	 * for a person's turn, so its engine ticket turns passive.
+	 */
 	private _releaseQueuedDeliveries(tickets: readonly string[], cause: "cleared" | "aborted"): void {
 		for (const ticket of tickets) {
 			const engineOwned = this._isEngineDelivery(ticket);
@@ -6969,13 +7066,28 @@ export class AgentSession {
 		}
 	}
 
-	private _retireLifecycleDelivery(ticket: string, producerOwned: boolean): void {
-		for (const queued of this.agent.peekQueuedMessages({ all: true })) {
-			if (queued.role === "custom" && messageTicket(queued) === ticket) this.agent.removeQueuedMessage(queued);
+	/** A removed itemized message is never written: every send waiting on it settles now (senpi#4106). */
+	private _settleRemovedCarriers(removed: readonly AgentMessage[]): void {
+		for (const message of removed) {
+			const watcher = this._takePersistWatcher(message);
+			watcher?.failed(new QueuedDeliveryCleared(watcher.itemIds));
 		}
-		this._pendingNextTurnMessages = this._pendingNextTurnMessages.filter(
-			(queued) => messageTicket(queued) !== ticket,
-		);
+	}
+
+	private _retireLifecycleDelivery(ticket: string, producerOwned: boolean): void {
+		const removed: AgentMessage[] = [];
+		for (const queued of this.agent.peekQueuedMessages({ all: true })) {
+			if (queued.role === "custom" && messageTicket(queued) === ticket) {
+				this.agent.removeQueuedMessage(queued);
+				removed.push(queued);
+			}
+		}
+		this._pendingNextTurnMessages = this._pendingNextTurnMessages.filter((queued) => {
+			const carriesTicket = messageTicket(queued) === ticket;
+			if (carriesTicket) removed.push(queued);
+			return !carriesTicket;
+		});
+		this._settleRemovedCarriers(removed);
 		if (producerOwned) this.workObligations.retire(ticket);
 		else this.workObligations.cancel(ticket);
 	}
@@ -6986,22 +7098,34 @@ export class AgentSession {
 			triggerTurn?: boolean;
 			deliverAs?: "steer" | "followUp" | "nextTurn";
 			ticket?: string;
+			/** The send found the ticket's message queued when it was admitted, so it expects to join that carrier. */
+			joinsQueuedCarrier?: boolean;
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
 		releasedWake?: () => boolean,
 		itemized?: ItemizedAdmission,
 	): Promise<void> {
 		const userAbortGeneration = this._userAbortGeneration;
-		const queuedCarrier =
-			options?.ticket === undefined
-				? undefined
-				: [...this.agent.peekQueuedMessages({ all: true }), ...this._pendingNextTurnMessages].find(
-						(queued) => queued.role === "custom" && messageTicket(queued) === options.ticket,
-					);
+		const queuedCarrier = options?.ticket === undefined ? undefined : this._queuedTicketCarrier(options.ticket);
 		if (queuedCarrier !== undefined) {
 			// The ticket's message is already queued: this send's receipts settle when that message is written.
 			if (itemized !== undefined) this._joinPersistWatcher(queuedCarrier, itemized);
 			deferredTurnClaim?.resolve("delegated");
+			return;
+		}
+		// A re-send that found the ticket's carrier queued and lost it while it waited is never written: if the running
+		// turn wrote the carrier, the re-send settles with that entry (its items matched the carrier's); if a clear or a
+		// retire removed it, writing it would deliver a cleared message under a retired ticket, so it settles as cleared
+		// (an itemized send's receipts fail with QueuedDeliveryCleared; a plain send has none).
+		if (options?.joinsQueuedCarrier === true && options.ticket !== undefined) {
+			const writtenEntry = this._writtenTicketEntries.get(options.ticket);
+			if (writtenEntry !== undefined) {
+				itemized?.persisted(writtenEntry);
+				deferredTurnClaim?.resolve("delegated");
+				return;
+			}
+			deferredTurnClaim?.resolve("finished-without-start");
+			itemized?.failed(new QueuedDeliveryCleared(itemized.itemIds));
 			return;
 		}
 		const appMessage = {
@@ -7630,8 +7754,8 @@ export class AgentSession {
 		});
 	}
 
+	/** Reads the lifecycle; every fact that feeds it raises its own change edge, so a read never writes (senpi#3980). */
 	get lifecycle() {
-		this._lifecycleBinding.controller.recompute();
 		return this._lifecycleBinding.controller.ledger.snapshot;
 	}
 
@@ -7656,6 +7780,8 @@ export class AgentSession {
 	}
 
 	refreshLifecycle(): void {
+		// Work aborted by dispose() still unwinds afterwards; its edges must not write to the released session file.
+		if (this._disposed) return;
 		this._lifecycleBinding.controller.recompute();
 	}
 
@@ -7796,6 +7922,7 @@ export class AgentSession {
 			appMessage.details,
 		);
 		this._emitEntryAppended(entryId);
+		this._recordWrittenTicket(appMessage, entryId);
 		this._takePersistWatcher(appMessage)?.persisted(entryId);
 		this._incrementMessageRevision();
 		this._emit({ type: "message_start", message: appMessage });
@@ -8152,8 +8279,10 @@ export class AgentSession {
 		this._postCompactionDeferredSteeringMessages = [];
 		this._postCompactionDeferredFollowUpMessages = [];
 		const clearedDeliveries = this._queuedDeliveryTickets();
+		const clearedMessages = this.agent.peekQueuedMessages({ all: true });
 		this.agent.clearAllQueues();
 		this._releaseQueuedDeliveries(clearedDeliveries, "cleared");
+		this._settleRemovedCarriers(clearedMessages);
 		this.externalAdmission.dropQueued();
 		this._emitQueueUpdate();
 		const cleared = { steering, followUp } as ClearedQueue;
@@ -13086,6 +13215,7 @@ export class AgentSession {
 	): Promise<BashResult> {
 		const abortController = new AbortController();
 		this._bashAbortControllers.add(abortController);
+		this.refreshLifecycle();
 
 		// Apply command prefix if configured (e.g., "shopt -s expand_aliases" for alias support)
 		const prefix = this.settingsManager.getShellCommandPrefix();
@@ -13115,6 +13245,7 @@ export class AgentSession {
 			return result;
 		} finally {
 			this._bashAbortControllers.delete(abortController);
+			this.refreshLifecycle();
 		}
 	}
 

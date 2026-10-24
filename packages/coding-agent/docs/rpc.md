@@ -102,7 +102,7 @@ Other context keys remain opaque.
 Automatic turn admission is also bounded independently of the hold. On unattended resume,
 `engineTurns.maxPerResumeWindow` defaults to 8, counting engine starts in loaded
 history since the last real input. A real input ends that resume window. The
-normal `engineTurns.maxPerUserInput` default stays 150. Only admitted new engine
+normal `engineTurns.maxPerUserInput` defaults to 0 (off). Only admitted new engine
 turns count, not wakes steered into running work or pending compaction; a limit emits the existing engine-paused
 notice and record. Setting either cap to 0 disables that particular cap.
 
@@ -606,7 +606,8 @@ parsing a version string:
   "launch_profile": {
     "profile_id": "ca7a4943…",
     "core": { "extensions": [], "multi_session": true, "session_runtime": "in-process" }
-  }
+  },
+  "agentDir": "/home/me/.senpi/agent"
 }
 ```
 
@@ -626,6 +627,9 @@ parsing a version string:
   `core.extensions` (absolute roots, deduplicated and sorted). `profile_id` is the sha256 of the canonical JSON
   of `core` with its keys in that sorted order (`extensions`, `multi_session`, `session_runtime`), so any client
   can recompute it and compare two hosts without comparing paths.
+- `agentDir` - the absolute agent directory the host reads and writes. A generation handoff is refused
+  `foreign_agent_dir` when it differs from the caller's own agent dir (see "Generation handoff"). Hosts
+  released before the field omit it.
 - `memory_pressure` - multi-session hosts only: `true` while this host's memory sampler reads its memory footprint
   above `SENPI_RPC_HOST_RSS_WARN_MB`, else `false`. Not identity and never an admission signal; `senpi host status`
   reports it per endpoint. Classic hosts and hosts released before the field omit it.
@@ -782,7 +786,7 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    their connection closes and reopen with `open_session { sessionPath }` on the successor. Losing
    ownership of the public socket triggers the same sequence even if SIGUSR1 never arrives.
 
-Two guards decide whether a handoff is attempted at all, and both fail closed:
+Three guards decide whether a handoff is attempted at all, and all of them fail closed:
 
 - The running host must advertise `generation_handoff`. SIGUSR1 TERMINATES a process that installed no
   handler for it, so a host from before the drain existed is never signalled - `handoffHost` answers
@@ -791,6 +795,16 @@ Two guards decide whether a handoff is attempted at all, and both fail closed:
   must be this endpoint) before that process is signalled. Without such a registration a handoff never
   signals a stranger (I1): it refuses while that host holds a session, and replaces an idle one without
   a signal unless a flat pre-layout-2 record proves it (see "Daemon state directory (layout 2)").
+- The running host must belong to the caller's agent dir. A client reads registrations under its OWN agent
+  dir, so pointed at another agent dir's socket it would see no record there and read a live, registered host
+  as an unregistered idle one. `handoffHost` therefore compares the host's advertised `agentDir` with its own
+  (both canonicalized through `realpath`) and refuses `{ action: "refuse", reason: "foreign_agent_dir",
+  upgradeable: false }` when they differ; `detail` names both directories. A host from before the field is placed
+  by the layout: when the socket is `<dir>/rpc/rpc.sock` and a layout-2 registration under `<dir>` proves a live
+  owner, the host belongs to `<dir>`. With neither, the handoff proceeds as before. Nothing is signalled.
+- Transition window: a host from before the `agentDir` field, serving a socket that is not another agent
+  dir's default `<dir>/rpc/rpc.sock` (or whose layout-2 record there proves no live owner), cannot be
+  placed and stays replaceable through the idle path above. Every host built with the field avoids it.
 
 On win32 a named pipe cannot be renamed: `handoffHost` refuses with `upgrade_unsupported` and
 `decideHostAction` never yields `handoff` there. Upgrades apply after `stopHost({ drain: true })` - which
@@ -884,12 +898,15 @@ A POSIX socket host with an id advertises `runtime_identity_handover` and accept
 `senpi host handoff --when idle --operation <id> --if-instance <instanceId> --if-generation <n>
 --target-build <runtimeBuildId>`. The CLI refuses `target_build_mismatch` unless the target is its own
 `clientRuntimeBuildId` (the successor runs the CLI's runtime), `stale_generation` unless the socket is served
-by the named generation, and `handover_unsupported` when the host does not advertise the capability. It then
-sends the host `begin_handover`, and the HOST owns the operation:
+by the named generation, `handover_unsupported` when the host does not advertise the capability, and
+`foreign_agent_dir` when the host belongs to another agent dir (the same check as the generation handoff's,
+`detail` naming both). It then sends the host `begin_handover`, carrying its own `agent_dir`, and the HOST
+owns the operation:
 
-1. a request with an `operationId` it already holds answers with that operation when the terms match (and
-   `operation_conflict` when they do not); a new operation is checked first against the named generation
-   (`stale_generation`);
+1. a request naming another `agent_dir` than the host's own refuses `foreign_agent_dir` before anything else
+   (a request without the field, from a CLI before it existed, is not checked); a request with an `operationId`
+   it already holds answers with that operation when the terms match (and `operation_conflict` when they do
+   not); a new operation is checked first against the named generation (`stale_generation`);
 2. it stops admitting new work: `prompt`, `steer`, `follow_up`, `send_custom_message`, `append_user_message`,
    `bash`, `compact`, `wake` and the two message edits answer `success: false` with an error starting
    `handover_pending:`. Running turns keep running and keep their control traffic (`abort` included);
@@ -1421,10 +1438,11 @@ survive it, and every subcommand accepts any of the three (plus the session's `n
 on every call, resuming a parked session as described above. A session parked before its first message has no
 transcript yet and cannot be resumed; a reference to it is `unknown_session`.
 
-Ownership: reaching the socket is the trust boundary. Any client that can connect (the socket is `0600` in a
-`0700` directory, so only its owning user) may `prompt`, `steer`, `abort`, `model`, `read` or `wait` on any
-session the host lists, including one another client is driving. Only `close` is ownership-checked: it releases the
-caller's own attachment and closes the session only when no other client still holds one.
+Ownership: socket clients attach before mutating a session. The `senpi host session` commands already attach
+on the acting connection. Raw clients use `attach_session` for a live identity or `open_session` to open/resume
+a path. This release serves and logs legacy unattached mutations unless `SENPI_RPC_REQUIRE_ATTACH=1`;
+see [Attachment admission](#attachment-admission). Reads remain available without an attachment. `close`
+releases the caller's own attachment and closes the session only when no other client still holds one.
 
 Retention limits (what `open`'s `retain_on_disconnect: true` does NOT survive): an explicit `close`, the host's own
 idle-eviction window (`SENPI_RPC_SESSION_IDLE_EVICTION_MS`, default 30 minutes, after which the session is parked -
@@ -1777,7 +1795,7 @@ The answer is always `success: true` with `data.outcome`: `unloaded` (with `sess
 | `work_pending` | bash, an admitted delivery not yet written, another request for the session | `interrupt: true` |
 | `extension_work` | extension-published work: background terminal jobs, non-persistent monitors, detached eval cells, a pending question; `detail` names the sources | `force: true` (that work is stopped; only persistent monitors come back on the reopen) |
 | `children_live` | child tasks still working, or worker sessions here whose `context` names this session as parent or root | `children: "detach"` leaves them running |
-| `attached` | other clients hold the session (the caller's own attachment does not count) | `force: true`; they receive the park |
+| `attached` | other clients hold the session (none of the caller's own holds count) | `force: true`; they receive the park |
 | `host_draining`, `session_closing`, `unsupported` | the host is draining, the session is already closing, or it has no file / a worker isolate owns it | none |
 
 With `effectId` the unload is a ledger effect (`kind: "unload"`): `done` with `disposition: "unloaded"`, or `failed` with `outcome.kind: "refused"` and the same reason; a same-id retry replays. Capability: `unload_session`. CLI: `senpi host session unload <ref> [--interrupt] [--force] [--clear-queue] [--children detach]` (exit 3 on a refusal).
@@ -2169,8 +2187,9 @@ no longer lists it and the handle answers `unknown_session`.
   running at the final check, which then answers `turn_active`. A header write that fails answers `release_failed`
   with `errorData.detail`, and the session stays hosted. A session whose file exists awaits nothing here.
 - It refuses while another client is attached (e.g. a second Desktop window): `attached` with
-  `errorData { attachments }`, the number of OTHER attached clients. The requesting connection does not count: a
-  client attached to the session it releases is drained with it and needs no `force`. With `force: true` the other clients receive
+  `errorData { attachments }`, counting only OTHER connections' holds. The caller's own holds, including repeated
+  attaches, do not require `force` (capability `release_caller_aware`): a client attached to the session it
+  releases is drained with it. With `force: true` the other clients receive
   `session_closed { sessionId, reason: "released", sessionPath }`, which tells them the file is now written
   elsewhere and must NOT be reopened on this host.
 - A draining host answers `host_draining`; a worker-isolate session or one with no file answers
@@ -2472,6 +2491,9 @@ names a valid preset.
 
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
+| `attach_session` | `sessionId`, `durableSessionId`, `expectedHostInstance?` | `{ sessionId, attached: true }` | Live-only, identity-fenced attachment; never opens/resumes or changes the launch profile. Capability `attach_session`. |
+| `release_attachment` | `sessionId` | `{ deferred: boolean }` | Releases exactly one caller hold with disconnect semantics; `deferred` is true only when settlement owns the final release, and false while draining. Capability `release_attachment`. |
+| `reclaim_session` | `sessionPath`, `durableSessionId`, `expectedHostInstance` | `{ reclaimed: true, sessionId }` | Atomic attach-and-claim of every caller hold; refuses other connections before aborting. Capability `reclaim_session`. |
 | `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi", instanceId: string, generation: number, engineVersion: string, engineOrdinal: [y, m, d, n, epoch], launch_profile: { profile_id, core }, memory_pressure?: boolean }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session`, `session_held` (the active foreign-holder admission guard, in both runtimes), `retain_on_disconnect`, `session_kind`, `session_context`, `auto_title_per_session`, `durable_session_id`, `moved_path_guard` (senpi resolves and guards paths the OmO desktop moved with its data home), `prompt_surface` and `prompt_surface_chat` plus the negotiated launch capabilities. Those are HOST capabilities (a client never sends them) and are advertised only in multi-session mode, where the host owns the attachment refcount and the per-session launch profile. The identity fields are described under "Host identity" above; compatibility is decided from `protocolVersion`, `capabilities` and `engineOrdinal`, NEVER from `serverVersion`. |
 | `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?`, `durableSessionId?`, `promptSurface?`, `browserEngine?`, `retryFallback?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
@@ -2483,6 +2505,105 @@ names a valid preset.
 | `wake` | `sessionId`, `delivery_ids?` | `{ admitted: [{ delivery_id, kind }] }` | Runs the session's registered inbox drain once. See "Waking a host session (`wake`)" below. |
 | `warm` | `cwd?`, `kind?`, `context?` (as on `open_session`; `cwd` MUST be absolute) | `{ state: "warmed" \| "already_warm" \| "unsupported" }` | Loads what the next matching `open_session` needs without opening a session; never listed, never an attachment, idempotent per profile. See "Warming a host" above. Advertised as the `warm` capability by in-process hosts only. |
 | every existing command | + `sessionId` (REQUIRED in multi mode) | unchanged | Routed to that session. |
+
+### Live-only attachment and scoped release
+
+#### attach_session
+
+`attach_session { sessionId, durableSessionId, expectedHostInstance? }` attaches the current connection
+only to the live session selected by both routing and durable identity. A vanished or non-open target
+returns `unknown_session`; a recycled routing id or mismatching host instance returns
+`session_identity_mismatch`. A draining or shutting-down host refuses before admission with
+`session_busy_lifecycle` and `errorData: { reason: "host_draining" }`; a caller without a connection
+receives `session_not_attached` with `errorData: { reason: "no_connection" }`. It never creates or resumes a runtime, and never applies a permission preset,
+prompt surface, or browser engine. Each success adds one attachment, connects the event stream, and publishes
+`session_status` with `lastChange.cause: "attach"`. Intentional profile-changing attaches through
+`open_session { sessionPath, permissionPreset, ... }` retain their existing behavior.
+
+#### release_attachment
+
+`release_attachment { sessionId }` releases exactly one hold this connection owns on this session;
+other sessions and repeated remaining holds are untouched. It uses disconnect semantics, not close:
+when the final hold of a non-retained session leaves during a streaming turn, physical release waits
+for settlement. The turn survives even when its original owner disconnected before a temporary
+attacher released. The released hold immediately loses mutation and close authorization.
+A retained session remains live at zero attachments. `close_session` remains the destructive release.
+An unattached caller cannot release another connection's hold: a connection with no hold on that
+session receives `session_not_attached` with `errorData: { reason: "not_attached" }`. These
+attachment-command refusals carry `reason` only; only the gate refusal below adds `action`.
+
+### Atomic recovery (`reclaim_session`)
+
+#### reclaim_session
+
+Send `reclaim_session { sessionPath, durableSessionId, expectedHostInstance }` when recovering a known
+leftover on this host. Both identities are required; neither is inferred from the path.
+Before admission, a draining or shutting-down host refuses with `session_busy_lifecycle` and
+`errorData: { reason: "host_draining" }`. Otherwise, before any
+await, the host resolves the live path, checks lifecycle state before both identities, refuses
+other connections, records a visible attachment for the caller, then claims ALL that caller's holds
+(including the newly recorded one) and marks the entry closing. It then aborts and performs normal
+finalization. Zero-attachment retained sessions and leftovers with one or several caller holds are
+supported in both runtimes.
+
+Lifecycle precedes identity because an opening entry may not have published its runtime identity yet.
+An entry that is both busy and identity-mismatched therefore returns `session_busy_lifecycle`.
+
+Refusals change nothing: `session_busy_lifecycle` with `errorData.reason: "host_draining"` while
+draining or shutting down, `unknown_session` for an
+unheld path, `session_identity_mismatch` for missing or different identities,
+`session_busy_lifecycle` for opening/closing targets, `attached_elsewhere`
+with `errorData.attachments` counting other holds, and `session_not_attached` with
+`errorData.reason: "no_connection"` for a caller without a connection. An attach that wins the synchronous admission race
+causes `attached_elsewhere`; an attach after the claim cannot join the closing entry. Reclaim never opens
+or resumes an absent path.
+
+A disconnected owner's deferred physical hold still counts as `attached_elsewhere` until its active
+turn settles, even though that owner no longer has a live connection. Settlement releases that hold.
+
+### Attachment admission
+
+On a socket host, session-scoped commands require the current connection to be attached unless they are
+in the following effect-based read allow-list:
+
+`get_state`, `get_messages`, `get_entries`, `get_tree`, `get_fork_messages`,
+`get_last_assistant_text`, `get_media`, `get_commands`, `get_loaded_surfaces`,
+`get_available_models`, `get_available_thinking_levels`, `get_fast_mode`, `get_session_stats`,
+`get_pending_inputs`, `get_steering_messages`, `get_follow_up_messages`, `get_auth_providers`,
+`get_provider_accounts`, `resolve_path`, `memory_report`, `eval_cells.list`, `eval_cells.peek`,
+and `check_reload_veto`.
+
+`record_user_activity` is gated like any other session command (lead ruling 2026-10-22, senpi#3814). Its only
+known caller, the desktop app's prewarm path (omo-desktop-app `apps/server/src/provider/Layers/OmoAdapter.ts:7121`),
+sends it on the session's own opener connection: the handle it uses is created from that session's
+`open_session` reply (`OmoSessionHandle.ts:397-403`), so the connection is already attached.
+
+Host discovery/control remains available: `get_protocol_info`, `list_sessions`, `subscribe_sessions`,
+`unsubscribe_sessions`, `get_subscription_limits`, `warm`, `detach_connection`, `attach_session`,
+`reclaim_session`, and `set_client_info` without `sessionId`. `get_effect_status` is a read with
+either a routing id or a transcript path. `open_session` is exempt from this gate because its own
+admission creates the caller's attachment. Attachment lifecycle commands apply their own admission
+rules. `export_html` and `export_jsonl` write files and therefore require attachment.
+Every other session-scoped command is gated by default, including abort, wake, release/unload,
+message injection, settings/account changes, and extension UI responses/progress.
+`resume_session` is gated too: it releases the session's engine holds and starts the held turns.
+An `open_session { "attended": false }` is an attachment like any other open: it admits the
+connection to gated commands until its own `close_session` or disconnect gives the hold back.
+`senpi host session` therefore needs no extra `attach_session` after reopening a parked session.
+
+This release **serves** each new violation and writes exactly one stderr line per violation:
+
+```text
+senpi rpc host: <command> on <session> from a connection not attached to it (refused from the next release)
+```
+
+Set `SENPI_RPC_REQUIRE_ATTACH=1` to enforce now. Enforcement returns
+`errorCode: "session_not_attached"` with `errorData.reason` and
+`errorData.action: "attach first with attach_session { sessionId, durableSessionId } or open_session { sessionPath }"`.
+Already-refused commands are not relaxed by grace: unattached `close_session` still returns
+`unknown_session`, and `set_session_context` keeps its existing `session_not_attached` refusal.
+Stdio hosts and host-internal lifecycle calls have no current connection and retain existing behavior.
+Worker sessions pass through this same gate before worker dispatch.
 
 ### Identities (D6)
 
@@ -2557,7 +2678,10 @@ codes or code prefixes in `error`:
 - `host_draining` (`open_session` on a bare, unsupervised host, or `release_session` forwarded to a child whose generation is parking for a handoff; re-resolve the public path and open or release on the successor rather than retrying this connection)
 - `turn_active` (`release_session` while a turn runs or is about to start - a prompt in preflight, an admitted delivery not yet written - without `interrupt: true`; `errorData { attachments, busy }`)
 - `session_busy` (`release_session` while other session work runs - bash, compaction, barrier-held work, another request for the session - without `interrupt: true`; `errorData { attachments, busy }`)
-- `attached` (`release_session` while clients are attached, without `force: true`; `errorData { attachments }` names how many)
+- `attached` (`release_session` while OTHER connections are attached, without `force: true`; `errorData { attachments }` counts their holds)
+- `session_identity_mismatch` (`attach_session` or `reclaim_session` selected a different durable identity or host instance)
+- `session_busy_lifecycle` (`reclaim_session` found an opening or closing target, or `attach_session` / `reclaim_session` reached a draining or shutting-down host: then `errorData.reason` is `host_draining`)
+- `attached_elsewhere` (`reclaim_session` found another connection's holds; `errorData.attachments` counts them)
 - `invalid_release_reason` (`release_session` with a `reason` other than `takeover`)
 - `release_unsupported` (`release_session` for a session this host cannot hand over; `errorData.detail` is `worker_runtime` - a worker isolate owns the runtime - or `no_session_file`)
 - `release_failed` (`release_session` whose hand-over failed after it began - the release entry could not be written or the teardown threw; `errorData.detail` is the error message, plus `interrupted`/`dropped` after an interrupt)
@@ -4242,7 +4366,7 @@ The current session name is available via `get_state` in the `sessionName` field
 
 #### record_user_activity
 
-Reports that the user started typing a draft in this session's composer (capability `user_activity`). It feeds the same first-activity signal the interactive editor sends, so a session with prompt-cache keep-alive enabled and an eligible model warms the first turn's prefix once while the user is still typing. Repeated reports are no-ops after the first, and nothing is sent to a provider when keep-alive is disabled or the model is ineligible. Only `kind: "draft"` is accepted: prompt activity is recorded by the prompt itself, and any other kind is refused with `invalid_argument` and the fixed message `record_user_activity: kind must be "draft"` (the refusal never repeats the value the client sent). On a multi-session host the command is session-scoped and passes the session-writer guard, so a session held by another writer answers `session_held`.
+Reports that the user started typing a draft in this session's composer (capability `user_activity`). It feeds the same first-activity signal the interactive editor sends, so a session with prompt-cache keep-alive enabled and an eligible model warms the first turn's prefix once while the user is still typing. Repeated reports are no-ops after the first, and nothing is sent to a provider when keep-alive is disabled or the model is ineligible. Only `kind: "draft"` is accepted: prompt activity is recorded by the prompt itself, and any other kind is refused with `invalid_argument` and the fixed message `record_user_activity: kind must be "draft"` (the refusal never repeats the value the client sent). On a multi-session host the command is session-scoped and passes the session-writer guard, so a session held by another writer answers `session_held`. It requires the connection to be attached to the session, as every session command does (see Attachment admission).
 
 ```json
 {"type": "record_user_activity", "sessionId": "rpc-1", "kind": "draft"}
