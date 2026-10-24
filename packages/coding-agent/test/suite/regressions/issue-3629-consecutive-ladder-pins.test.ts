@@ -17,7 +17,9 @@ interface BlockResult {
 }
 
 function isBlockResult(value: unknown): value is BlockResult {
-	return typeof value === "object" && value !== null && "block" in value && (value as { block: unknown }).block === true;
+	return (
+		typeof value === "object" && value !== null && "block" in value && (value as { block: unknown }).block === true
+	);
 }
 
 describe("issue 3629: consecutive ladder pins", () => {
