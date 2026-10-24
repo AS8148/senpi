@@ -459,6 +459,44 @@ Cache enablement happens in the CLI bootstrap before extension loading and befor
 
 - LOW: the shared startup compile-cache helper and its two entry-point calls. Preserve the pre-import ordering for sessions and await the command decision.
 
+## 2026-10-12 - Remove the /llama llama.cpp integration (senpi#3202)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/llama/index.ts`: deleted. This was the built-in `/llama` extension entry point.
+- `packages/coding-agent/src/extensions/llama/client.ts`: deleted. The llama-server client.
+- `packages/coding-agent/src/extensions/llama/provider.ts`: deleted. The llama.cpp provider and slash command wiring.
+- `packages/coding-agent/src/extensions/llama/ui.ts`: deleted. The `/llama` model-management UI.
+- `packages/coding-agent/src/extensions/llama/huggingface.ts`: deleted. The Hugging Face download helper used only by `/llama`.
+- `packages/coding-agent/src/extensions/index.ts`: `builtInExtensions` becomes an empty array; the llama.cpp extension was its only entry.
+
+### Why
+
+- `packages/coding-agent/src/extensions/llama/index.ts`: Q ordered removal of the `/llama` entry point.
+- `packages/coding-agent/src/extensions/llama/client.ts`: the removed integration was this client's only consumer.
+- `packages/coding-agent/src/extensions/llama/provider.ts`: the removed integration owned this provider.
+- `packages/coding-agent/src/extensions/llama/ui.ts`: the removed command owned this management UI.
+- `packages/coding-agent/src/extensions/llama/huggingface.ts`: the removed command owned this download helper.
+- `packages/coding-agent/src/extensions/index.ts`: the host must no longer register the deleted extension.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/extensions/llama/index.ts`: an extension cannot delete a shipped entry point.
+- `packages/coding-agent/src/extensions/llama/client.ts`: an extension cannot delete the shipped client.
+- `packages/coding-agent/src/extensions/llama/provider.ts`: an extension cannot delete the shipped provider.
+- `packages/coding-agent/src/extensions/llama/ui.ts`: an extension cannot delete the shipped management UI.
+- `packages/coding-agent/src/extensions/llama/huggingface.ts`: an extension cannot delete the shipped download helper.
+- `packages/coding-agent/src/extensions/index.ts`: only the host can remove its built-in registration.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/extensions/llama/index.ts`: deleted; upstream edits will conflict.
+- `packages/coding-agent/src/extensions/llama/client.ts`: deleted; upstream edits will conflict.
+- `packages/coding-agent/src/extensions/llama/provider.ts`: deleted; upstream edits will conflict.
+- `packages/coding-agent/src/extensions/llama/ui.ts`: deleted; upstream edits will conflict.
+- `packages/coding-agent/src/extensions/llama/huggingface.ts`: deleted; upstream edits will conflict.
+- `packages/coding-agent/src/extensions/index.ts`: the `builtInExtensions` list.
+
 ## 2026-10-11 - Export eval cell RPC contracts (senpi#3072)
 
 ### What changed
