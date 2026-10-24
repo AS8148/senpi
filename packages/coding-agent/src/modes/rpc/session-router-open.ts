@@ -110,6 +110,17 @@ export async function open(
 			},
 		);
 		const openedSession = opened;
+		if (host.writer.isSessionSealed(openedSession.sessionId)) {
+			// Lost output cannot be replayed. Undo only this attachment; keep the runtime and
+			// seal intact until an explicit unload safely parks it for a fresh open by path.
+			await releaseOwnedSession(host, openedSession.sessionId);
+			opened = undefined;
+			return error(command.id, "open_session", "session_output_overflow", {
+				sessionId: openedSession.sessionId,
+				sessionPath: openedSession.sessionPath,
+				action: "unload_and_reopen",
+			});
+		}
 		const entry = host.registry.getForCommand(openedSession.sessionId, "open_session");
 		if (!opened.attached && options?.contextOverlay !== undefined) entry.contextOverlay = options.contextOverlay;
 		const state = entry.worker?.snapshot?.state;

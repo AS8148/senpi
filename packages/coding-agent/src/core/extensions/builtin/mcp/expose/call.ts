@@ -1,4 +1,5 @@
 import type { Progress } from "@modelcontextprotocol/sdk/types.js";
+import { redactResolvedReferenceData, redactResolvedReferenceValues } from "../../../../config-reference-redaction.ts";
 import type { McpToolCatalogEntry } from "../catalog.ts";
 import { ToolExecError } from "../errors.ts";
 import { ensureMcpToolCallConnection, withMcpRetriableFailedSendRetry, withMcpSessionExpiryRetry } from "../health.ts";
@@ -51,10 +52,12 @@ export async function callMcpTool(
 							undefined,
 							{
 								onprogress: (progress) => {
-									onUpdate?.({
-										content: [{ type: "text", text: formatProgress(label, progress) }],
-										details: { progress, server: entry.server, tool: entry.tool },
-									});
+									onUpdate?.(
+										redactResolvedReferenceData({
+											content: [{ type: "text", text: formatProgress(label, progress) }],
+											details: { progress, server: entry.server, tool: entry.tool },
+										}),
+									);
 								},
 								signal,
 								timeout: current.requestTimeoutMs,
@@ -67,7 +70,7 @@ export async function callMcpTool(
 		);
 	} catch (error) {
 		const label = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-		throw new ToolExecError(`ToolExecError: ${label}`, {
+		throw new ToolExecError(redactResolvedReferenceValues(`ToolExecError: ${label}`), {
 			cause: error,
 			phase: "call",
 			serverName: entry.server,

@@ -367,7 +367,11 @@ import { type InheritResult, type ReleaseInheritedResult, RunHolds, type RunRef 
 import { startRunResumeTurn } from "./run-resume-turn.ts";
 import { SecurityNoticeSnapshot } from "./security-notices.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
-import { type ControlEndpointHost, createSessionControlActions } from "./session-control-actions.ts";
+import {
+	type ControlEndpointHost,
+	createSessionControlActions,
+	type GenerationSessionControlActions,
+} from "./session-control-actions.ts";
 import { computeSessionFailureReport, type SessionFailureReport } from "./session-failure-report.ts";
 import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { ChildLifecycleReport, LifecycleApi, SessionLifecycleEvent } from "./session-lifecycle-types.ts";
@@ -1439,6 +1443,8 @@ export class AgentSession {
 			}),
 	});
 	private _controlEndpointHost: ControlEndpointHost | undefined;
+	/** The current extension generation's `pi.session`; a reload retires it with its runner. */
+	private _sessionControl: GenerationSessionControlActions | undefined;
 	private _relocationHost: SessionRelocationHost | undefined;
 	// Queues held while the first post-compaction response is classified. Agent
 	// core otherwise drains steering immediately before AgentSession can consume
@@ -6215,17 +6221,24 @@ export class AgentSession {
 		}
 
 		if (options?.toolBarrier) this._toolBarrier.arm(options.toolBarrier);
-		promptDisposition?.("started");
-		emitPendingCommandInvocation();
-		preflightResult?.(true);
-		if (options?.thinkingLevel !== undefined) {
-			this.setSessionThinkingLevel(options.thinkingLevel);
+		// Everything after arm() sits inside the try: a caller callback that throws must not leave the barrier armed.
+		try {
+			promptDisposition?.("started");
+			emitPendingCommandInvocation();
+			preflightResult?.(true);
+			if (options?.thinkingLevel !== undefined) {
+				this.setSessionThinkingLevel(options.thinkingLevel);
+			}
+			await this._promptAgent(messages, {
+				inputOrigin: originOf(options),
+				onQueuedInput: options?.onQueuedInput,
+				onTurnAdmitted: options?.onTurnAdmitted,
+			});
+		} catch (error) {
+			// A turn the engine refused never ran, so it releases the barrier it armed (senpi#4106).
+			if (options?.toolBarrier && !this._isAgentRunActive) this._toolBarrier.release(options.toolBarrier.id);
+			throw error;
 		}
-		await this._promptAgent(messages, {
-			inputOrigin: originOf(options),
-			onQueuedInput: options?.onQueuedInput,
-			onTurnAdmitted: options?.onTurnAdmitted,
-		});
 		await this.waitForRetry();
 		await this.waitForIdle();
 		if (options?.onSessionWorkReady) {
@@ -11508,6 +11521,14 @@ export class AgentSession {
 			return [...extensionCommands, ...templates, ...skills];
 		};
 
+		// This generation's `pi.session`: it owns the control endpoints this generation registers (senpi#3246).
+		const sessionControl = createSessionControlActions({
+			admission: this.externalAdmission,
+			sessionManager: this.sessionManager,
+			host: () => this._controlEndpointHost,
+			relocationHost: () => this._relocationHost,
+		});
+		this._sessionControl = sessionControl;
 		runner.bindCore(
 			{
 				sendMessage: (message, options) => {
@@ -11604,12 +11625,7 @@ export class AgentSession {
 				},
 				setSessionThinkingLevel: (level) => this.setSessionThinkingLevel(level),
 				setSessionFastMode: (enabled) => this.setSessionFastMode(enabled),
-				sessionControl: createSessionControlActions({
-					admission: this.externalAdmission,
-					sessionManager: this.sessionManager,
-					host: () => this._controlEndpointHost,
-					relocationHost: () => this._relocationHost,
-				}),
+				sessionControl,
 				lifecycle: this.lifecycleApi,
 			},
 			{
@@ -12185,6 +12201,7 @@ export class AgentSession {
 	}): Promise<{ cancelled: false }> {
 		resetTimings("reload");
 		const oldExtensionRunner = this._extensionRunner;
+		const oldSessionControl = this._sessionControl;
 		const oldExtensionIdentities = oldExtensionRunner.getExtensionIdentities();
 		const previousActiveToolRegistrationIds = new Map<string, string>();
 		// Cover withheld eval-only tools too: the rebuild drops any seeded name missing from this
@@ -12286,6 +12303,15 @@ export class AgentSession {
 					});
 				}
 			} finally {
+				// The control endpoints the retiring generation registered drain through its closures:
+				// they go with it, before anything can wake them on the retired runner (senpi#3246).
+				await oldSessionControl?.retire().catch((error: unknown) => {
+					this._extensionRunner.emitError({
+						extensionPath: "<session-control>",
+						event: "reload",
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
 				oldExtensionRunner.invalidate("stale extension generation after reload");
 			}
 			time("runtime", "reload");
@@ -13532,6 +13558,9 @@ export class AgentSession {
 
 		// Set up abort controller for summarization
 		this._branchSummaryAbortController = new AbortController();
+		// The navigation is session work: a prompt, a scheduled tick or a triggered delivery that arrives while it runs
+		// (a branch summary is a model call) waits for it, instead of starting a run on the leaf it is moving (senpi#4154).
+		const finishSessionWork = this._sessionWorkBarrier.begin();
 
 		try {
 			let extensionSummary: { summary: string; details?: unknown; usage?: Usage } | undefined;
@@ -13702,7 +13731,12 @@ export class AgentSession {
 
 			return { editorText, cancelled: false, summaryEntry, entryId: editedEntryId };
 		} finally {
-			this._branchSummaryAbortController = undefined;
+			// The navigation's two busy facts end together. Clearing the controller through its setter would recompute
+			// while the barrier is still held and record a busy state after the navigation has already moved the leaf;
+			// release both, then raise the one edge (senpi#4154 on top of #3980).
+			this._branchSummaryAbortControllerValue = undefined;
+			finishSessionWork();
+			this.refreshLifecycle();
 		}
 	}
 

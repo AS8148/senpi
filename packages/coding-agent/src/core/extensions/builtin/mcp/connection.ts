@@ -39,6 +39,7 @@ export class ServerConnection {
 	readonly #config: ServerConnectionOptions["config"];
 	readonly #authProvider: McpOAuthProvider | undefined;
 	readonly #elicitationUiProvider: ServerConnectionOptions["elicitationUiProvider"];
+	readonly #resolveConfig: ServerConnectionOptions["resolveConfig"];
 	readonly #projectPolicy: ServerConnectionOptions["projectPolicy"];
 	#policyAbort: AbortController | undefined;
 	#startedGrantNames: readonly string[] = [];
@@ -59,6 +60,7 @@ export class ServerConnection {
 		this.#env = options.env;
 		this.#authProvider = options.authProvider;
 		this.#elicitationUiProvider = options.elicitationUiProvider;
+		this.#resolveConfig = options.resolveConfig;
 		this.#projectPolicy = options.projectPolicy;
 		this.#startedGrantNames = options.projectPolicy?.initial.grantedNames ?? [];
 		this.#state = options.config.enabled ? "idle" : "disabled";
@@ -269,6 +271,7 @@ export class ServerConnection {
 						},
 			elicitationUiProvider: this.#elicitationUiProvider,
 			logger: this.#logger,
+			resolveConfig: this.#resolveConfig,
 			serverName: this.serverName,
 		});
 	}

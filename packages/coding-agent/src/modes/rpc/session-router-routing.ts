@@ -244,6 +244,11 @@ export async function dispatch(
 		return answerEffectFromTranscript(command.id, command.sessionPath, command.effectId);
 	if (!command.sessionId) return error(command.id, command.type, RPC_ERROR_MISSING_SESSION_ID);
 	const sessionId = command.sessionId;
+	if (host.writer.isSessionSealed(sessionId) && host.registry.peek(sessionId)?.state === "open")
+		return error(command.id, command.type, "session_output_overflow", {
+			sessionId,
+			action: "unload_and_reopen",
+		});
 	if (command.type === "set_session_context") return setSessionContext(host, command);
 	try {
 		const entry = host.registry.getForCommand(sessionId, command.type);
