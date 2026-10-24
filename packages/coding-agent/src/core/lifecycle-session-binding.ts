@@ -73,14 +73,24 @@ export class LifecycleSessionBinding {
 		});
 		// A crashed receiver may have durable custody but no transcript entry yet. Recovery owns that
 		// delivery already; register it before session_start can let the gateway enqueue a second carrier.
+		const deliveryEntries = session.sessionManager.reduceHistory(lifecycleDeliveryEntries);
 		for (const record of this.controller.obligations.active) {
 			if (record.state !== "queued" || !record.payload || !record.ticketId) continue;
+			const ticketId = record.ticketId;
 			const message = { role: "custom" as const, ...record.payload.message, timestamp: 0 };
 			const deliveryId = deliveryIdOf(message);
 			if (deliveryId === undefined) continue;
-			if (session.sessionManager.reduceHistory(lifecycleDeliveryEntries).has(record.ticketId))
-				session.externalAdmission.observePersisted(message);
-			else session.externalAdmission.restoreQueued(deliveryId);
+			if (deliveryEntries.has(ticketId)) session.externalAdmission.observePersisted(message);
+			else
+				session.externalAdmission.restoreQueued(
+					deliveryId,
+					() =>
+						// Consumption writes the entry before message_end observes it in external admission.
+						session.sessionManager.reduceHistory(lifecycleDeliveryEntries).has(ticketId) ||
+						this.controller.obligations.active.some(
+							(current) => current.ticketId === ticketId && current.state === "queued",
+						),
+				);
 		}
 		this.unsubscribeHuman = bindLifecycleHumanInput(session, (event) => this.controller.humanInput(event.at));
 		this.unsubscribeAdmission = session.externalAdmission.onInputsSettled(() => this.controller.admissionSettled());

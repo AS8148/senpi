@@ -6,7 +6,16 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getAgentDir } from "../../src/config.ts";
 import { RpcClient } from "../../src/modes/rpc/rpc-client.ts";
-import { authenticate, challenge, launchHost, Peer, proof, sandbox, teardown } from "./rpc-public-auth-harness.ts";
+import {
+	authenticate,
+	challenge,
+	HOST_TEST_TIMEOUT_MS,
+	launchHost,
+	Peer,
+	proof,
+	sandbox,
+	teardown,
+} from "./rpc-public-auth-harness.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -31,7 +40,7 @@ async function peer(path: string) {
 }
 
 // #3795: authentication must guard the actual public listener, not only a helper.
-describe.skipIf(process.platform === "win32")("public POSIX authentication", () => {
+describe.skipIf(process.platform === "win32")("public POSIX authentication", { timeout: HOST_TEST_TIMEOUT_MS }, () => {
 	for (const path of ["bare", "direct", "ensured"] as const) {
 		it(`${path}: refuses keyless commands under enforcement`, async () => {
 			const qa = await host(path);
