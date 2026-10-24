@@ -290,24 +290,6 @@ Extensions load long after argument parsing; the role must win before any of it.
 
 - LOW: the share viewer block in `config.ts`.
 
-## 2026-10-23 - Print formats share the final failure exit status (senpi#4061)
-
-### What changed
-
-- `packages/coding-agent/src/modes/print-mode.ts`: after settlement, select the last assistant once and use one `error`/`aborted` decision for both formats' exit status and text diagnostics. This supersedes the JSON compaction-only exception recorded below.
-
-### Why
-
-- JSON output reported provider failures but returned success to scripts. Only the final settled response decides the status, so a recovered retry remains successful.
-
-### Why an extension could not handle it
-
-- Print mode owns the process exit status after extensions and retries finish.
-
-### Expected merge conflict zones
-
-- `packages/coding-agent/src/modes/print-mode.ts`: the block after `waitForSettledSessionWork()` and the text diagnostic branch.
-
 ## 2026-10-18 - The host resolves and advertises its tool runtime (senpi#3566)
 
 ### What changed
