@@ -111,6 +111,9 @@ export class LifecycleLedger {
 		this.runId = crypto.randomUUID();
 		this.runActive = true;
 		this.admissionWriteFailed = false;
+		// A new run is unsaved state even inside an open epoch: recompute() treats records that differ only in runActive
+		// or runId as equal, so without this a later run in the same epoch would never be recorded (senpi#3980).
+		this.unwritten = true;
 	}
 
 	private openEpoch(origin: "human" | "automatic"): void {
