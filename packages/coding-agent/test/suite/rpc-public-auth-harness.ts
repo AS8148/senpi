@@ -1,11 +1,10 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
 import { once } from "node:events";
-import { existsSync, watch } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
 import { hermeticProviderEnv } from "../helpers/rpc-hermetic.ts";
 import { killAndWait, reapProcessesUnder } from "../helpers/spawned-host-reaper.ts";
@@ -21,13 +20,17 @@ export async function sandbox() {
 	return { root, agentDir, socket: join(root, "s") };
 }
 
+/** Well below the per-test timeout of the files that start hosts, so a slow start fails with the host's own output. */
+export const HOST_STARTUP_BUDGET_MS = 20_000;
+/** For files that start hosts: comfortably above the startup budget, so a start never runs into the test timeout. */
+export const HOST_TEST_TIMEOUT_MS = 60_000;
+
+/** Waits for the host's own ready line (bare `senpi rpc listening on`, supervisor `senpi rpc host ready`, ensure's JSON). */
 export async function launchHost(
 	qa: Awaited<ReturnType<typeof sandbox>>,
 	path: LaunchPath,
 	strict = true,
 	extraEnv: Readonly<Record<string, string>> = {},
-	/** `socket`: ready once the listener's entry exists, for a host that logs no bare-listener line. */
-	readiness: "log" | "socket" = "log",
 ) {
 	const args =
 		path === "bare"
@@ -35,6 +38,7 @@ export async function launchHost(
 			: path === "direct"
 				? ["--internal-rpc-host-supervisor", "--socket", qa.socket, "--agent-dir", qa.agentDir]
 				: ["host", "ensure", "--socket", qa.socket, "--json"];
+	const startedAt = performance.now();
 	const child = spawn(process.execPath, [cli, ...args], {
 		cwd: qa.root,
 		env: {
@@ -58,8 +62,12 @@ export async function launchHost(
 	child.stdout?.on("data", (chunk: Buffer) => {
 		stdout += chunk.toString();
 	});
+	const failure = (reason: string) =>
+		new Error(
+			`host ${reason} after ${Math.round(performance.now() - startedAt)} ms waiting for its ready line\nstderr:\n${stderr}\nstdout:\n${stdout}`,
+		);
 	await new Promise<void>((resolve, reject) => {
-		const timeout = setTimeout(() => finish(new Error(`host startup: ${stderr} ${stdout}`)), 30000);
+		const timeout = setTimeout(() => finish(failure("did not start")), HOST_STARTUP_BUDGET_MS);
 		const onData = () => {
 			if (
 				stderr.includes(path === "bare" ? "senpi rpc listening on" : "senpi rpc host ready") ||
@@ -67,16 +75,9 @@ export async function launchHost(
 			)
 				finish();
 		};
-		const onExit = () => finish(new Error(`host exited: ${stderr} ${stdout}`));
-		const watcher =
-			readiness === "socket"
-				? watch(qa.root, (_event, name) => {
-						if (name === basename(qa.socket) && existsSync(qa.socket)) finish();
-					})
-				: undefined;
+		const onExit = () => finish(failure("exited"));
 		const finish = (error?: Error) => {
 			clearTimeout(timeout);
-			watcher?.close();
 			child.stderr?.off("data", onData);
 			child.stdout?.off("data", onData);
 			child.off("exit", onExit);
@@ -86,7 +87,6 @@ export async function launchHost(
 		child.stderr?.on("data", onData);
 		child.stdout?.on("data", onData);
 		child.once("exit", onExit);
-		if (readiness === "socket" && existsSync(qa.socket)) finish();
 	});
 	return { child, stderr: () => stderr };
 }
