@@ -367,7 +367,11 @@ import { type InheritResult, type ReleaseInheritedResult, RunHolds, type RunRef 
 import { startRunResumeTurn } from "./run-resume-turn.ts";
 import { SecurityNoticeSnapshot } from "./security-notices.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
-import { type ControlEndpointHost, createSessionControlActions } from "./session-control-actions.ts";
+import {
+	type ControlEndpointHost,
+	createSessionControlActions,
+	type GenerationSessionControlActions,
+} from "./session-control-actions.ts";
 import { computeSessionFailureReport, type SessionFailureReport } from "./session-failure-report.ts";
 import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { ChildLifecycleReport, LifecycleApi, SessionLifecycleEvent } from "./session-lifecycle-types.ts";
@@ -1439,6 +1443,8 @@ export class AgentSession {
 			}),
 	});
 	private _controlEndpointHost: ControlEndpointHost | undefined;
+	/** The current extension generation's `pi.session`; a reload retires it with its runner. */
+	private _sessionControl: GenerationSessionControlActions | undefined;
 	private _relocationHost: SessionRelocationHost | undefined;
 	// Queues held while the first post-compaction response is classified. Agent
 	// core otherwise drains steering immediately before AgentSession can consume
@@ -1447,11 +1453,29 @@ export class AgentSession {
 	private _postCompactionDeferredFollowUpMessages: AgentMessage[] = [];
 
 	// Compaction state
-	private _compactionAbortController: AbortController | undefined = undefined;
-	private _autoCompactionAbortController: AbortController | undefined = undefined;
+	// Each abort controller below is an isCompacting fact; setting or clearing one is a lifecycle edge (senpi#3980).
+	private _compactionAbortControllerValue: AbortController | undefined = undefined;
+	private _autoCompactionAbortControllerValue: AbortController | undefined = undefined;
+	private get _compactionAbortController(): AbortController | undefined {
+		return this._compactionAbortControllerValue;
+	}
+	private set _compactionAbortController(controller: AbortController | undefined) {
+		if (this._compactionAbortControllerValue === controller) return;
+		this._compactionAbortControllerValue = controller;
+		this.refreshLifecycle();
+	}
+	private get _autoCompactionAbortController(): AbortController | undefined {
+		return this._autoCompactionAbortControllerValue;
+	}
+	private set _autoCompactionAbortController(controller: AbortController | undefined) {
+		if (this._autoCompactionAbortControllerValue === controller) return;
+		this._autoCompactionAbortControllerValue = controller;
+		this.refreshLifecycle();
+	}
 	private _pendingCompactionAdmission: PendingCompactionAdmission | undefined = undefined;
 	private readonly _compactionLifecycle = new CompactionLifecycleCoordinator();
-	private readonly _sessionWorkBarrier = new SessionWorkBarrier();
+	// Work held by the barrier is a lifecycle fact: its release is an edge (senpi#3980).
+	private readonly _sessionWorkBarrier = new SessionWorkBarrier(() => this.refreshLifecycle());
 	/**
 	 * Extension-published activity that outlives a turn (background terminal
 	 * jobs, terminal monitors, loop-guard holds). Counts persist across extension
@@ -1495,7 +1519,19 @@ export class AgentSession {
 	private _messageRevision = 0;
 
 	// Branch summarization state
-	private _branchSummaryAbortController: AbortController | undefined = undefined;
+	// Only the end of a tree navigation is a lifecycle edge. Its start is not: a lifecycle record written while the
+	// navigation runs would become the session leaf under it, so the navigation would land on, or cancel to, the
+	// wrong entry. The navigation is the person's own foreground action, so the session keeps its settled state
+	// until it ends (senpi#4120).
+	private _branchSummaryAbortControllerValue: AbortController | undefined = undefined;
+	private get _branchSummaryAbortController(): AbortController | undefined {
+		return this._branchSummaryAbortControllerValue;
+	}
+	private set _branchSummaryAbortController(controller: AbortController | undefined) {
+		if (this._branchSummaryAbortControllerValue === controller) return;
+		this._branchSummaryAbortControllerValue = controller;
+		if (controller === undefined) this.refreshLifecycle();
+	}
 
 	private _sessionTitleAbortController: AbortController | undefined = undefined;
 	private _sessionTitlePromise: Promise<void> | undefined = undefined;
@@ -2800,7 +2836,13 @@ export class AgentSession {
 	}
 
 	private _emit(event: AgentSessionEvent): void {
-		if (event.type === "session_paused" || event.type === "session_resumed") this.refreshLifecycle();
+		if (
+			event.type === "session_paused" ||
+			event.type === "session_resumed" ||
+			event.type === "compaction_start" ||
+			event.type === "compaction_end"
+		)
+			this.refreshLifecycle();
 		this._logSessionEvent(event);
 		if (event.type === "entry_appended") {
 			event = { ...event, entry: describeUsageLimitEntry(event.entry) };
@@ -6179,17 +6221,24 @@ export class AgentSession {
 		}
 
 		if (options?.toolBarrier) this._toolBarrier.arm(options.toolBarrier);
-		promptDisposition?.("started");
-		emitPendingCommandInvocation();
-		preflightResult?.(true);
-		if (options?.thinkingLevel !== undefined) {
-			this.setSessionThinkingLevel(options.thinkingLevel);
+		// Everything after arm() sits inside the try: a caller callback that throws must not leave the barrier armed.
+		try {
+			promptDisposition?.("started");
+			emitPendingCommandInvocation();
+			preflightResult?.(true);
+			if (options?.thinkingLevel !== undefined) {
+				this.setSessionThinkingLevel(options.thinkingLevel);
+			}
+			await this._promptAgent(messages, {
+				inputOrigin: originOf(options),
+				onQueuedInput: options?.onQueuedInput,
+				onTurnAdmitted: options?.onTurnAdmitted,
+			});
+		} catch (error) {
+			// A turn the engine refused never ran, so it releases the barrier it armed (senpi#4106).
+			if (options?.toolBarrier && !this._isAgentRunActive) this._toolBarrier.release(options.toolBarrier.id);
+			throw error;
 		}
-		await this._promptAgent(messages, {
-			inputOrigin: originOf(options),
-			onQueuedInput: options?.onQueuedInput,
-			onTurnAdmitted: options?.onTurnAdmitted,
-		});
 		await this.waitForRetry();
 		await this.waitForIdle();
 		if (options?.onSessionWorkReady) {
@@ -7718,8 +7767,8 @@ export class AgentSession {
 		});
 	}
 
+	/** Reads the lifecycle; every fact that feeds it raises its own change edge, so a read never writes (senpi#3980). */
 	get lifecycle() {
-		this._lifecycleBinding.controller.recompute();
 		return this._lifecycleBinding.controller.ledger.snapshot;
 	}
 
@@ -7744,6 +7793,8 @@ export class AgentSession {
 	}
 
 	refreshLifecycle(): void {
+		// Work aborted by dispose() still unwinds afterwards; its edges must not write to the released session file.
+		if (this._disposed) return;
 		this._lifecycleBinding.controller.recompute();
 	}
 
@@ -11468,6 +11519,14 @@ export class AgentSession {
 			return [...extensionCommands, ...templates, ...skills];
 		};
 
+		// This generation's `pi.session`: it owns the control endpoints this generation registers (senpi#3246).
+		const sessionControl = createSessionControlActions({
+			admission: this.externalAdmission,
+			sessionManager: this.sessionManager,
+			host: () => this._controlEndpointHost,
+			relocationHost: () => this._relocationHost,
+		});
+		this._sessionControl = sessionControl;
 		runner.bindCore(
 			{
 				sendMessage: (message, options) => {
@@ -11564,12 +11623,7 @@ export class AgentSession {
 				},
 				setSessionThinkingLevel: (level) => this.setSessionThinkingLevel(level),
 				setSessionFastMode: (enabled) => this.setSessionFastMode(enabled),
-				sessionControl: createSessionControlActions({
-					admission: this.externalAdmission,
-					sessionManager: this.sessionManager,
-					host: () => this._controlEndpointHost,
-					relocationHost: () => this._relocationHost,
-				}),
+				sessionControl,
 				lifecycle: this.lifecycleApi,
 			},
 			{
@@ -12145,6 +12199,7 @@ export class AgentSession {
 	}): Promise<{ cancelled: false }> {
 		resetTimings("reload");
 		const oldExtensionRunner = this._extensionRunner;
+		const oldSessionControl = this._sessionControl;
 		const oldExtensionIdentities = oldExtensionRunner.getExtensionIdentities();
 		const previousActiveToolRegistrationIds = new Map<string, string>();
 		// Cover withheld eval-only tools too: the rebuild drops any seeded name missing from this
@@ -12246,6 +12301,15 @@ export class AgentSession {
 					});
 				}
 			} finally {
+				// The control endpoints the retiring generation registered drain through its closures:
+				// they go with it, before anything can wake them on the retired runner (senpi#3246).
+				await oldSessionControl?.retire().catch((error: unknown) => {
+					this._extensionRunner.emitError({
+						extensionPath: "<session-control>",
+						event: "reload",
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
 				oldExtensionRunner.invalidate("stale extension generation after reload");
 			}
 			time("runtime", "reload");
@@ -13177,6 +13241,7 @@ export class AgentSession {
 	): Promise<BashResult> {
 		const abortController = new AbortController();
 		this._bashAbortControllers.add(abortController);
+		this.refreshLifecycle();
 
 		// Apply command prefix if configured (e.g., "shopt -s expand_aliases" for alias support)
 		const prefix = this.settingsManager.getShellCommandPrefix();
@@ -13206,6 +13271,7 @@ export class AgentSession {
 			return result;
 		} finally {
 			this._bashAbortControllers.delete(abortController);
+			this.refreshLifecycle();
 		}
 	}
 
