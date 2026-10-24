@@ -4320,7 +4320,7 @@ export class AgentSession {
 								},
 							],
 						},
-						{ maxTokens: 1, signal },
+						{ maxTokens: 1, signal, cwd: this._cwd },
 					);
 					const ok = result.stopReason !== "error" && result.stopReason !== "aborted";
 					if (!ok && result.stopReason === "error" && admission.kind === "probe") {
