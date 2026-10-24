@@ -82,7 +82,8 @@ export function streamAnthropicSubscription(
 			const sessionKey = options?.sessionId ? toolWatch.sessionKey(options.sessionId) : undefined;
 			if (sessionKey) toolWatch.reconcileWithContext(sessionKey, context);
 			const toolWatchNote = toolWatch.buildPromptNote(sessionKey, context, resolvedTools.customToolNameToSdk);
-			const providerSettings = loadAnthropicSubscriptionProviderSettingsFromDisk(process.cwd());
+			const cwd = options?.cwd ?? process.cwd();
+			const providerSettings = loadAnthropicSubscriptionProviderSettingsFromDisk(cwd);
 			const senpiOwnsCompaction = resolveCompactionOwner(providerSettings) === "senpi";
 			const toolLessRequest = options?.toolChoice === "none";
 			const mcpServers = toolLessRequest ? undefined : await buildCustomToolServers(resolvedTools.customTools);
@@ -94,6 +95,7 @@ export function streamAnthropicSubscription(
 					model,
 					context,
 					streamOptions: options,
+					cwd,
 					providerSettings,
 					authLane,
 					tools: resolvedTools.sdkTools,
