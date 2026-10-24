@@ -213,22 +213,42 @@ function compareRecords(a: MirroredLimits, b: MirroredLimits): number {
 
 /**
  * Combines two different records that changed at the same stamp (senpi#3695). Symmetric, so both isolates land on
- * the same record: windows are the union by id (on the same id the window that sorts later wins), and a field only
- * one side set is kept; when both set it, the value that sorts later wins.
+ * the same record.
+ *
+ * Windows and plan come from the side whose `reportedAt` is later: that is when its windows were really reported
+ * (an error keeps the previous windows and their `reportedAt`, so a poll that reset usage or dropped a window wins
+ * over the other side's older copy). Only when `reportedAt` also ties are the windows the union by id (on the same
+ * id the window that sorts later wins), and the plan the value that sorts later.
+ *
+ * The error is kept when either side set it (the value that sorts later when both did): a success at the same stamp
+ * does not clear the other side's error. The next poll clears it, so the cost is one poll interval of a stale notice
+ * beside current windows.
  */
 function combineConcurrent(a: MirroredLimits, b: MirroredLimits): MirroredLimits {
 	const later = <T>(x: T | undefined, y: T | undefined): T | undefined =>
 		x === undefined ? y : y === undefined ? x : canonical(x) >= canonical(y) ? x : y;
+	if (a.reportedAt !== b.reportedAt) {
+		const [older, newer] = a.reportedAt < b.reportedAt ? [a, b] : [b, a];
+		return concurrentRecord(a, newer.windows, newer.plan ?? older.plan, later(a.error, b.error), newer.reportedAt);
+	}
 	const windows = new Map(a.windows.map((window) => [window.id, window]));
 	for (const window of b.windows) windows.set(window.id, later(windows.get(window.id), window) ?? window);
-	const plan = later(a.plan, b.plan);
-	const error = later(a.error, b.error);
-	const reportedAt = a.reportedAt >= b.reportedAt ? a.reportedAt : b.reportedAt;
+	return concurrentRecord(a, [...windows.values()], later(a.plan, b.plan), later(a.error, b.error), a.reportedAt);
+}
+
+/** The combined record at `a`'s stamp (both sides share it), reported at the later `reportedAt` of the two. */
+function concurrentRecord(
+	a: MirroredLimits,
+	windows: readonly MirroredLimits["windows"][number][],
+	plan: string | undefined,
+	error: string | undefined,
+	reportedAt: string,
+): MirroredLimits {
 	const updatedAt = changedAtOf(a);
 	return {
 		provider: a.provider,
 		account: a.account,
-		windows: [...windows.values()].sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0)),
+		windows: [...windows].sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0)),
 		reportedAt,
 		...(plan === undefined ? {} : { plan }),
 		...(error === undefined ? {} : { error }),
