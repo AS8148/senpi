@@ -69,11 +69,20 @@ async function loginPair(type: AuthType) {
 		}),
 	);
 	for (const region of regions) {
+		let deviceReady = () => {};
+		const device = new Promise<void>((resolve) => {
+			deviceReady = resolve;
+		});
 		const login = models.login(PROVIDER, type, {
 			prompt: async (prompt) => (prompt.type === "select" ? region : `key-${region}`),
-			notify: () => {},
+			notify: (event) => {
+				if (event.type === "device_code") deviceReady();
+			},
 		});
-		if (type === "oauth") await vi.runAllTimersAsync();
+		if (type === "oauth") {
+			await device;
+			await vi.advanceTimersByTimeAsync(1000);
+		}
 		await login;
 	}
 	if (type === "oauth") {
