@@ -21,7 +21,7 @@ import * as _bundledPiTui from "@earendil-works/pi-tui";
 import * as _bundledTypebox from "typebox";
 import * as _bundledTypeboxCompile from "typebox/compile";
 import * as _bundledTypeboxValue from "typebox/value";
-import { CONFIG_DIR_NAME, getAgentDir, isBunBinary, isBundledNode, isBunRuntime } from "../../config.ts";
+import { CONFIG_DIR_NAME, getAgentDir, isBunBinary, isBundledNode, isBunRuntime, VERSION } from "../../config.ts";
 // NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
 // avoiding a circular dependency. Extensions can import from @code-yeongyu/senpi.
 import * as _bundledPiCodingAgent from "../../index.ts";
@@ -30,16 +30,21 @@ import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type Extens
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
 import { RESERVED_MEMORY_REPORT_KEYS } from "../memory-report/memory-report-registry.ts";
+import type { CustomMessage } from "../messages.ts";
 import { readPiManifest } from "../pi-manifest.ts";
 import { unboundSessionControlActions } from "../session-control-actions.ts";
+import { redactForUpload, type UploadRedactionOptions } from "../share/upload-redaction.ts";
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
+import { subscriptionLimits } from "../subscription-limits/limit-store.ts";
 import { time } from "../timings.ts";
+import { validateChildModuleRegistration } from "../tool-dispatch/offload.ts";
 import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 import { readPermissionPreset } from "./builtin/permission-system/preset-registry.ts";
 import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
+import { ownedBy, runOwnedBy } from "./extension-handle-ledger.ts";
 import { recordExtensionLoadKey } from "./extension-load-key.ts";
 import {
 	cachedExtensionFactory,
@@ -47,10 +52,12 @@ import {
 	extensionModuleImporter,
 	rememberExtensionFactory,
 } from "./extension-module-cache.ts";
+import { createLifecycleApi } from "./lifecycle-api.ts";
 import { StaleExtensionContextError } from "./stale-context-error.ts";
 import type {
 	AppendEntryOptions,
 	BeforeAgentStartHandlerOptions,
+	ChildModuleRegistration,
 	ContextHandlerOptions,
 	EntryRenderer,
 	EntryRendererOptions,
@@ -68,8 +75,12 @@ import type {
 	MessageRenderer,
 	PendingProviderRegistration,
 	ProviderConfig,
+	RegisteredChildModule,
 	RegisteredCommand,
 	RegisteredMcpServerDeclaration,
+	SendMessageItem,
+	SendMessageOptions,
+	SendMessageReceipt,
 	SessionContext,
 	SessionControlActions,
 	SessionKind,
@@ -419,7 +430,7 @@ function createExtensionAPI(
 			options?: BeforeAgentStartHandlerOptions & ContextHandlerOptions,
 		): () => void {
 			assertActive();
-			const registeredHandler: HandlerFn = (...args) => handler(...args);
+			const registeredHandler: HandlerFn = ownedBy(extension, (...args: unknown[]) => handler(...args));
 			const list = extension.handlers.get(event) ?? [];
 			list.push(registeredHandler);
 			extension.handlers.set(event, list);
@@ -453,7 +464,9 @@ function createExtensionAPI(
 				);
 			}
 			extension.tools.set(tool.name, {
-				definition: tool,
+				definition: Object.assign(Object.create(Object.getPrototypeOf(tool)), tool, {
+					execute: ownedBy(extension, tool.execute),
+				}),
 				sourceInfo: extension.sourceInfo,
 			});
 			runtime.refreshTools();
@@ -483,6 +496,14 @@ function createExtensionAPI(
 			runtime.registerRemovedToolHint(name, hint);
 		},
 
+		registerChildModule(registration: ChildModuleRegistration): void {
+			runtime.assertActive();
+			validateChildModuleRegistration(registration);
+			const modules = extension.childModules ?? new Map<string, RegisteredChildModule>();
+			modules.set(registration.id, { registration: { ...registration }, sourceInfo: extension.sourceInfo });
+			extension.childModules = modules;
+		},
+
 		registerFilesystemPolicy(policy: FilesystemPolicy): void {
 			runtime.assertActive();
 			const policies = extension.filesystemPolicies ?? [];
@@ -504,6 +525,7 @@ function createExtensionAPI(
 				name,
 				sourceInfo: extension.sourceInfo,
 				...options,
+				handler: ownedBy(extension, options.handler),
 			});
 		},
 
@@ -515,7 +537,12 @@ function createExtensionAPI(
 			},
 		): void {
 			assertActive();
-			extension.shortcuts.set(shortcut, { shortcut, extensionPath: extension.path, ...options });
+			extension.shortcuts.set(shortcut, {
+				shortcut,
+				extensionPath: extension.path,
+				...options,
+				handler: ownedBy(extension, options.handler),
+			});
 		},
 
 		registerFlag(
@@ -610,11 +637,41 @@ function createExtensionAPI(
 			return readPermissionPreset(sessionManager);
 		},
 
-		// Action methods - delegate to shared runtime
-		sendMessage(message, options): void {
+		getSubscriptionLimits() {
 			assertActive();
-			runtime.sendMessage(message, options);
+			return subscriptionLimits.snapshot();
 		},
+
+		onSubscriptionLimits(listener) {
+			assertActive();
+			return subscriptionLimits.subscribe(listener);
+		},
+
+		// Action methods - delegate to shared runtime
+		lifecycle: createLifecycleApi(() => {
+			assertActive();
+			if (!runtime.lifecycle) throw new Error("Extension lifecycle is not bound to a session");
+			return runtime.lifecycle;
+		}),
+		// Itemized sends answer receipts (senpi#3811); a plain send stays fire-and-forget.
+		sendMessage: (<T = unknown>(
+			message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+			options?: SendMessageOptions & { items?: readonly SendMessageItem[] },
+		): Promise<readonly SendMessageReceipt[] | undefined> | undefined => {
+			assertActive();
+			const items = options?.items;
+			if (items === undefined) {
+				runtime.sendMessage(message, options);
+				return undefined;
+			}
+			const itemized = runtime.sendItemizedMessage;
+			// A host without item custody delivers the batch plainly and answers no receipts, like an engine without items.
+			if (itemized === undefined) {
+				runtime.sendMessage(message, options);
+				return Promise.resolve(undefined);
+			}
+			return itemized(message, { ...options, items });
+		}) as ExtensionAPI["sendMessage"],
 
 		sendUserMessage(content, options): void {
 			assertActive();
@@ -646,6 +703,13 @@ function createExtensionAPI(
 			return execCommand(command, args, options?.cwd ?? cwd, options);
 		},
 
+		redactForUpload(text: string, options?: UploadRedactionOptions) {
+			assertActive();
+			return redactForUpload(text, options);
+		},
+
+		hostVersion: VERSION,
+
 		executeTool(toolName, params, options) {
 			runtime.assertActive();
 			return runtime.executeTool(toolName, params, options);
@@ -654,6 +718,17 @@ function createExtensionAPI(
 		getActiveTools(): string[] {
 			assertActive();
 			return runtime.getActiveTools();
+		},
+
+		armToolBarrier(spec) {
+			assertActive();
+			if (!runtime.armToolBarrier) throw new Error("This runtime has no tool barrier (senpi#3717).");
+			runtime.armToolBarrier(spec);
+		},
+
+		releaseToolBarrier(id) {
+			assertActive();
+			return runtime.releaseToolBarrier?.(id) ?? false;
 		},
 
 		getAllTools() {
@@ -742,6 +817,18 @@ function createExtensionAPI(
 				runtime.assertActive();
 				return sessionControlOf(runtime).persistHeaderNow();
 			},
+			relocationOffered() {
+				runtime.assertActive();
+				return sessionControlOf(runtime).relocationOffered();
+			},
+			relocationTargets(signal) {
+				runtime.assertActive();
+				return sessionControlOf(runtime).relocationTargets(signal);
+			},
+			requestRelocation(request, signal) {
+				runtime.assertActive();
+				return sessionControlOf(runtime).requestRelocation(request, signal);
+			},
 		},
 
 		rpc: {
@@ -762,7 +849,7 @@ function createExtensionAPI(
 				if (handlers.has(normalizedName)) {
 					throw new Error(`RPC extension request handler already registered: ${normalizedName}`);
 				}
-				handlers.set(normalizedName, handler);
+				handlers.set(normalizedName, ownedBy(extension, handler));
 				extension.rpcHandlers = handlers;
 			},
 		},
@@ -825,7 +912,13 @@ const importNodeOnlyApi = (specifier: string): Promise<typeof import("jiti/stati
 async function createExtensionModuleImporter(): Promise<ExtensionModuleImporter> {
 	if (usesNativeBunImports) {
 		const { createBunExtensionImporter } = await import("./bun-extension-importer.ts");
-		return createBunExtensionImporter(VIRTUAL_MODULES);
+		return createBunExtensionImporter(
+			VIRTUAL_MODULES,
+			{},
+			{
+				preparedCache: { dir: path.join(getAgentDir(), "cache", "extension-modules"), release: VERSION },
+			},
+		);
 	}
 	const { createJiti } = await importNodeOnlyApi("jiti/static");
 	return createJiti(import.meta.url, {
@@ -901,7 +994,7 @@ async function initializeExtension(
 	const extension = createExtension(extensionPath, resolvedPath, cwd);
 	const load = createExtensionAPI(extension, runtime, cwd, eventBus, session);
 	try {
-		await factory(load.api);
+		await runOwnedBy(extension, () => factory(load.api));
 		load.commit();
 		if (usesNativeBunImports) {
 			const factories = runtimeFactories.get(runtime) ?? new Set<ExtensionFactory>();
@@ -1097,7 +1190,9 @@ function discoverExtensionsInDir(dir: string): string[] {
 	const discovered: string[] = [];
 
 	try {
-		const entries = fs.readdirSync(dir, { withFileTypes: true });
+		const entries = fs
+			.readdirSync(dir, { withFileTypes: true })
+			.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
 		for (const entry of entries) {
 			const entryPath = path.join(dir, entry.name);

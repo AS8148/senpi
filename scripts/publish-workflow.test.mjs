@@ -86,7 +86,30 @@ describe("publish-only workflow", () => {
 		}
 	});
 
+	it("releases the dispatched sha when one is given, through release.mjs --sha", () => {
+		assert.match(workflow, /\n      sha:\n        description: [^\n]+\n        required: false\n        type: string\n        default: ''/);
+		const releaseStep = workflow.match(/- name: Run release[\s\S]*?npm run release -- "\$\{ARGS\[@\]\}"/)?.[0];
+		assert.ok(releaseStep, "expected the release step");
+		// The sha reaches the shell through env, never pasted into the script text.
+		assert.match(releaseStep, /RELEASE_SHA: \$\{\{ inputs\.sha \}\}/);
+		assert.match(releaseStep, /if \[ -n "\$RELEASE_SHA" \]; then\n\s+ARGS\+=\(--sha "\$RELEASE_SHA"\)/);
+		assert.doesNotMatch(releaseStep.slice(releaseStep.indexOf("run: |")), /inputs\.sha/);
+	});
+
 	it("keeps binary package scripts shell-executable", () => {
 		assert.doesNotMatch(codingAgentPackage.scripts["copy-binary-assets"], /&&\s*&&/);
+	});
+});
+
+describe("release step TypeScript heap", () => {
+	it("runs the release's npm run check with the same heap as the CI Check step", () => {
+		const ci = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+		const ciCheck = ci.match(/- name: Check\n[\s\S]*?run: npm run check/)?.[0];
+		assert.ok(ciCheck, "expected the CI Check step");
+		const ciHeap = ciCheck.match(/NODE_OPTIONS: (--max-old-space-size=\d+)/)?.[1];
+		assert.ok(ciHeap, "expected a heap size on the CI Check step");
+		const release = workflow.match(/- name: Run release\n[\s\S]*?\n        run: \|/)?.[0];
+		assert.ok(release, "expected the Run release step");
+		assert.equal(release.match(/NODE_OPTIONS: (--max-old-space-size=\d+)/)?.[1], ciHeap);
 	});
 });

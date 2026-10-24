@@ -19,6 +19,7 @@ import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts"
 import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import { MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { unknownCommandErrorFromWire } from "../../core/unknown-command.ts";
+import { signalSpawnedChild } from "../../utils/child-signal.ts";
 import { DETACH_CONNECTION_CAPABILITY } from "./custom-capability.ts";
 import { ORIGIN_HOST_INSTANCE_FIELD, originHostInstance } from "./host-observe-request.ts";
 
@@ -36,6 +37,7 @@ export class RpcCommandError extends Error {
 }
 
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import {
@@ -72,7 +74,7 @@ import type {
 	RpcSlashCommand,
 	RpcUnloadAnswer,
 } from "./rpc-types.ts";
-import { RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
+import { RPC_ERROR_SESSION_NOT_ATTACHED, RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
 import {
 	readSocketSecret,
 	resolveSocketTransportAddress,
@@ -185,6 +187,8 @@ export type RpcAbortOptions = Omit<Extract<RpcCommand, { type: "abort" }>, "type
 export type RpcAbortAnswer = Extract<RpcResponse, { command: "abort"; success: true }>["data"];
 /** `get_effect_status`: the receipt, or proof the whole transcript holds none. */
 export type RpcEffectStatusAnswer = Extract<RpcResponse, { command: "get_effect_status"; success: true }>["data"];
+/** `get_pending_inputs`: pending inputs in durable custody, and an outcome for each known id. */
+export type RpcPendingInputsAnswer = Extract<RpcResponse, { command: "get_pending_inputs"; success: true }>["data"];
 
 export class RpcClientOpenInFlightError extends Error {
 	readonly code = "open_session_in_flight" as const;
@@ -391,12 +395,12 @@ export class RpcClient {
 
 		this.stopReadingStdout?.();
 		this.stopReadingStdout = null;
-		this.process.kill("SIGTERM");
+		signalSpawnedChild(this.process, "SIGTERM");
 
 		// Wait for process to exit
 		await new Promise<void>((resolve) => {
 			const timeout = setTimeout(() => {
-				this.process?.kill("SIGKILL");
+				if (this.process) signalSpawnedChild(this.process, "SIGKILL");
 				resolve();
 			}, 1000);
 
@@ -474,6 +478,8 @@ export class RpcClient {
 	}
 
 	async openSession(options: {
+		attended?: false;
+		spawnedBy?: import("../../core/session-lifecycle-types.ts").SpawnedBy;
 		/** Attach only on this generation; requires `expected_host_instance`. */
 		expectedHostInstance?: string;
 		sessionPath?: string;
@@ -515,6 +521,36 @@ export class RpcClient {
 		await this.send(response, true, undefined, false);
 	}
 
+	async resumeSession(): Promise<void> {
+		await this.send({ type: "resume_session" });
+	}
+
+	/**
+	 * Task-parent run controls (senpi#3811), sent on a `task_parent` connection. A refusal the engine answers as an
+	 * error (`wrong_parent`, `task_parent_required`) throws with its message; a stale release is an answer.
+	 */
+	async pauseForRun(
+		command: Omit<Extract<RpcCommand, { type: "pause_for_run" }>, "type" | "id">,
+	): Promise<{ held: true; childSeq: number }> {
+		return this.getData<{ held: true; childSeq: number }>(await this.send({ ...command, type: "pause_for_run" }));
+	}
+
+	async resumeForRun(command: Omit<Extract<RpcCommand, { type: "resume_for_run" }>, "type" | "id">): Promise<{
+		released: boolean;
+		reason?: "stale" | "not_held";
+		otherHoldLive?: boolean;
+		turnId?: string;
+	}> {
+		return this.getData(await this.send({ ...command, type: "resume_for_run" }));
+	}
+
+	/** Human input held for a paused session; from a task parent it names the parent session that paused the child. */
+	async holdInput(
+		command: Omit<Extract<RpcCommand, { type: "hold_input" }>, "type" | "id">,
+	): Promise<{ entryId?: string; duplicate?: boolean; alreadyDelivered?: boolean }> {
+		return this.getData(await this.send({ ...command, type: "hold_input" }));
+	}
+
 	/** Draft update for an open `question` request; fire-and-forget like the response. */
 	async sendExtensionUIProgress(progress: RpcExtensionUIProgress): Promise<void> {
 		await this.send(progress, true, undefined, false);
@@ -529,6 +565,28 @@ export class RpcClient {
 		const sessionId = options.sessionId ?? this.sessionId;
 		if (!sessionId) throw new Error("unload_session needs a session");
 		return this.getData<RpcUnloadAnswer>(await this.send({ ...options, type: "unload_session", sessionId }, false));
+	}
+
+	/**
+	 * Patch the context the attached session publishes (`set_session_context`); `null` deletes a key.
+	 * Rejects with {@link RpcCommandError} carrying the host's code (`session_not_attached`, `invalid_session_context`);
+	 * a client with no attached session and no `sessionId` refuses locally with the same `session_not_attached` code.
+	 */
+	async setSessionContext(
+		patch: Record<string, string | number | boolean | null>,
+		sessionId = this.sessionId,
+	): Promise<void> {
+		if (!sessionId) {
+			throw new RpcCommandError(
+				`${RPC_ERROR_SESSION_NOT_ATTACHED}: set_session_context needs a session`,
+				RPC_ERROR_SESSION_NOT_ATTACHED,
+				{
+					reason: "this client has no attached session",
+					action: "attach with openSession first, or pass a sessionId",
+				},
+			);
+		}
+		this.getData(await this.send({ type: "set_session_context", sessionId, patch }, false));
 	}
 
 	async closeSession(sessionId = this.sessionId): Promise<void> {
@@ -744,6 +802,18 @@ export class RpcClient {
 		return this.getData<RpcEffectStatusAnswer>(await this.send(command, options.sessionPath === undefined));
 	}
 
+	/**
+	 * The pending inputs in durable custody (queued, sending, failed) and an explicit outcome for each id in
+	 * `knownClientMessageIds` (at most 64), consistent through `throughCursor`.
+	 */
+	async getPendingInputs(knownClientMessageIds?: readonly string[]): Promise<RpcPendingInputsAnswer> {
+		const command = {
+			type: "get_pending_inputs" as const,
+			...(knownClientMessageIds === undefined ? {} : { knownClientMessageIds: [...knownClientMessageIds] }),
+		};
+		return this.getData<RpcPendingInputsAnswer>(await this.send(command));
+	}
+
 	/** Abort with host refusals and transport loss surfaced to machine callers. */
 	async abortStrict(): Promise<void> {
 		this.getData(await this.send({ type: "abort" }));
@@ -882,6 +952,18 @@ export class RpcClient {
 	async getAvailableThinkingLevels(): Promise<ThinkingLevel[]> {
 		const response = await this.send({ type: "get_available_thinking_levels" });
 		return this.getData<{ levels: ThinkingLevel[] }>(response).levels;
+	}
+
+	/**
+	 * The level a model runs at in this session (the current one when it is active, otherwise what a
+	 * switch to it would restore), where that level comes from, and the levels the model supports.
+	 */
+	async getModelThinkingLevel(
+		provider: string,
+		modelId: string,
+	): Promise<{ level: ThinkingLevel; source: ThinkingLevelSource; availableLevels: ThinkingLevel[] }> {
+		const response = await this.send({ type: "get_model_thinking_level", provider, modelId });
+		return this.getData(response);
 	}
 
 	/**
@@ -1147,6 +1229,13 @@ export class RpcClient {
 	 */
 	async setSessionName(name: string): Promise<void> {
 		await this.send({ type: "set_session_name", name });
+	}
+
+	/**
+	 * Report that the user started typing a draft, so a first-activity prompt-cache prewarm can run (senpi#3859).
+	 */
+	async recordDraftActivity(): Promise<void> {
+		await this.send({ type: "record_user_activity", kind: "draft" });
 	}
 
 	async importJsonl(inputPath: string, cwdOverride?: string): Promise<{ cancelled: boolean }> {

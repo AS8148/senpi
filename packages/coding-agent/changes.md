@@ -1,3 +1,109 @@
+## 2026-10-20 - Share the MCP environment grants store (senpi#3796)
+
+### What changed
+
+- `packages/coding-agent/package.json`: exports `./mcp-env-grants`, a self-contained atomic grants writer, snapshot reader and observer. The module documents the schema and exports the configured-directory resolver and declaration digest.
+
+### Why
+
+Native and legacy engines must read and revoke the same names-only grants with the same canonical identity hash.
+
+### Why an extension could not handle it
+
+The shared module must ship as a public engine package entry without importing the native runtime.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/package.json`: the exports map.
+
+## 2026-10-21 - Coding-agent unit tests quarantine the agent dir in their Vitest config (senpi#3869)
+
+### What changed
+
+- `packages/coding-agent/vitest.config.ts`: calls `quarantineVitestAgentDir()` (fork-only `scripts/vitest-agent-dir-quarantine.mjs`) before building the config, so a Vitest run not started by `scripts/run-tests.mjs` still gives every worker and spawned child a temp `SENPI_CODING_AGENT_DIR` and arms `SENPI_TEST_AGENT_DIR_GUARD=1`.
+
+### Why
+
+- senpi#3867/#3869: the guard refuses the real agent dir in senpi test runs. The quarantine lives in the unit config, not the shared `vitest.base.ts`, which the evals configs import and which the evals Docker image ships alone.
+
+### Why an extension could not handle it
+
+- Test-process environment is fixed before any agent code or extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the line before `export default mergeConfig(`.
+
+## 2026-10-18 - The workspace build never emits test files (senpi#3576)
+
+### What changed
+
+- `tsconfig.build.json` now excludes `**/*.test.ts`: the tool-child runtime is the first code with tests inside `src/`, and the emitted `dist/**/*.test.js` made every CI shard sweep and fail the compiled copies.
+
+### Why
+
+- CI builds the workspace before the test shards and vitest's default exclude does not skip `dist/`, so any test compiled into `dist` runs as a duplicate and fails (its spawned children cannot bootstrap from dist). Main never hit this because no tests lived under `src/` before.
+
+### Why an extension could not handle it
+
+- Build configuration of the package itself; extensions cannot change what tsc emits.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/tsconfig.build.json` (the exclude list) only.
+
+## 2026-10-21 - Bundled Claude Agent SDK 0.3.306 (senpi#3854)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.296 -> 0.3.306; `bun.lock` and `install-lock/` regenerated (`node scripts/generate-coding-agent-install-lock.mjs`), and the advertised [CC] floor in `packages/ai/src/api/anthropic-messages.ts` follows to 2.1.306.
+
+### Why
+
+- The Releasability gate's SDK currency check fails on main as soon as a newer SDK is published; the anthropic-subscription lane needs the current SDK to use new Claude models.
+
+### Why an extension could not handle it
+
+- The SDK is a pinned dependency of the coding-agent package.
+
+### Expected merge conflict zones
+
+- The single dependency line in `packages/coding-agent/package.json`, `bun.lock`, and `install-lock/package-lock.json`.
+
+## What changed
+
+`tsconfig.build.json` excludes `**/*.test.ts`. The tool-child runtime is the first code with tests inside `src/`, and the emitted `dist/**/*.test.js` made every CI shard sweep and fail the compiled copies (their spawned children cannot bootstrap from dist), so CI failed all three test shards.
+
+### Why
+
+CI builds the workspace before the test shards, and vitest's default exclude does not skip `dist/`; any test compiled into `dist` is executed as a duplicate and fails. Main never hit this because no tests lived under `src/` before the tool-child runtime added them.
+
+### Why an extension could not handle it
+
+Build configuration of the package itself; extensions cannot change what tsc emits.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/tsconfig.build.json` (the exclude list) only.
+
+## 2026-10-18 - The pending-input module is a public subpath (senpi#3549)
+
+### What changed
+
+- `packages/coding-agent/package.json`: a new `./pending-input` export pointing at `dist/core/pending-input-public.{js,d.ts}`, a re-export-only barrel of the pending-input reducer, projection, types and store.
+
+### Why
+
+- `packages/coding-agent/package.json`: the desktop server and the omo child queue must embed the exact lifecycle module instead of reimplementing it (desktop #2838 plan).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json`: package exports are part of the package manifest.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/package.json`, the `exports` map next to `./prompt-presets`.
+
 ## 2026-10-15 - A removed custom provider stops being served after logout (senpi#3339)
 
 ### What changed

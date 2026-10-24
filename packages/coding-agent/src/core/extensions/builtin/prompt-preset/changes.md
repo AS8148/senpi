@@ -1,3 +1,61 @@
+## 2026-10-23 - Record product-copy punctuation (senpi#4040)
+
+### What changed
+
+- `test/suite/prompt-presets-native-baseline.json`: refresh 156 of the 198 native prompt hashes after the product-copy punctuation changes. Every preset, surface and input is rendered against the clean merge base; the word sequence is unchanged.
+- `test/suite/regressions/3483-prompt-goldens.json` and `3483-review-accounting.test.ts`: refresh the newly merged prompt-accounting baselines for the same verification and workstation punctuation rewrites; fixture inputs stay fixed.
+
+### Why
+
+- The native generation contracts compare shipped prompt bytes, so intentional punctuation changes require matching recorded hashes.
+
+### Why an extension could not handle it
+
+- The fixture records the builtin prompt builders before runtime extensions apply.
+
+### Expected merge conflict zones
+
+- The native prompt baseline hash values.
+
+## 2026-10-18 - Measure the preset actually composed (senpi#3483)
+
+### What changed
+
+- `presets.ts` observes the parts from each preset's real dynamic-builder call and returns them alongside its unchanged prompt. `index.ts` passes those parts, plus only the user's append when present, to preview accounting. Replaced base sections and session policy are not reported.
+- API note: the public `buildDynamicSystemPrompt` now honours custom/append options. `eventOptionsToBuilderInput` deliberately strips both before preset construction; user appends are reapplied once.
+
+### Why
+
+The default builder's sections do not describe a model preset replacement. A golden captured from main before this fold proves the preset bytes stay unchanged.
+
+### Why an extension could not handle it
+
+Only the preset's actual builder call owns its section boundaries.
+
+### Expected merge conflict zones
+
+- `presets.ts`: resolved preset metadata and builder dispatch. `index.ts`: before-agent-start return and user append handling.
+
+## 2026-10-21 - Launch-gated Fable 5.5 preset (senpi#3893)
+
+### What changed
+
+- `claude-fable-5-5.ts`: delegates to the current tuned Fable 5.1 builder with no prompt-byte changes, preserving the dieted core, between-handoff rule, eval stance and all surface-specific behavior.
+- `contract.ts`, `settings.ts`, `presets.ts`: register the new internal preset and route provisional Fable/Mythos 5.5 ids before the generic Fable 5 matcher. Provider ids and optional snapshot are read from the shared `FABLE55_LAUNCH` block.
+- Tests cover routing, forced settings, all three prompt surfaces with and without eval, and retain existing 5/5.1 routing. The six new baseline hashes equal the corresponding 5.1 hashes; existing hashes are untouched.
+
+### Why
+
+- The unreleased model would otherwise receive the older generic Fable 5 core. This carries the measured 5.1 baseline without claiming a new prompting guide exists or growing the prompt.
+
+### Why an extension could not handle it
+
+- This is the builtin preset's own dispatch and settings contract.
+
+### Expected merge conflict zones
+
+- Claude entries in `contract.ts`, `settings.ts`, `presets.ts`; the new preset is fork-only.
+
 ## 2026-10-15 - Argon preset (senpi#3385)
 
 ### What changed

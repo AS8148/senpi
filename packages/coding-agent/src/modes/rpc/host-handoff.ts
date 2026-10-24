@@ -36,6 +36,7 @@ import { STOP_WAIT_BUDGET_MS } from "./host-ensure-stop.ts";
 import { foreignAgentDirRefusal } from "./host-handoff-agent-dir.ts";
 import { handoffUnregisteredHost, SESSION_COUNT_TIMEOUT_MS } from "./host-handoff-unregistered.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
+import { electPointer } from "./host-pointer-election.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
 import { SUCCESSOR_START_BUDGET_MS, startSuccessor } from "./host-successor.ts";
 
@@ -149,6 +150,8 @@ export async function handoffHostLocked(requested: HandoffHostOptions): Promise<
 	}
 	const foreign = await foreignAgentDirRefusal(options.socket, options.agentDir, host);
 	if (foreign) return foreign;
+	// A pointer an earlier prune dropped is given back to the one proven live generation (senpi#1911).
+	await electPointer(paths);
 	const registered = await readHostRegistration(paths);
 	const owner = await provenOwner(registered, options.socket);
 	if (!owner) return handoffUnregisteredHost(options, paths, host);

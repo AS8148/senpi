@@ -4,6 +4,7 @@ import type { RpcCommand } from "./rpc-types.ts";
 const observations: ReadonlySet<string> = new Set([
 	"get_state",
 	"get_effect_status",
+	"get_pending_inputs",
 	"get_messages",
 	"get_entries",
 	"get_tree",
@@ -15,6 +16,7 @@ const observations: ReadonlySet<string> = new Set([
 	"get_follow_up_messages",
 	"get_available_models",
 	"get_available_thinking_levels",
+	"get_model_thinking_level",
 	"get_fast_mode",
 	"get_commands",
 	"get_loaded_surfaces",

@@ -45,7 +45,8 @@ import {
 import { probeProtocolInfo } from "./host-probe.ts";
 import { readHostStatus, readSessionCounts } from "./host-status.ts";
 import { readAllHostStatus } from "./host-status-all.ts";
-import { stopHost } from "./host-stop.ts";
+import { staleStopGeneration, stopHost } from "./host-stop.ts";
+import type { HostStopGeneration } from "./host-stop-generation.ts";
 
 export {
 	HOST_EXIT_ERROR,
@@ -78,7 +79,17 @@ export type HostRequest =
 			/** Every endpoint under `target.agentDir` (its socket is ignored), read without pruning. */
 			readonly all?: boolean;
 	  }
-	| { readonly action: "stop"; readonly target: HostTarget; readonly drain: boolean; readonly force: boolean }
+	| {
+			readonly action: "stop";
+			readonly target: HostTarget;
+			readonly drain: boolean;
+			readonly force: boolean;
+			readonly expectedGeneration?: HostStopGeneration;
+			/** With `drain`: the generation to drain, by instance id (senpi#3653). */
+			readonly instanceId?: string;
+			/** With `drain`: wait up to this long for that generation to exit. */
+			readonly waitMs?: number;
+	  }
 	| {
 			readonly action: "handoff";
 			readonly target: HostTarget;
@@ -105,7 +116,7 @@ export async function runHostRequest(request: HostRequest): Promise<HostOutcome>
 				? statusAllOutcome(request.target, request.includeWorkers)
 				: statusOutcome(request.target, request.includeWorkers);
 		case "stop":
-			return stopOutcome(request.target, request.drain, request.force);
+			return stopOutcome(request);
 		case "handoff":
 			return request.handover === undefined
 				? handoffOutcome(request.target, request.spec)
@@ -152,6 +163,7 @@ async function ensureOutcome(
 			reason: error.reason,
 			socket: target.socket,
 			...(error.detail !== undefined && { detail: error.detail }),
+			...(error.holder !== undefined && { holder: error.holder }),
 		});
 	}
 	const host = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS).finally(ensured.release);
@@ -204,20 +216,40 @@ function shardPathOutcome(kind: ShardKind, owner: string, root: string): HostOut
  * so it is gated on the host's own count and refuses with those counts rather than a bare "busy".
  * A DRAIN ends no work - the host stops accepting and leaves when it is empty - so it is never gated.
  */
-async function stopOutcome(target: HostTarget, drain: boolean, force: boolean): Promise<HostOutcome> {
+async function stopOutcome(request: Extract<HostRequest, { action: "stop" }>): Promise<HostOutcome> {
+	const { target, drain, force, instanceId, waitMs } = request;
+	if (request.expectedGeneration !== undefined) {
+		const stale = await staleStopGeneration(target.socket, target.agentDir, request.expectedGeneration);
+		if (stale !== undefined) return refusal("refuse", undefined, { reason: stale.reason, socket: target.socket });
+	}
 	const host = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS);
 	const sessions = await readSessionCounts(target.socket, true);
 	const occupied = sessions.foreign_attached + sessions.foreign_retained > 0;
 	if (!drain && !force && occupied) {
 		return refusal("refuse", host, { reason: "sessions_live", socket: target.socket, sessions });
 	}
-	const result = await stopHost({ socket: target.socket, agentDir: target.agentDir, drain, force });
+	const result = await stopHost({
+		socket: target.socket,
+		agentDir: target.agentDir,
+		drain,
+		force,
+		...(request.expectedGeneration !== undefined && { expectedGeneration: request.expectedGeneration }),
+		...(instanceId !== undefined && { instanceId }),
+		...(waitMs !== undefined && { waitMs }),
+	});
 	if (result.action === "refuse") {
 		return refusal("refuse", host, { reason: result.reason, socket: target.socket, sessions });
 	}
 	return {
 		exitCode: HOST_EXIT_OK,
-		payload: { action: result.action, socket: target.socket, pid: result.pid, sessions },
+		payload: {
+			action: result.action,
+			socket: target.socket,
+			pid: result.pid,
+			...("instanceId" in result && result.instanceId !== undefined && { instanceId: result.instanceId }),
+			...("exited" in result && result.exited !== undefined && { exited: result.exited }),
+			sessions,
+		},
 	};
 }
 

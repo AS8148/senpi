@@ -32,6 +32,7 @@ import {
 	shouldFinalizeIdleAsStop,
 	shouldTerminateAssistantTurn,
 } from "./assistant-terminal-state.ts";
+import { createResponseTimingRecorder } from "./response-timing.ts";
 import { getDefaultStreamFn, withEmptyAssistantRecovery } from "./stream-fn.ts";
 import { prepareAgentToolCallArguments } from "./tool-arguments.ts";
 import { resolveCallTool, withToolNameCorrection } from "./tool-name-alias.ts";
@@ -191,7 +192,7 @@ class StreamIdleTimeoutError extends Error {
 export class StreamStartTimeoutError extends Error {
 	constructor(timeoutMs: number) {
 		super(
-			`Provider stream start timed out after ${timeoutMs}ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)`,
+			`Provider stream start timed out after ${timeoutMs}ms (raise streamStartTimeoutMs: retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)`,
 		);
 		this.name = "StreamStartTimeoutError";
 	}
@@ -218,18 +219,28 @@ async function runLoop(
 	let explicitContinuation = false;
 	// Messages from `prepareNextTurn`, appended before the next provider request.
 	let preparedMessages: AgentMessage[] = [];
+	// Which queue the current pendingMessages were drained from, so consumption is committed against it.
+	let pendingSource: "steering" | "followUp" = "steering";
+	const drainSteering = async (): Promise<AgentMessage[]> => {
+		pendingSource = "steering";
+		return (await config.getSteeringMessages?.()) || [];
+	};
+	const drainFollowUp = async (): Promise<AgentMessage[]> => {
+		pendingSource = "followUp";
+		return (await config.getFollowUpMessages?.()) || [];
+	};
 	const refreshTerminatingQueueDrain = async (): Promise<void> => {
 		if (!drainedTerminatingQueue || !config.restorePendingMessages) return;
 		await config.restorePendingMessages(drainedTerminatingQueue, pendingMessages);
-		pendingMessages = (await config.getSteeringMessages?.()) || [];
+		pendingMessages = await drainSteering();
 		drainedTerminatingQueue = pendingMessages.length > 0 ? "steering" : undefined;
 		if (pendingMessages.length === 0) {
-			pendingMessages = (await config.getFollowUpMessages?.()) || [];
+			pendingMessages = await drainFollowUp();
 			drainedTerminatingQueue = pendingMessages.length > 0 ? "followUp" : undefined;
 		}
 	};
 	// Check for steering messages at start (user may have typed while waiting)
-	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
+	let pendingMessages: AgentMessage[] = await drainSteering();
 
 	// Outer loop: continues when queued follow-up messages arrive after agent would stop
 	while (true) {
@@ -251,6 +262,17 @@ async function runLoop(
 					return;
 				}
 				drainedTerminatingQueue = undefined;
+			}
+
+			// Commit the queued messages' consumption before any of them reaches the context or a provider;
+			// a rejected commit restores them and fails this attempt.
+			if (pendingMessages.length > 0 && config.commitQueuedConsumption) {
+				try {
+					await config.commitQueuedConsumption(pendingSource, pendingMessages);
+				} catch (error) {
+					await config.restorePendingMessages?.(pendingSource, pendingMessages);
+					throw error;
+				}
 			}
 
 			// Process prepared and queued messages before the next assistant response.
@@ -362,10 +384,10 @@ async function runLoop(
 			}
 			explicitContinuation = decision?.action === "continue";
 			if (toolBatchTerminated) {
-				pendingMessages = (await config.getSteeringMessages?.()) || [];
+				pendingMessages = await drainSteering();
 				if (pendingMessages.length > 0) drainedTerminatingQueue = "steering";
 				if (pendingMessages.length === 0) {
-					pendingMessages = (await config.getFollowUpMessages?.()) || [];
+					pendingMessages = await drainFollowUp();
 					if (pendingMessages.length > 0) drainedTerminatingQueue = "followUp";
 				}
 				if (pendingMessages.length === 0 && !explicitContinuation) {
@@ -408,7 +430,7 @@ async function runLoop(
 				drainedTerminatingQueue = undefined;
 			}
 			if (!toolBatchTerminated) {
-				pendingMessages = (await config.getSteeringMessages?.()) || [];
+				pendingMessages = await drainSteering();
 			}
 			if (hasMoreToolCalls || pendingMessages.length > 0) {
 				explicitContinuation = false;
@@ -416,7 +438,7 @@ async function runLoop(
 		}
 
 		// Agent would stop here. Check for follow-up messages.
-		const followUpMessages = (await config.getFollowUpMessages?.()) || [];
+		const followUpMessages = await drainFollowUp();
 		if (followUpMessages.length > 0) {
 			// Set as pending so inner loop processes them
 			explicitContinuation = false;
@@ -595,8 +617,10 @@ async function streamAssistantResponse(
 	// after the assistant message so pairs stay adjacent in the transcript.
 	const providerToolResults: ToolResultMessage[] = [];
 	const thinkingTiming = new Map<number, { startedAt: number; endedAt?: number }>();
+	const responseTiming = createResponseTimingRecorder();
 
-	function propagateThinkingTiming(finalMessage: AssistantMessage): void {
+	function stampTiming(finalMessage: AssistantMessage): void {
+		responseTiming.stamp(finalMessage);
 		for (const timing of thinkingTiming.values()) {
 			if (timing.endedAt === undefined) timing.endedAt = Date.now();
 		}
@@ -637,6 +661,7 @@ async function streamAssistantResponse(
 		const resolvedApiKey =
 			(config.getApiKey ? await preStream.run(config.getApiKey(config.model.provider)) : undefined) || config.apiKey;
 
+		responseTiming.requested();
 		const response = await preStream.run(
 			streamFunction(config.model, llmContext, {
 				...config,
@@ -684,6 +709,7 @@ async function streamAssistantResponse(
 				const event = next.value;
 				switch (event.type) {
 					case "start":
+						responseTiming.started();
 						partialMessage = event.partial;
 						context.messages.push(partialMessage);
 						addedPartial = true;
@@ -704,6 +730,7 @@ async function streamAssistantResponse(
 					case "toolcall_end":
 						if (partialMessage) {
 							partialMessage = event.partial;
+							responseTiming.observe(event);
 							if (
 								event.type === "thinking_start" ||
 								event.type === "thinking_delta" ||
@@ -733,7 +760,7 @@ async function streamAssistantResponse(
 					case "done":
 					case "error": {
 						const finalMessage = normalizeTerminalAssistantMessage(await result(), event);
-						propagateThinkingTiming(finalMessage);
+						stampTiming(finalMessage);
 						if (addedPartial) {
 							context.messages[context.messages.length - 1] = finalMessage;
 						} else {
@@ -755,7 +782,7 @@ async function streamAssistantResponse(
 		}
 
 		const finalMessage = await result();
-		propagateThinkingTiming(finalMessage);
+		stampTiming(finalMessage);
 		if (addedPartial) {
 			context.messages[context.messages.length - 1] = finalMessage;
 		} else {
@@ -786,7 +813,7 @@ async function streamAssistantResponse(
 				stopReason: "stop",
 				timestamp: partialMessage?.timestamp ?? Date.now(),
 			};
-			propagateThinkingTiming(finalMessage);
+			stampTiming(finalMessage);
 			if (addedPartial) {
 				context.messages[context.messages.length - 1] = finalMessage;
 			} else {
@@ -809,7 +836,7 @@ async function streamAssistantResponse(
 			callerAbortedPastBound ? abortError(signal.reason) : error,
 			partialMessage,
 		);
-		propagateThinkingTiming(finalMessage);
+		stampTiming(finalMessage);
 		if (addedPartial) {
 			context.messages[context.messages.length - 1] = finalMessage;
 		} else {

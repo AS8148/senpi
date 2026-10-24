@@ -39,6 +39,7 @@ export interface CreateAgentSessionRuntimeResult extends CreateAgentSessionResul
 /** Immutable flags selected when a runtime is first launched. */
 export interface AgentSessionLaunchProfile {
 	cwd: string;
+	spawnedBy?: import("./session-lifecycle-types.ts").SpawnedBy;
 	/** Host-owned public endpoint evidence; never sourced from client session context. */
 	holderEndpoint?: SessionHolderEndpoint;
 	permissionPreset?: string;
@@ -405,6 +406,8 @@ export class AgentSessionRuntime {
 		const replaced = this.session.sessionManager;
 		this.session.dispose();
 		this._disposedSession = this.session;
+		// As in dispose(): the replaced session's tool child has stopped and its commands are swept before replacement.
+		await this.session.whenToolChildClosed();
 		// Nothing writes to the replaced manager once its session is disposed, so the
 		// shared host may hand its session file to another worker.
 		unregisterSessionWriter(replaced);
@@ -692,13 +695,19 @@ export class AgentSessionRuntime {
 		return { cancelled: false };
 	}
 
-	async dispose(): Promise<void> {
-		await emitSessionShutdownEvent(this.session.extensionRunner, {
-			type: "session_shutdown",
-			reason: "quit",
-		});
+	/**
+	 * `processExit`: the caller exits the process right after, so quit-time handlers share the total quit budget
+	 * (senpi#3711). An RPC host closing one session leaves it unset and keeps only the per-handler limits.
+	 */
+	async dispose(options: { readonly processExit?: boolean } = {}): Promise<void> {
+		await emitSessionShutdownEvent(
+			this.session.extensionRunner,
+			{ type: "session_shutdown", reason: "quit" },
+			options,
+		);
 		this.beforeSessionInvalidate?.();
 		this.session.dispose();
+		await this.session.whenToolChildClosed();
 		this.releaseSessionHold();
 	}
 }

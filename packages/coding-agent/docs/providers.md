@@ -10,7 +10,6 @@ Senpi supports subscription-based providers via OAuth and API key providers via 
 - [Auth File](#auth-file)
 - [Provider Specific Config](#provider-specific-config)
 - [Ollama Cloud](#ollama-cloud)
-- [llama.cpp](#llamacpp)
 - [Custom Providers](#custom-providers)
 - [Resolution Order](#resolution-order)
 
@@ -137,6 +136,7 @@ The `anthropic-subscription` provider routes LLM calls through the official [Cla
 - Run `/login anthropic-subscription` to sign in with your Claude Pro/Max subscription (PKCE, same OAuth client as the Claude Code CLI). An existing Anthropic OAuth credential is offered as an import.
 - Multiple accounts: each `/login anthropic-subscription` adds another named account. `CLAUDE_CODE_OAUTH_TOKEN` (and `_2`..`_N`) are honored as read-only env accounts. `/claude-account` lists, adds, removes, and pins accounts; `--claude-account <name>` pins one for the session; `anthropicSubscriptionProvider.pinnedAccount` pins one in settings.
 - Session affinity: one senpi session sticks to one account (rendezvous hashing), which keeps Anthropic's prompt cache warm - accounts never rotate mid-session except on automatic failover. Rate limits and auth errors block the account (with cooldown) and retry on the next account, before any visible output; once output has started, the error surfaces instead of replaying.
+- To stop instead of spending another account's allowance, set `anthropicSubscriptionProvider.accountFallback: false`. On managed lanes (`oauth-slots` and `config-dir`), only the explicitly pinned account, otherwise the resident session's account, otherwise the deterministic affinity winner may serve the request. A blocked selected account is not skipped on later requests. Same-account transient retries and credential refresh still work; an explicit account pin can select a different account. The default is `true`. This is independent of `retry.modelFallback` / `--no-model-fallback`; disable model fallback too if you do not want a different model or provider to serve the failed turn. The ambient lane has no managed-account fallback.
 - Default lane: **ambient** - with no `tokenInjection` setting the provider inherits the environment like the upstream extension (Claude Code CLI login or `ANTHROPIC_API_KEY`). Managed lanes (`oauth-slots`, `config-dir`) are opt-in via one settings line until the live subscription spike proves a managed default.
 - Ambient lane is explicit opt-in: a Claude Code CLI login on the host is not consent to spend that subscription, so the ambient lane is gated by `anthropicSubscriptionProvider.enabled` (default `false`, env override `SENPI_CLAUDE_SDK_OAUTH_ENABLED`). Before this gate existed, a logged-in Claude Code CLI made the provider available with no senpi-side action. An explicit senpi-side login is itself an opt-in: stored OAuth accounts in `auth.json` and `CLAUDE_CODE_OAUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN_<n>` env accounts keep the provider available with the flag unset. Only the host-CLI-derived ambient lane requires the flag.
 - Settings (`anthropicSubscriptionProvider`):
@@ -154,6 +154,7 @@ The `anthropic-subscription` provider routes LLM calls through the official [Cla
   | `SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION` | `oauth-slots` \| `config-dir` \| `ambient` |
   | `SENPI_CLAUDE_SDK_OAUTH_SETTING_SOURCES` | Overrides `settingSources` |
   | `SENPI_CLAUDE_SDK_OAUTH_PINNED_ACCOUNT` | Overrides `pinnedAccount` |
+  | `SENPI_CLAUDE_SDK_OAUTH_ACCOUNT_FALLBACK` | `0` / `false` disables managed-account fallback; `1` / `true` enables it |
   | `SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER` | Overrides `compactionOwner` (`senpi` \| `sdk`) |
 
   Every `SENPI_*` variable is stripped from the Claude Code subprocess environment on all three lanes; other inherited variables are preserved.
@@ -648,12 +649,6 @@ export GOOGLE_CLOUD_LOCATION=us-central1
 ```
 
 Or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
-
-## llama.cpp
-
-Senpi supports the llama.cpp router server. Configure it with `/login llama.cpp`, manage loaded models with `/llama`, and select a loaded model with `/model`.
-
-See [llama.cpp](llama-cpp.md) for server setup, model directory layout, environment variables, and command usage.
 
 ## Custom Providers
 

@@ -51,6 +51,7 @@ export interface Args {
 	noThemes?: boolean;
 	noContextFiles?: boolean;
 	listModels?: string | true;
+	printPromptSizes?: boolean;
 	listTips?: boolean;
 	offline?: boolean;
 	tuiMode?: TuiMode;
@@ -73,6 +74,8 @@ export interface Args {
 	toolRuntime?: ToolRuntimeKind;
 	messages: string[];
 	fileArgs: string[];
+	/** A bare `-` argument: read stdin to EOF even when a prompt argument is given. */
+	readStdin?: boolean;
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
 	unknownFlags: Map<string, boolean | string>;
 	diagnostics: Array<{ type: "warning" | "error"; message: string }>;
@@ -263,6 +266,8 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			result.noThemes = true;
 		} else if (arg === "--no-context-files" || arg === "-nc") {
 			result.noContextFiles = true;
+		} else if (arg === "--print-prompt-sizes") {
+			result.printPromptSizes = true;
 		} else if (arg === "--list-models") {
 			// Check if next arg is a search pattern (not a flag or file arg)
 			if (i + 1 < args.length && !args[i + 1].startsWith("-") && !args[i + 1].startsWith("@")) {
@@ -335,6 +340,8 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 					result.unknownFlags.set(flagName, true);
 				}
 			}
+		} else if (arg === "-") {
+			result.readStdin = true;
 		} else if (arg.startsWith("-") && !arg.startsWith("--")) {
 			result.diagnostics.push({ type: "error", message: `Unknown option: ${arg}` });
 		} else if (!arg.startsWith("-")) {
@@ -399,6 +406,7 @@ ${chalk.bold("Options:")}
   --append-system-prompt <text>  Append text or file contents to the system prompt (can be used multiple times)
   --mode <mode>                  Output mode: text (default), json, or rpc
   --print, -p                    Non-interactive mode: process prompt and exit
+  -                              Wait for stdin to close and prepend it to the prompt (a silent stdin pipe is otherwise skipped after 2 s when a prompt argument is given)
   --continue, -c                 Continue previous session
   --resume, -r                   Select a session to resume
   --session <path|id>            Use specific session file or partial UUID
@@ -429,6 +437,8 @@ ${chalk.bold("Options:")}
   --no-context-files, -nc        Disable AGENTS.md and CLAUDE.md discovery and loading
   --export <file>                Export session file to HTML and exit
   --list-models [search]         List available models (with optional fuzzy search)
+  --print-prompt-sizes           Print first-turn sizes as JSON with zero model calls; MCP attach is skipped
+                                 (servers listed); third-party session_start hooks still run (named)
   --list-tips                    List all tips as JSON
   --verbose                      Force verbose startup (overrides quietStartup setting)
   --tui-mode <mode>              TUI mode: regular (default) or fullscreen
@@ -563,7 +573,8 @@ ${chalk.bold("Environment Variables:")}
   PI_RULES_MAX_RULE_CHARS          - Per-rule formatted payload character cap (default: 12000)
   PI_RULES_MAX_RESULT_CHARS        - Complete static/dynamic block character cap (default: 40000)
   PI_TELEMETRY                     - Override install telemetry when set to 1/true/yes or 0/false/no
-  PI_SHARE_VIEWER_URL              - Base URL for /share command (default: https://pi.dev/session/)
+  PI_SHARE_VIEWER_URL              - Opt-in viewer base URL for /share (default: none, gist link only)
+  PI_DISABLE_SHARE                 - Set to 1 to turn /share off
 
 ${chalk.bold("Built-in Tool Names:")}
   read       - Read file contents

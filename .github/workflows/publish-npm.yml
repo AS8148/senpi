@@ -8,6 +8,11 @@ name: Release
         required: false
         type: string
         default: ''
+      sha:
+        description: 'Release this exact commit (full 40-char sha, must be on main) instead of main at dispatch; later merges stay out of the tag. Empty = main.'
+        required: false
+        type: string
+        default: ''
       dry_run:
         description: 'Dry-run preview only (no publish or push)'
         required: false
@@ -117,11 +122,39 @@ jobs:
       - name: Reset auto-generated and npm-install drift files (not part of release diff)
         run: git checkout -- packages/ai/src/models.generated.ts package-lock.json
 
+      # The release's npm test runs the native grep probe tests, which refuse to build the
+      # senpi-grep addon inside a test hook in CI (#3978). Build it once here, as ci.yml does.
+      - name: Setup Rust
+        if: inputs.publish-only != true
+        run: |
+          toolchain=stable
+          if [ -f rust-toolchain.toml ]; then
+            toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          fi
+          rustup toolchain install "$toolchain" --profile minimal
+          rustup default "$toolchain"
+
+      - name: Cache Rust
+        if: inputs.publish-only != true
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Build native grep addon
+        if: inputs.publish-only != true
+        working-directory: crates/senpi-grep
+        run: |
+          npm exec --yes --package @napi-rs/cli@3.7.2 -- napi build --platform --release -- --locked
+          node_file=$(ls senpi_grep.*.node)
+          echo "SENPI_GREP_NATIVE_PATH=$PWD/$node_file" >> "$GITHUB_ENV"
+
       - name: Run release
         if: inputs.publish-only != true
         env:
           GH_TOKEN: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}
           SENPI_SKIP_PM_VERIFY: '1'
+          RELEASE_SHA: ${{ inputs.sha }}
+          # The release runs the same `npm run check` as CI, so it needs CI's TypeScript heap (ci.yml Check,
+          # senpi#4022): on the default ~4 GB heap the check ran out of memory in the 2026.10.23-1 release.
+          NODE_OPTIONS: --max-old-space-size=10240
         run: |
           test -n "$GH_TOKEN" || {
             echo "::error::UPSTREAM_AUTOMATION_TOKEN is required to push release commits and tags through branch protection."
@@ -134,6 +167,9 @@ jobs:
           fi
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             ARGS+=(--dry-run)
+          fi
+          if [ -n "$RELEASE_SHA" ]; then
+            ARGS+=(--sha "$RELEASE_SHA")
           fi
           if [ "${{ inputs.force_tests }}" = "true" ]; then
             ARGS+=(--force-tests)
@@ -176,5 +212,5 @@ jobs:
             echo "| Dry run | ${{ inputs.dry_run }} |"
             echo "| Force tests | ${{ inputs.force_tests }} |"
             echo "| Version | ${{ inputs.version || 'auto' }} |"
-            echo "| Commit | ${{ github.sha }} |"
+            echo "| Commit | ${{ inputs.sha || github.sha }} |"
           } >> "$GITHUB_STEP_SUMMARY"
