@@ -25,13 +25,14 @@ import {
 	writeFileSync,
 } from "fs";
 import { appendFile, type FileHandle, open, readdir, rm } from "fs/promises";
-import { join, resolve } from "path";
+import { basename, join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { EventLoopSlicer, mapInSlices } from "./event-loop-slicer.ts";
 import { projectRetainedMessages } from "./extensions/builtin/compaction/retained-message-projection.ts";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
+import type { InputSource } from "./extensions/types.ts";
 import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
 import { sessionCwdMatcher } from "./moved-session-cwd.ts";
 import type { RepositoryIdentity } from "./repository-identity.ts";
@@ -46,11 +47,13 @@ import {
 	loadEntriesFromFile,
 	loadEntriesFromFileAsync,
 	parseSessionEntryLine,
+	readForkSource,
 	terminateFinalSessionLine,
 } from "./session-entry-file.ts";
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
 import { replaceFileAtomically } from "./session-file-replace.ts";
 import { type HistoryReducer, HistoryReductions } from "./session-history-reduce.ts";
+import type { SpawnedBy } from "./session-lifecycle-types.ts";
 import { planLoadedTail } from "./session-loaded-tail.ts";
 import { SessionWriteGuard } from "./session-move/write-guard.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
@@ -165,6 +168,8 @@ export interface UsageTotals {
 	cacheRead: number;
 	cacheWrite: number;
 	cost: number;
+	/** Some summed turn had no known price, so `cost` is a lower bound (senpi#3844). */
+	costUnknown?: true;
 	latestCacheHitRate: number | undefined;
 }
 
@@ -181,11 +186,14 @@ export interface SessionHeader {
 	timestamp: string;
 	cwd: string;
 	parentSession?: string;
+	/** Execution ancestry, unlike parentSession's transcript/fork provenance. */
+	spawnedBy?: SpawnedBy;
 }
 
 export interface NewSessionOptions {
 	id?: string;
 	parentSession?: string;
+	spawnedBy?: SpawnedBy;
 }
 
 export interface SessionEntryBase {
@@ -198,6 +206,12 @@ export interface SessionEntryBase {
 export interface SessionMessageEntry extends SessionEntryBase {
 	type: "message";
 	message: AgentMessage;
+	/**
+	 * Where a user message came from: the `source` its `input` event reported. Stored on the entry, never on
+	 * the message, so it stays in the session record and out of provider requests. Absent on every other
+	 * entry and on user input that ran no `input` event (restored, moved or edited input): unknown origin.
+	 */
+	inputSource?: InputSource;
 }
 
 export interface ThinkingLevelChangeEntry extends SessionEntryBase {
@@ -210,6 +224,9 @@ export interface ThinkingLevelChangeEntry extends SessionEntryBase {
 	triggerActor?: string;
 	/** The RPC model or thinking-level effect that applied this value. */
 	effectId?: string;
+	/** Model the level applied to (senpi#3819); absent on older entries. Feeds the per-session per-model map. */
+	provider?: string;
+	modelId?: string;
 }
 
 export interface ConfigurationUpdateEntry extends SessionEntryBase {
@@ -467,6 +484,26 @@ export type ReadonlySessionManager = Pick<
 
 function createSessionId(): string {
 	return uuidv7();
+}
+
+const SESSION_FILE_NAME = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_(.+)\.jsonl$/;
+
+/** The id a session file's name carries (`<timestamp>_<id>.jsonl`), when the name has that shape and the id is valid. */
+export function sessionFileNameId(path: string): string | undefined {
+	const id = SESSION_FILE_NAME.exec(basename(path))?.[1];
+	if (id === undefined) return undefined;
+	try {
+		assertValidSessionId(id);
+		return id;
+	} catch {
+		return undefined;
+	}
+}
+
+function withFileNameId(path: string, options: NewSessionOptions | undefined): NewSessionOptions | undefined {
+	if (options?.id !== undefined) return options;
+	const id = sessionFileNameId(path);
+	return id === undefined ? options : { ...options, id };
 }
 
 export function assertValidSessionId(id: string): void {
@@ -1107,9 +1144,12 @@ const SETUP_ENTRY_TYPES: ReadonlySet<FileEntry["type"]> = new Set([
 	"label",
 ]);
 
-/** A `custom` entry is disposable only when its writer marked it as startup bookkeeping (senpi#3263). */
+/** Engine lifecycle bookkeeping (senpi#3864): durable before any conversation, disposable without one. */
+const LIFECYCLE_ENTRY_TYPES: ReadonlySet<string> = new Set(["session-lifecycle", "work-custody", "child-lifecycle"]);
+
+/** A `custom` entry is disposable when its writer marked it as startup bookkeeping (senpi#3263) or it is lifecycle bookkeeping. */
 function isDisposableEntry(entry: FileEntry): boolean {
-	if (entry.type === "custom") return entry.startupBookkeeping === true;
+	if (entry.type === "custom") return entry.startupBookkeeping === true || LIFECYCLE_ENTRY_TYPES.has(entry.customType);
 	return SETUP_ENTRY_TYPES.has(entry.type);
 }
 
@@ -1327,12 +1367,13 @@ export class SessionManager {
 		// The file does not exist yet, so this open CREATES the session: a caller-supplied
 		// id is the session's identity from here on. An EXISTING file never reaches this
 		// branch, which is why a supplied id can never overwrite a header id.
-		this._resetToNewSession(newSessionOptions);
+		const created = withFileNameId(resolvedFile, newSessionOptions);
+		this._resetToNewSession(created);
 		// A host-minted id is referenced by nothing yet, so its file may wait for the first
-		// assistant message. A CALLER-chosen id is already held in the caller's own records:
+		// assistant message. A CALLER-chosen id (or the id the file name carries) is already held in the caller's own records:
 		// the file has to answer to it now, or a reopen before the first reply would mint a
 		// different identity and the caller's record would point at nothing (#2010).
-		if (newSessionOptions?.id !== undefined) {
+		if (created?.id !== undefined) {
 			this._rewriteFile();
 			this.flushed = true;
 		}
@@ -1354,7 +1395,7 @@ export class SessionManager {
 			// The explicit path is already granted above and keeps being written here:
 			// allocating a second path would take a grant no writer ever uses.
 			// An empty file carries no identity yet, so a caller-supplied id still applies.
-			this._resetToNewSession(newSessionOptions);
+			this._resetToNewSession(withFileNameId(sessionFile, newSessionOptions));
 			this._rewriteFile();
 			this.flushed = true;
 			return false;
@@ -1422,6 +1463,7 @@ export class SessionManager {
 			timestamp,
 			cwd: this.cwd,
 			parentSession: options?.parentSession,
+			...(options?.spawnedBy ? { spawnedBy: options.spawnedBy } : {}),
 		};
 		this.fileEntries = [header];
 		this.historyGeneration++;
@@ -1608,8 +1650,9 @@ export class SessionManager {
 
 	/**
 	 * Removes the session file when this process created it with persistHeaderNow() and it holds only
-	 * setup entries (header, model, thinking level, configuration, labels) and `custom` entries their
-	 * writer marked `startupBookkeeping` (the startup rules scan, repository identity), then returns to
+	 * setup entries (header, model, thinking level, configuration, labels), `custom` entries their
+	 * writer marked `startupBookkeeping` (the startup rules scan, repository identity) and engine lifecycle
+	 * bookkeeping (senpi#3864, including a file that bookkeeping created itself), then returns to
 	 * buffering so a later entry cannot recreate a header-less file; those entries reach disk again with
 	 * the first message (senpi#3263). Any message (user, assistant, `!cmd`), delivered `custom_message`,
 	 * session name, other `custom` entry (such as a paid cache prewarm or a todo list) or usage record
@@ -1700,10 +1743,14 @@ export class SessionManager {
 
 		// Entries stay in memory only until the branch holds a user or assistant message; then all are
 		// written (#10000: the prompt reaches disk even if the first turn never completes).
-		if (!isConversationEntry(entry) && !this._hasConversation()) return;
+		const durableLifecycle = entry.type === "custom" && LIFECYCLE_ENTRY_TYPES.has(entry.customType);
+		if (!isConversationEntry(entry) && !durableLifecycle && !this._hasConversation()) return;
 
 		// An asynchronous header write owns the file until it finishes, and appends this entry.
-		if (this.headerWrite) return;
+		if (this.headerWrite) {
+			if (durableLifecycle) throw new Error("Lifecycle append requires the pending session header write to finish");
+			return;
+		}
 		const fd = openSync(this.sessionFile, "wx");
 		try {
 			for (const e of [...this.fileEntries, entry]) {
@@ -1714,6 +1761,8 @@ export class SessionManager {
 		}
 		closeSync(fd);
 		this.flushed = true;
+		// Lifecycle bookkeeping created this file before any conversation, so an empty session can still discard it.
+		if (!isConversationEntry(entry) && !this._hasConversation()) this.ownedHeaderFile = this.sessionFile;
 	}
 
 	private _appendEntry(entry: SessionEntry, shareable?: object): void {
@@ -1808,6 +1857,7 @@ export class SessionManager {
 		this.usageTotals.cacheRead += usage.cacheRead;
 		this.usageTotals.cacheWrite += usage.cacheWrite;
 		this.usageTotals.cost += usage.cost?.total ?? 0;
+		if (usage.costUnknown) this.usageTotals.costUnknown = true;
 		const latestPromptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
 		this.usageTotals.latestCacheHitRate =
 			latestPromptTokens > 0 ? (usage.cacheRead / latestPromptTokens) * 100 : undefined;
@@ -1837,17 +1887,25 @@ export class SessionManager {
 	 * instead of a full JSON copy (see `_shareMessage` for when it falls back). `appendMessage` keeps the
 	 * full copy: a caller may still change its object after appending.
 	 */
-	appendOwnedMessage(message: Message | CustomMessage | BashExecutionMessage): string {
-		return this._appendMessage(message, true);
+	appendOwnedMessage(
+		message: Message | CustomMessage | BashExecutionMessage,
+		options?: { readonly inputSource?: InputSource | undefined },
+	): string {
+		return this._appendMessage(message, true, options?.inputSource);
 	}
 
-	private _appendMessage(message: Message | CustomMessage | BashExecutionMessage, owned: boolean): string {
+	private _appendMessage(
+		message: Message | CustomMessage | BashExecutionMessage,
+		owned: boolean,
+		inputSource?: InputSource,
+	): string {
 		const entry: SessionMessageEntry = {
 			type: "message",
 			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			message,
+			...(inputSource === undefined ? {} : { inputSource }),
 		};
 		this._appendEntry(entry, owned ? message : undefined);
 		const order = this.entryOrdersById.get(entry.id);
@@ -1872,6 +1930,7 @@ export class SessionManager {
 		thinkingLevel: string,
 		thinkingSelection?: ThinkingSelection,
 		trigger?: ModelChangeOrigin,
+		model?: { readonly provider: string; readonly id: string },
 	): string {
 		const entry: ThinkingLevelChangeEntry = {
 			type: "thinking_level_change",
@@ -1883,6 +1942,7 @@ export class SessionManager {
 			...(trigger === undefined ? {} : { triggerSource: trigger.source }),
 			...(trigger?.actor === undefined ? {} : { triggerActor: trigger.actor }),
 			...(trigger?.effectId === undefined ? {} : { effectId: trigger.effectId }),
+			...(model === undefined ? {} : { provider: model.provider, modelId: model.id }),
 		};
 		this._appendEntry(entry);
 		return entry.id;
@@ -2030,12 +2090,16 @@ export class SessionManager {
 		if (firstKeptIndex < 0 || compactionIndex < firstKeptIndex) return;
 
 		const verbatimStart = this.fileEntries.length - (this.fullEntryCount - this.verbatimFromCount);
-		if (firstKeptIndex >= verbatimStart)
-			this.verbatimFromCount = this.fullEntryCount - (compactionIndex + 1 - firstKeptIndex);
 		const header = this.fileEntries.find((entry) => entry.type === "session");
+		const branchIds = new Set(this.getBranch().map((entry) => entry.id));
+		let firstVerbatimIndex = Math.max(firstKeptIndex, verbatimStart);
+		for (let i = firstVerbatimIndex; i < compactionIndex; i++) {
+			if (!branchIds.has(this.fileEntries[i].id)) firstVerbatimIndex = i + 1;
+		}
+		this.verbatimFromCount = this.fullEntryCount - (compactionIndex + 1 - firstVerbatimIndex);
 		const retained = [
 			...this.fileEntries.slice(0, firstKeptIndex).filter((entry) => entry.type !== "message"),
-			...this.fileEntries.slice(firstKeptIndex, compactionIndex + 1),
+			...this.fileEntries.slice(firstKeptIndex, compactionIndex + 1).filter((entry) => branchIds.has(entry.id)),
 		];
 		let parentId: string | null = null;
 		for (const entry of retained) {
@@ -2989,15 +3053,16 @@ export class SessionManager {
 	): SessionManager {
 		const resolvedSourcePath = resolvePath(sourcePath);
 		const resolvedTargetCwd = resolvePath(targetCwd);
-		const sourceEntries = loadEntriesFromFile(resolvedSourcePath);
-		if (sourceEntries.length === 0) {
-			throw new Error(`Cannot fork: source session file is empty or invalid: ${resolvedSourcePath}`);
+		const source = readForkSource(resolvedSourcePath);
+		if (source.kind === "empty") {
+			throw new Error(`Cannot fork: source session file is empty or has no readable entries: ${resolvedSourcePath}`);
 		}
-
-		const sourceHeader = sourceEntries.find((e) => e.type === "session") as SessionHeader | undefined;
-		if (!sourceHeader) {
-			throw new Error(`Cannot fork: source session has no header: ${resolvedSourcePath}`);
+		if (source.kind === "not-a-session") {
+			throw new Error(
+				`Cannot fork: source file is not a session file (no entry has a session header or a session entry shape): ${resolvedSourcePath}`,
+			);
 		}
+		const sourceEntries = source.entries;
 
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(resolvedTargetCwd);
 		if (!existsSync(dir)) {

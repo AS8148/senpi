@@ -1,3 +1,41 @@
+## 2026-10-23 - Release regeneration can keep the last good OpenGateway catalog (senpi#4067)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: new `--keep-last-good-opengateway` flag, passed to `fetchOpenGatewayModels` as `keepLastGoodOnFailure`. With it, an OpenGateway feed failure under `--strict` keeps the committed `data/opengateway.json` and prints a `::warning::` annotation; without it `--strict` still throws. The flag is refused together with `--providers`, and without `--strict` (where it would do nothing).
+
+### Why
+
+- `packages/ai/scripts/generate-models.ts`: an OpenGateway price-table format change stopped the release's `--strict` regeneration (senpi#4067). The release must not stop on one gateway feed, but the dedicated `--strict --providers opengateway` refresh workflow has to keep failing so a persistent feed break stays visible.
+
+### Why an extension could not handle it
+
+- `packages/ai/scripts/generate-models.ts`: committed catalog generation runs before runtime extensions.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: `readGeneratorOptions` and the `fetchOpenGatewayModels` call in `generateModels`.
+
+## 2026-10-21 - Launch-gated Fable 5.5 generation (senpi#3893)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: recognizes the provisional launch id in refusal-fallback metadata and carries the Fable 5.1 adaptive-thinking and mid-conversation compatibility baseline. The Anthropic loader now follows the shared deprecated rule: a row with live `status: deprecated` that the committed catalog already shipped is kept and labeled `deprecated: true`, and one it never shipped is skipped (this applies to every Anthropic row, not only Fable 5.5). No generated provider rows are added.
+- `packages/ai/src/utils/fable55-launch.ts`: the one launch-day constant block holds provisional identity, optional snapshot, unknown Claude Code floor, release and optional promotion flags. Pricing, limits and status remain sourced from models.dev, not guessed constants.
+- Launch-day regeneration from the repository root: `bun run generate:models` (the package command includes `--strict`), followed by `bun run check:model-data`. Inspect the resulting provider diff before committing; the new row must come from the live listing.
+
+### Why
+
+- `packages/ai/scripts/generate-models.ts`: prepare day-one Fable 5.5 support without inventing catalog metadata before release. Offline tests use deliberately synthetic prices and limits and a fixture catalog in the sandbox (never the committed one, which gains a real 5.5 row at launch), and exercise listed, absent, deprecated-never-shipped and deprecated-already-shipped rows.
+
+### Why an extension could not handle it
+
+- `packages/ai/scripts/generate-models.ts`: committed catalog generation and its compatibility metadata run before runtime extensions.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: imports, `ANTHROPIC_ALLOWED_FALLBACK_MODELS`, Claude compatibility predicates and the Anthropic source filter.
+
 ## 2026-10-15 - Effective-dated cost cards in the generated catalog (senpi#3378)
 
 ### What changed

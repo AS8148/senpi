@@ -57,7 +57,7 @@ export type KnownImageApi = "openrouter-images" | "openai-images";
 
 export type ImageApi = KnownImageApi | (string & {});
 
-export type KnownClassifierApi = "typesafe-system-one" | "cloudflare-workers-ai-system-one" | "llama-cpp-classify";
+export type KnownClassifierApi = "typesafe-system-one" | "cloudflare-workers-ai-system-one";
 
 export type ClassifierApi = KnownClassifierApi | (string & {});
 
@@ -569,6 +569,13 @@ export interface ProviderNativeContent {
 }
 
 export interface Usage {
+	/**
+	 * Latest request's context when billing covers multiple internal requests.
+	 * Input includes cached reads and writes; output belongs to that request only.
+	 * Null means no request measurement is available (estimate from the transcript).
+	 * Absent preserves the legacy contract: the billing counters describe one request.
+	 */
+	contextUsage?: { readonly input: number; readonly output: number } | null;
 	input: number;
 	output: number;
 	cacheRead: number;
@@ -589,6 +596,8 @@ export interface Usage {
 		cacheWrite: number;
 		total: number;
 	};
+	/** The model has no known price, so `cost` is not a real amount; consumers must not report it as $0. */
+	costUnknown?: true;
 }
 
 /**
@@ -712,6 +721,31 @@ export interface ConfigurationUpdateMessage {
 	timestamp: number;
 }
 
+/**
+ * When the agent loop asked for a response and when it streamed, as Unix timestamps in milliseconds (senpi#3879).
+ * Stamped by the agent loop on the final message, so it is persisted with the session.
+ */
+export interface AssistantMessageTiming {
+	/**
+	 * Just before the stream function was called. A stream function that throws or never starts still gets it, so it
+	 * marks the attempt, not proof that a request reached the provider. An empty-response recovery retry keeps the
+	 * first attempt's value, so time to first token then spans the retries.
+	 */
+	requestedAt: number;
+	/** First streamed text, thinking or tool-call delta. Absent when nothing streamed. */
+	firstTokenAt?: number;
+	/** Last streamed text, thinking or tool-call delta. Absent when nothing streamed. */
+	lastTokenAt?: number;
+	/** When the response settled: done, error or abort. */
+	endedAt: number;
+	/**
+	 * Streamed generation time in milliseconds, by the TPS notice's rule (senpi#3393): first delta to last delta,
+	 * or from the response's start when it reasoned before its first delta. Absent when nothing streamed. Stamped on
+	 * aborted and failed responses too: a consumer computing a rate skips those, as the TPS notice does.
+	 */
+	generationMs?: number;
+}
+
 export interface AssistantMessage {
 	role: "assistant";
 	content: (TextContent | ThinkingContent | ToolCall | ProviderNativeContent)[];
@@ -749,6 +783,16 @@ export interface AssistantMessage {
 	 * Preserved for debugging and does not currently affect agent control flow.
 	 */
 	endTurn?: boolean;
+	/**
+	 * Request-only hint, never persisted: the history up to and including this message is a stable
+	 * prefix, so adapters with explicit prompt-cache breakpoints mark it. Context reduction sets it on
+	 * the last message its frontier leaves unchanged, so the next frontier step reads that prefix
+	 * instead of re-writing it (senpi#3242).
+	 */
+	promptCacheBreakpoint?: true;
+
+	/** Response timing stamped by the agent loop. Absent on older messages and on messages built outside the loop. */
+	timing?: AssistantMessageTiming;
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
@@ -1348,6 +1392,8 @@ export interface ModelCostEffectiveRate extends ModelCostCard {
 export interface ModelCost extends ModelCostCard {
 	/** Scheduled list-price changes, each billed for requests at or after its `effectiveFrom`. */
 	effectiveRates?: ModelCostEffectiveRate[];
+	/** No price is known for this model (rates are placeholders): usage on it reports `costUnknown`, not a $0 cost. */
+	unknown?: true;
 }
 
 export interface ModelImageResizeOptions {

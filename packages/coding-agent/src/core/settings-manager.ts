@@ -38,7 +38,12 @@ import {
 } from "./compaction-settings-access.ts";
 import { type ResolvedCompactionSettings, resolveCompactionSettings } from "./compaction-settings-resolver.ts";
 import type { ContextFileLimits } from "./context-files.ts";
-import { MAX_ENGINE_TURNS_PER_USER_INPUT, MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW } from "./engine-turn-limit.ts";
+import {
+	MAX_ENGINE_TURNS_PER_RESUME_WINDOW,
+	MAX_ENGINE_TURNS_PER_USER_INPUT,
+	MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW,
+} from "./engine-turn-limit.ts";
+import { type HeldFileLock, lockWithLossHandling } from "./file-lock.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import {
 	CredentialStoreBusyError,
@@ -245,7 +250,7 @@ export interface Settings {
 	lookAt?: LookAtSettings;
 	askUser?: AskUserSettings;
 	/** Bounds on turns the engine starts without a user message (senpi#2967). */
-	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number };
+	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number; maxPerResumeWindow?: number };
 	turn_inactivity_ms?: number; // default: 3_600_000, min 60_000, 0 disables; see core/turn-deadline.ts
 	turn_max_runtime_ms?: number; // default: 21_600_000, 0 disables
 	todo?: TodoSettings;
@@ -599,12 +604,12 @@ export class FileSettingsStorage implements SettingsStorage {
 		}
 	}
 
-	private async acquireLockWithRetry(path: string): Promise<() => Promise<void>> {
+	private async acquireLockWithRetry(path: string): Promise<HeldFileLock> {
 		const startedAt = Date.now();
 		let attempt = 0;
 		while (true) {
 			try {
-				return await lockfile.lock(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
+				return await lockWithLossHandling(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
 			} catch (error) {
 				if (!isLockError(error)) throw error;
 				const waitedMs = Date.now() - startedAt;
@@ -658,7 +663,7 @@ export class FileSettingsStorage implements SettingsStorage {
 		let next = fn(current);
 		if (next === undefined) return;
 		await mkdir(dirname(path), { recursive: true });
-		const release = await this.acquireLockWithRetry(path);
+		const lock = await this.acquireLockWithRetry(path);
 		try {
 			// The wait may have outlived the caller's permission to write (e.g. project trust revoked).
 			underLock?.();
@@ -668,6 +673,7 @@ export class FileSettingsStorage implements SettingsStorage {
 				const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
 				try {
 					await writeFile(tempPath, next, "utf-8");
+					lock.assertHeld();
 					await rename(tempPath, path);
 					// After the rename: a failed publish must not mark identical content as our own write.
 					recordSelfWrite(path, next);
@@ -677,7 +683,7 @@ export class FileSettingsStorage implements SettingsStorage {
 				}
 			}
 		} finally {
-			await release();
+			await lock.release();
 		}
 	}
 
@@ -1113,12 +1119,13 @@ export class SettingsManager {
 		};
 	}
 
-	getEngineTurnSettings(): { maxPerUserInput: number; maxToolFreePerMinute: number } {
+	getEngineTurnSettings(): { maxPerUserInput: number; maxToolFreePerMinute: number; maxPerResumeWindow: number } {
 		const configured = this.settings.engineTurns;
 		const limit = (value: unknown, fallback: number): number =>
 			typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : fallback;
 		return {
 			maxPerUserInput: limit(configured?.maxPerUserInput, MAX_ENGINE_TURNS_PER_USER_INPUT),
+			maxPerResumeWindow: limit(configured?.maxPerResumeWindow, MAX_ENGINE_TURNS_PER_RESUME_WINDOW),
 			maxToolFreePerMinute: limit(configured?.maxToolFreePerMinute, MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW),
 		};
 	}
