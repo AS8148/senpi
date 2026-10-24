@@ -13428,6 +13428,9 @@ export class AgentSession {
 
 		// Set up abort controller for summarization
 		this._branchSummaryAbortController = new AbortController();
+		// The navigation is session work: a prompt, a scheduled tick or a triggered delivery that arrives while it runs
+		// (a branch summary is a model call) waits for it, instead of starting a run on the leaf it is moving (senpi#4154).
+		const finishSessionWork = this._sessionWorkBarrier.begin();
 
 		try {
 			let extensionSummary: { summary: string; details?: unknown; usage?: Usage } | undefined;
@@ -13599,6 +13602,7 @@ export class AgentSession {
 			return { editorText, cancelled: false, summaryEntry, entryId: editedEntryId };
 		} finally {
 			this._branchSummaryAbortController = undefined;
+			finishSessionWork();
 		}
 	}
 
