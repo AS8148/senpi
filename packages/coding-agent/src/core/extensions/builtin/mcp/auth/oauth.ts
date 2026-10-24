@@ -51,7 +51,7 @@ export async function completeAuthorization(
 	redirectInput: string,
 	options: OAuthFlowOptions = {},
 ): Promise<void> {
-	const { code, state, iss } = parseRedirect(redirectInput, provider.serverName);
+	const { code, state, iss } = parseRedirect(redirectInput, provider);
 	if (!provider.consumeState(state)) {
 		throw new OAuthFlowError(
 			"state_mismatch",
@@ -173,11 +173,13 @@ export async function logout(provider: McpOAuthProvider): Promise<void> {
 }
 
 async function discover(provider: McpOAuthProvider, options: OAuthFlowOptions): Promise<OAuthServerInfo> {
-	if (options.discover !== undefined) return options.discover(provider.serverUrl);
 	const cached = provider.discoveryState();
 	if (cached !== undefined) return cached;
 	const { discoverOAuthServerInfo } = await loadMcpSdkAuth();
-	const info = await discoverOAuthServerInfo(provider.serverUrl, { fetchFn: oauthFetch(options.fetchFn) });
+	const info =
+		options.discover !== undefined
+			? await options.discover(provider.serverUrl)
+			: await discoverOAuthServerInfo(provider.serverUrl, { fetchFn: oauthFetch(options.fetchFn) });
 	await provider.saveDiscoveryState(toDiscoveryState(info));
 	return info;
 }
@@ -192,8 +194,9 @@ function toDiscoveryState(info: OAuthServerInfo): OAuthDiscoveryState {
 
 function parseRedirect(
 	input: string,
-	serverName: string,
+	provider: McpOAuthProvider,
 ): { code: string; state: string | undefined; iss: string | undefined } {
+	const serverName = provider.serverName;
 	let url: URL;
 	try {
 		url = new URL(input.trim());
@@ -204,6 +207,7 @@ function parseRedirect(
 			{ serverName },
 		);
 	}
+	assertAuthorizationResponseIssuer(provider, url.searchParams.get("iss") ?? undefined);
 	const error = url.searchParams.get("error");
 	if (error !== null) {
 		throw new OAuthFlowError("needs_auth", `MCP server ${serverName} authorization failed: ${error}`, { serverName });
