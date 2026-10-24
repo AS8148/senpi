@@ -54,7 +54,7 @@ it("returns to its prior state after a manual compaction whose summary fails", a
 	expect(h.session.lifecycle.state).toBe("done");
 });
 
-it("reads running while a branch summary is written and settles when it ends", async () => {
+it("writes no lifecycle record during a tree navigation with a branch summary and reads settled after it", async () => {
 	// Given a settled session with an earlier branch point.
 	const h = await settledSession();
 	const target = h.session.sessionManager.getEntries().find((entry) => entry.type === "message");
@@ -75,14 +75,16 @@ it("reads running while a branch summary is written and settles when it ends", a
 		},
 	]);
 
-	// When the person navigates the tree with a summary and the summary is still being written.
+	const append = vi.spyOn(h.session.sessionManager, "appendCustomEntry");
+
+	// When the person navigates the tree with a summary, and the summary is written and ends.
 	const navigation = h.session.navigateTree(target.id, { summarize: true });
 	await started;
-
-	// Then a client reads running while it is written, and the settled state once it ends.
-	expect(h.session.lifecycle.state).toBe("running");
 	releaseSummary();
 	await navigation;
+
+	// Then no lifecycle record was written into the tree while it navigated, and the session reads settled.
+	expect(append.mock.calls.filter(([type]) => type === "session-lifecycle")).toEqual([]);
 	expect(h.session.lifecycle.state).toBe("done");
 });
 

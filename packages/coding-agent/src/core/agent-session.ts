@@ -1495,6 +1495,10 @@ export class AgentSession {
 	private _messageRevision = 0;
 
 	// Branch summarization state
+	// Only the end of a tree navigation is a lifecycle edge. Its start is not: a lifecycle record written while the
+	// navigation runs would become the session leaf under it, so the navigation would land on, or cancel to, the
+	// wrong entry. The navigation is the person's own foreground action, so the session keeps its settled state
+	// until it ends (senpi#4120).
 	private _branchSummaryAbortControllerValue: AbortController | undefined = undefined;
 	private get _branchSummaryAbortController(): AbortController | undefined {
 		return this._branchSummaryAbortControllerValue;
@@ -1502,7 +1506,7 @@ export class AgentSession {
 	private set _branchSummaryAbortController(controller: AbortController | undefined) {
 		if (this._branchSummaryAbortControllerValue === controller) return;
 		this._branchSummaryAbortControllerValue = controller;
-		this.refreshLifecycle();
+		if (controller === undefined) this.refreshLifecycle();
 	}
 
 	private _sessionTitleAbortController: AbortController | undefined = undefined;
