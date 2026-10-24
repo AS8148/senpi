@@ -13703,8 +13703,12 @@ export class AgentSession {
 
 			return { editorText, cancelled: false, summaryEntry, entryId: editedEntryId };
 		} finally {
-			this._branchSummaryAbortController = undefined;
+			// The navigation's two busy facts end together. Clearing the controller through its setter would recompute
+			// while the barrier is still held and record a busy state after the navigation has already moved the leaf;
+			// release both, then raise the one edge (senpi#4154 on top of #3980).
+			this._branchSummaryAbortControllerValue = undefined;
 			finishSessionWork();
+			this.refreshLifecycle();
 		}
 	}
 
