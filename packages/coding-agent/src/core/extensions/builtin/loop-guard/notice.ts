@@ -39,9 +39,13 @@ export function buildLoopGuardReminder(detection: LoopGuardDetection): string {
 		case "identical": {
 			if (detection.windowed) {
 				const { toolName, count } = detection;
+				const polling = POLLING_TOOL_NAMES.has(toolName);
+				const intro = polling
+					? `no state-changing call (edit, write, bash, eval, ...) ran between them, and a poll whose result has not changed is still the same result:`
+					: `no state-changing call (edit, write, bash, eval, ...) ran between them, so none of those repeats could observe anything you changed:`;
 				return [
 					`<system-reminder>`,
-					`LOOP GUARD - REPEATED IDENTICAL TOOL CALLS: you called \`${toolName}\` ${count} times in this segment with the EXACT same arguments, and no state-changing call (edit, write, bash, eval, ...) ran between them, so none of those repeats could observe anything new:`,
+					`LOOP GUARD - REPEATED IDENTICAL TOOL CALLS: you called \`${toolName}\` ${count} times in this segment with the EXACT same arguments, and ${intro}`,
 					`- reuse the result you already received from this exact call;`,
 					`- if you were re-checking for new output or state, switch to the monitor/watch tool instead of polling;`,
 					`- if nothing is actually changing, stop calling this tool, state what is blocking you, and try a different tool or ask the user.`,

@@ -3,13 +3,13 @@
 ## loop-guard: escalate non-consecutive identical repeats to the hard-stop ladder (2026-10-18, reworked 2026-10-23)
 
 - `detectors.ts` gains `detectWindowedRepeat`: occurrences of the last call's exact
-  signature anywhere in the 64-record tracker window at or above the new
+  signature in the mutation-aware windowed count at or above the new
   `policy.ts WINDOWED_REPEAT_THRESHOLD = 8` produce an `identical` detection with
   `windowed: true` (the consecutive detector reports `windowed: false`). Detection
   order is consecutive-identical, then windowed-identical, then cycle, then similar.
 - `escalation.ts`: a windowed episode does not reset when a different-signature call
   arrives between repeats (that interleave is the caught pattern, not a break from
-  it); `clearEpisode()` plus the `windowedEpisodeFingerprint` getter support age-out;
+  it); the `windowedEpisodeFingerprints` getter supports age-out;
   block/hardStop decisions carry `windowed` so the block reason can name the scope.
 - `index.ts` ages a windowed episode out when its signature's in-window occurrence
   count falls below the threshold (the observable signal the loop stopped) and passes

@@ -129,11 +129,6 @@ export class IdenticalLoopEscalation {
 		};
 	}
 
-	/** Drops the consecutive episode while keeping per-turn attempt correlation. */
-	clearEpisode(): void {
-		this.episode = undefined;
-	}
-
 	/** Drops one windowed episode (age-out); true when no windowed episode remains. */
 	clearWindowedEpisode(fingerprint: string): boolean {
 		this.windowedEpisodes.delete(fingerprint);

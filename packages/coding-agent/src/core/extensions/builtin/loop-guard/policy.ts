@@ -24,10 +24,10 @@ export const TRACK_WINDOW = 64;
 /** Consecutive byte-identical (tool + canonical args) calls before the firm reminder fires. */
 export const IDENTICAL_RUN_THRESHOLD = 3;
 
-/** Occurrences of one byte-identical signature anywhere in the tracker window before the windowed reminder fires. */
+/** Occurrences of one byte-identical signature in the windowed count before the windowed reminder fires. */
 export const WINDOWED_REPEAT_THRESHOLD = 8;
 
-/** Tools that change repository, process, or session state. A windowed repeat count only spans the stretch after the most recent of these. */
+/** Tools that change repository, process, or session state. A windowed repeat count only spans the stretch after the most recent of these. The todo tool (read or write) is deliberately NOT here: #3629's loop interleaved todo views, so a todo between repeats must not reset the count. */
 export const MUTATING_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"edit",
 	"write",
@@ -37,7 +37,6 @@ export const MUTATING_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"powershell",
 	"eval",
 	"generate_image",
-	"todo_write",
 ]);
 
 /** Admitted identical-loop reminders ignored before the next same call is blocked. */

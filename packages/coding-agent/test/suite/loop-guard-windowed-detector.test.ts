@@ -64,6 +64,11 @@ describe("detectWindowedRepeat", () => {
 		expect(detectWindowedRepeat(records)?.count).toBe(WINDOWED_REPEAT_THRESHOLD);
 	});
 
+	it("todo interleave keeps counting (todo is not state-changing)", () => {
+		const records = interleaved(WINDOWED_REPEAT_THRESHOLD, (i) => ["todo", { view: i }]);
+		expect(detectWindowedRepeat(records)?.count).toBe(WINDOWED_REPEAT_THRESHOLD);
+	});
+
 	it("stops counting repeats that a state-changing call separates", () => {
 		const records = interleaved(WINDOWED_REPEAT_THRESHOLD, (i) => ["edit", { path: `src/a-${i}.ts` }]);
 		expect(detectWindowedRepeat(records)).toBeUndefined();
