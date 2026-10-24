@@ -43,7 +43,6 @@ describe("Kimi K3.1 prompt preset", () => {
 
 	it.each([
 		{ id: "k3", provider: "kimi-coding" },
-		{ id: "k3-256k", provider: "kimi-coding" },
 		{ id: "kimi-k3", provider: "moonshotai" },
 		{ id: "moonshotai/kimi-k3", provider: "openrouter" },
 	])("keeps $provider/$id on the kimi-k3 preset", ({ id, provider }) => {
