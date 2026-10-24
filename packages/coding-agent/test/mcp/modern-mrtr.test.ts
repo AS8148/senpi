@@ -32,6 +32,7 @@ async function connect(results: unknown[], sse: boolean | "stdio" = false, human
 				? {
 						type: "stdio",
 						command: process.execPath,
+						env: { TMPDIR: root, TEMP: root, TMP: root },
 						args: [
 							"--import",
 							"tsx",
