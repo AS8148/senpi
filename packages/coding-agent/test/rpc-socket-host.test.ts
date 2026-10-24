@@ -12,6 +12,17 @@ import {
 	waitForStderr,
 } from "./helpers/rpc-socket-host-support.ts";
 
+/** What a connection not attached to a session may see of it: its own responses and the broadcast lifecycle. */
+const FOREIGN_VISIBLE = new Set([
+	"response",
+	"session_opened",
+	"session_lifecycle",
+	"agent_start",
+	"agent_settled",
+	"agent_idle",
+	"session_closed",
+]);
+
 describe("RPC Unix-socket multi-connection host", () => {
 	it("parses socket listeners as multi-session RPC", () => {
 		expect(parseArgs(["--mode", "rpc", "--listen", "unix:///tmp/senpi.sock"])).toMatchObject({
@@ -72,9 +83,15 @@ describe("RPC Unix-socket multi-connection host", () => {
 			).resolves.toMatchObject({ success: true, sessionId });
 			await settledA;
 			await grace;
-			expect(b.peer.messages.some((value) => value.type === "agent_settled" && value.sessionId === sessionId)).toBe(
-				false,
-			);
+			// agent_settled is a broadcast lifecycle record (session-event-fanout.ts), so the foreign connection gets it
+			// too. Each connection's records are FIFO, so once b holds it, everything the turn sent b is already here:
+			// none of it may be session content, which only attached connections receive.
+			await b.peer.waitFor((value) => value.type === "agent_settled" && value.sessionId === sessionId);
+			expect(
+				b.peer.messages
+					.filter((value) => value.sessionId === sessionId && !FOREIGN_VISIBLE.has(String(value.type)))
+					.map((value) => value.type),
+			).toEqual([]);
 
 			const transcript = await b.peer.request({
 				id: "foreign-transcript",

@@ -56,6 +56,7 @@ export {
 	HOST_EXIT_USAGE,
 	type HostOutcome,
 } from "./host-outcome.ts";
+import { rpcKeyRoot, withRpcKeyRoot } from "./rpc-auth-client.ts";
 
 const PROBE_TIMEOUT_MS = 10_000;
 
@@ -102,6 +103,18 @@ export type HostRequest =
 	| { readonly action: "shard_path"; readonly kind: ShardKind; readonly owner: string; readonly root: string };
 
 export async function runHostRequest(request: HostRequest): Promise<HostOutcome> {
+	// Every dial this request makes proves the endpoint key from the target's agent dir, where its host publishes
+	// the record, unless the caller already chose a key root (`--rpc-key-root`, SENPI_RPC_KEY_ROOT).
+	const agentDir =
+		request.action === "shard_path"
+			? undefined
+			: request.action === "gc"
+				? request.agentDir
+				: request.target.agentDir;
+	return withRpcKeyRoot(rpcKeyRoot({}, agentDir), () => runHostRequestInKeyRoot(request));
+}
+
+async function runHostRequestInKeyRoot(request: HostRequest): Promise<HostOutcome> {
 	if (request.action === "ensure" || request.action === "handoff" || request.action === "stop") {
 		const { socket, agentDir } = request.target;
 		if ((await endpointKindOfSocket(socket, agentDir)) === "tui") {

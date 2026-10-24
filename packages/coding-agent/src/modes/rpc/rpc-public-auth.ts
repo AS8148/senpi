@@ -43,7 +43,12 @@ export class PublicRpcConnection {
 		this.endpoint = endpoint;
 		this.requireToken = requireToken;
 		socket.pause();
-		this.timer = setTimeout(() => socket.destroy(), SOCKET_HANDSHAKE_TIMEOUT_MS);
+		// Enforcing: a client that has not proven the key by the deadline is dropped. Grace: a silent or slow legacy client
+		// (a passive observer) is served as before, with its one deprecation line.
+		this.timer = setTimeout(() => {
+			if (this.requireToken) socket.destroy();
+			else if (!this.active && !this.failed) this.grace();
+		}, SOCKET_HANDSHAKE_TIMEOUT_MS);
 		const detach = attachJsonlLineReader(this.raw, (line) => this.line(line), {
 			maxLineLength: MAX_RPC_LINE_CHARACTERS,
 			onOversizedLine: () => socket.destroy(),
@@ -190,7 +195,11 @@ export class PublicRpcConnection {
 		);
 	}
 
-	/** Writer/proxy batches contain whole JSONL records; ordinary authenticated bytes stay untouched. */
+	/**
+	 * Writer/proxy batches contain whole JSONL records; ordinary authenticated bytes stay untouched. Before
+	 * admission only the challenge answer leaves an enforcing host; a grace host keeps delivering records (the
+	 * lifecycle broadcasts a passive legacy observer relies on).
+	 */
 	response(chunk: string): string {
 		if (this.failed) return "";
 		if (this.active && !this.protocolPending) return chunk;
@@ -225,7 +234,7 @@ export class PublicRpcConnection {
 							: {}),
 					},
 				});
-			} else if (this.active) output += `${line}\n`;
+			} else if (this.active || !this.requireToken) output += `${line}\n`;
 		}
 		return output;
 	}

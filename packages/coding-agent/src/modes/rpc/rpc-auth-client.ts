@@ -44,6 +44,13 @@ export async function connectAuthenticatedRpcSocket(
 	const deadline = Date.now() + timeoutMs;
 	for (let attempt = 0; ; attempt++) {
 		const socket = createConnection(path);
+		// A failed attempt is destroyed below; an error its queued write reports later (Bun does, for a missing
+		// socket) must not surface as an uncaught event. The listener goes once the socket is handed over.
+		let earlyError: Error | undefined;
+		const ignoreLateError = (error: Error) => {
+			earlyError ??= error;
+		};
+		socket.on("error", ignoreLateError);
 		let connected = false;
 		socket.once("connect", () => {
 			connected = true;
@@ -57,12 +64,15 @@ export async function connectAuthenticatedRpcSocket(
 				rpcKeyRoot(options),
 				Math.max(1, deadline - Date.now()),
 			);
+			socket.off("error", ignoreLateError);
 			return { socket, protocol };
 		} catch (cause) {
 			socket.destroy();
 			if (attempt === 0 && cause instanceof RpcEndpointAuthError && cause.code === "auth_failed") continue;
-			if (cause instanceof Error) Object.assign(cause, { rpcSocketConnected: connected });
-			throw cause;
+			// The socket's own failure (ENOENT, ECONNREFUSED) is how callers tell an unreachable endpoint apart.
+			const failure = !(cause instanceof RpcEndpointAuthError) && earlyError !== undefined ? earlyError : cause;
+			if (failure instanceof Error) Object.assign(failure, { rpcSocketConnected: connected });
+			throw failure;
 		}
 	}
 }
@@ -82,8 +92,15 @@ async function authenticate(
 		  }
 		| undefined;
 	const reject = (error: Error) => pending?.reject(error);
-	const onClose = () => reject(new Error(`RPC socket closed during authentication: ${path}`));
-	const onError = (error: Error) => reject(error);
+	// The socket's own error (ENOENT, ECONNREFUSED) is what callers classify an unreachable endpoint by; a close
+	// that a runtime reports before it is answered a turn later, so the error wins when there is one.
+	let socketError: Error | undefined;
+	const onClose = () =>
+		setImmediate(() => reject(socketError ?? new Error(`RPC socket closed during authentication: ${path}`)));
+	const onError = (error: Error) => {
+		socketError ??= error;
+		reject(error);
+	};
 	socket.on("error", onError);
 	socket.on("close", onClose);
 	const detach = attachJsonlLineReader(
@@ -95,7 +112,8 @@ async function authenticate(
 			} catch {
 				return;
 			}
-			if (response?.type !== "response" || response.id !== pending?.id) return;
+			// Matched by id alone, as the plain probe always did: a host's broadcast records never carry a request id.
+			if (response === undefined || pending === undefined || response.id !== pending.id) return;
 			if (response.success === true) pending?.resolve(response);
 			else {
 				const code = response.errorCode;
@@ -111,7 +129,8 @@ async function authenticate(
 	const exchange = (request: Readonly<Record<string, unknown>>) =>
 		new Promise<Readonly<Record<string, unknown>>>((resolve, reject) => {
 			if (socket.destroyed) {
-				reject(new Error(`RPC socket closed during authentication: ${path}`));
+				// Bun destroys a socket whose connect failed before it emits the error; wait a turn for it.
+				setImmediate(() => reject(socketError ?? new Error(`RPC socket closed during authentication: ${path}`)));
 				return;
 			}
 			pending = { id: request.id, resolve, reject };

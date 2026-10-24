@@ -70,7 +70,7 @@ const ENSURE_LOCK_WAIT_MS =
 	Math.max(STOP_WAIT_BUDGET_MS + DEFAULT_READINESS_TIMEOUT_MS, HANDOFF_LOCK_HOLD_MS) +
 	10_000;
 const lockOptions = hostEnsureLockOptions(ENSURE_LOCK_WAIT_MS);
-export function ensureHost(options: EnsureHostOptions): Promise<EnsuredHost> {
+export async function ensureHost(options: EnsureHostOptions): Promise<EnsuredHost> {
 	return withRpcKeyRoot(rpcKeyRoot(options, options.agentDir), () => ensureHostInKeyRoot(options));
 }
 
