@@ -8,6 +8,9 @@
 
 ### Changed
 
+- The terminal guidance now states what the code does: a plain `&` job dies with a foreground call's PTY hangup (native backend); `nohup` at best leaves an untracked orphan that the call's timeout still group-kills (the full race and `setsid` analysis lives in the terminal tracker); a non-persistent monitor's `timeout_ms` kills the watched command; a timed-out local command watch now summarizes as `watcher killed at deadline (timed_out)` while RPC watches keep `watcher timed_out` — they kill nothing ([#3611](https://github.com/code-yeongyu/senpi/issues/3611)).
+
+
 - A scheduled prompt (`schedule_prompt`) now arrives in its session while that session is open in the TUI or over RPC: the open session delivers its own due prompts, steered into the running turn when the agent is working, or starting a turn when it is idle. Before, `senpi schedule run` held them until the session was closed and then ran them headlessly. Prompts for sessions that are not open still go through `senpi schedule run`. If the open session cannot deliver a due prompt, it now says so in a warning ([#4074](https://github.com/code-yeongyu/senpi/issues/4074)).
 - A `/loop` tick that comes due while the agent is working is now steered into the running turn, so the agent reads it at its next step instead of only after the whole turn ends. This covers fixed (cron) loops, `schedule_wakeup` wakeups, keepalive wakeups and catch-up ticks. A tick whose prompt is an extension command still waits for the turn to finish. When a dynamic loop's tick lands in a turn the loop did not start and that turn ends without `schedule_wakeup`, the loop re-arms its fallback wakeup without using up its one keepalive credit ([#4072](https://github.com/code-yeongyu/senpi/issues/4072)).
 
@@ -39,7 +42,6 @@
 ### Changed
 
 - CLI/TUI labels, tool messages, and agent prompts use periods, commas, colons, or parentheses instead of em dashes; unknown session values use `-`. Product-copy lint prevents regressions, and lint/type suppressions must explain why they are needed ([#4040](https://github.com/code-yeongyu/senpi/issues/4040)).
-- The terminal guidance now states what the code does: a plain `&` job dies with a foreground call's PTY hangup (native backend); `nohup` at best leaves an untracked orphan that the call's timeout still group-kills (the full race and `setsid` analysis lives in the terminal tracker); a non-persistent monitor's `timeout_ms` kills the watched command; a timed-out local command watch now summarizes as `watcher killed at deadline (timed_out)` while RPC watches keep `watcher timed_out` — they kill nothing ([#3611](https://github.com/code-yeongyu/senpi/issues/3611)).
 
 - `release_session` refuses `attached` only while ANOTHER client is attached; the connection asking for the release no longer counts, so a client can release (or move) the session it shows without `force`. `errorData.attachments` now counts only those other clients ([#3994](https://github.com/code-yeongyu/senpi/pull/3994)).
 
@@ -496,6 +498,7 @@
 - A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does (omo-desktop-app#2249).
 
 - A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does ([#3273](https://github.com/code-yeongyu/senpi/pull/3273), reported from the OmO desktop app).
+
 
 - A fallback chain can walk to a rung that runs the same model at another thinking level. Such an entry used to disappear twice over: the chain scan consumed it as the entry in flight and then skipped it as a self-reference, and a model's remaining rungs were suppressed once one of them had been taken - so a chain written as `models: [X:high, X:off, Y]`, which is how the OMO/senpi adapter ships it (the entries `[X:off, Y]` under the bare `X` key), jumped straight to `Y`. Chain validation no longer reports `X:off` under the `X` key as referencing the same model. Cooldowns and circuits stay keyed by the model, because a rate-limited or spent account is unhealthy at every level, so one same-model rung remains reachable per turn before the current model's cooldown expires.
 
