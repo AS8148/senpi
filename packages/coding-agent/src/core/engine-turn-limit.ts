@@ -4,7 +4,7 @@ import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { SessionEntry } from "./session-manager.ts";
 import { STOP_RESUME_CUSTOM_TYPE } from "./stop-resume-directive.ts";
 
-export const MAX_ENGINE_TURNS_PER_USER_INPUT = 150;
+export const MAX_ENGINE_TURNS_PER_USER_INPUT = 0;
 export const MAX_ENGINE_TURNS_PER_RESUME_WINDOW = 8;
 export const MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW = 12;
 export const ENGINE_TURN_WINDOW_MS = 60_000;
