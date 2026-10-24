@@ -341,3 +341,55 @@ it("a same-stamp poll beats the other side's older windows and both stores show 
 		expect(held?.error).toBe("rate limited");
 	}
 });
+
+// senpi#4158 (final #4109 review, LOW 1 + LOW 2): at the same change stamp the plan, like the windows, comes only from the
+// side that reported later, so a plan the poll dropped is not brought back from the other side's held copy, and the
+// result does not depend on the order the records arrive in.
+const planWindow = { id: "claude:5h", label: "5h", windowMinutes: 300, usedPercent: 3 };
+
+it("a same-stamp poll that dropped the plan keeps it dropped on both stores", () => {
+	for (const pollOnHost of [true, false]) {
+		const { host, worker, settle } = mirrorPair();
+		const [polling, failing] = pollOnHost ? [host, worker] : [worker, host];
+		host.report("anthropic-subscription", "work", {
+			windows: [{ ...planWindow, usedPercent: 40 }],
+			plan: "max",
+			reportedAt: new Date(at("00")),
+		});
+		settle();
+		polling.report("anthropic-subscription", "work", { windows: [planWindow], reportedAt: new Date(at("05")) });
+		failing.report("anthropic-subscription", "work", { error: "rate limited", reportedAt: new Date(at("05")) });
+
+		expect(settle()).toBeLessThan(100);
+		expect(worker.mirrorSnapshot()).toEqual(host.mirrorSnapshot());
+		const [held] = host.snapshot();
+		expect(held?.windows).toEqual([planWindow]);
+		expect(held?.plan).toBeUndefined();
+	}
+});
+
+it("three same-stamp records give the same plan in every arrival order", () => {
+	const record = { provider: "anthropic-subscription", account: "work", windows: [planWindow] };
+	const records: MirroredLimits[] = [
+		{ ...record, plan: "zzz", error: "rate limited", reportedAt: at("00"), updatedAt: at("05") },
+		{ ...record, reportedAt: at("05") },
+		{ ...record, plan: "bbb", reportedAt: at("05") },
+	];
+	const orders = [
+		[0, 1, 2],
+		[0, 2, 1],
+		[1, 0, 2],
+		[1, 2, 0],
+		[2, 0, 1],
+		[2, 1, 0],
+	];
+	const results = orders.map((order) => {
+		const store = new SubscriptionLimitStore();
+		for (const index of order) {
+			const next = records[index];
+			if (next !== undefined) store.adopt(structuredClone(next));
+		}
+		return store.mirrorSnapshot();
+	});
+	for (const result of results) expect(result).toEqual(results[0]);
+});
