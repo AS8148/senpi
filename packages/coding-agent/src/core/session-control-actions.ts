@@ -52,8 +52,11 @@ export function createSessionControlActions(deps: SessionControlActionDeps): Gen
 			if (registration.status !== "registered") return registration;
 			// Registered while this generation was being retired: it is released at once, never left serving.
 			if (retired) {
-				await registration.dispose();
-				return { status: "failed", reason: "stale extension generation after reload" };
+				const teardown = await registration.dispose().then(
+					() => "",
+					(error: unknown) => `; its teardown failed: ${error instanceof Error ? error.message : String(error)}`,
+				);
+				return { status: "failed", reason: `stale extension generation after reload${teardown}` };
 			}
 			owned.add(registration);
 			return {

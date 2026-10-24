@@ -69,6 +69,93 @@ function wakeReply(socket: string): Promise<string> {
 		);
 }
 
+/**
+ * A startup registration held inside the host past a reload, shaped like the production registrant:
+ * every session_start registers without being awaited, and session_shutdown disposes only what has
+ * registered so far, so the in-flight registration outlives it.
+ */
+async function inFlightAcrossReload(options: { readonly failTeardown: boolean }) {
+	let generations = 0;
+	const drains: number[] = [];
+	const results = new Map<number, Promise<{ status: string; socket?: string }>>();
+	let inboxRoot = "";
+	const factory: ExtensionFactory = (pi) => {
+		generations += 1;
+		const generation = generations;
+		let settled: { status: string; dispose?: () => Promise<void> } | undefined;
+		pi.on("session_start", () => {
+			const pending = pi.session.registerControlEndpoint({
+				inboxDir: join(inboxRoot, "inbox"),
+				drain: () => {
+					drains.push(generation);
+					// What the production drain does first: read the admission gate through its own `pi.session`.
+					pi.session.admissionGate();
+					return undefined;
+				},
+			});
+			results.set(
+				generation,
+				pending.then((registration) => {
+					settled = registration;
+					if (registration.status === "registered") cleanups.push(() => registration.dispose());
+					return registration;
+				}),
+			);
+		});
+		pi.on("session_shutdown", async () => {
+			await settled?.dispose?.();
+		});
+	};
+	let openGate: () => void = () => {};
+	const gate = new Promise<void>((resolve) => {
+		openGate = resolve;
+	});
+	const { harness, mode, notices } = await terminal(
+		{ resourceLoader: await generationalLoader(factory) },
+		(harness) => {
+			inboxRoot = harness.tempDir;
+			const manager = harness.session.sessionManager;
+			const persist = manager.persistHeaderNow.bind(manager);
+			let first = true;
+			manager.persistHeaderNow = async () => {
+				if (first) {
+					first = false;
+					await gate;
+				}
+				await persist();
+			};
+			if (options.failTeardown) {
+				const discard = manager.discardHeaderOnlyFile.bind(manager);
+				let failed = false;
+				manager.discardHeaderOnlyFile = async () => {
+					if (failed) return discard();
+					failed = true;
+					throw new Error("session dir unwritable");
+				};
+			}
+		},
+	);
+	await harness.session.reload();
+	openGate();
+	const retired = await results.get(1);
+	const current = await results.get(2);
+	if (current?.status !== "registered" || current.socket === undefined) throw new Error(JSON.stringify(current));
+	const retiredWake = retired?.socket === undefined ? "none" : await wakeReply(retired.socket);
+	const currentWake = await wakeReply(current.socket);
+	const sessionFile = harness.session.sessionManager.getSessionFile();
+	const host = Reflect.get(mode, "sessionControlHost");
+	const tracked: unknown = Reflect.get(Reflect.get(host, "active") ?? {}, "socket");
+	return {
+		retired: retired?.status,
+		retiredWake,
+		currentWake,
+		drains: [...new Set(drains)],
+		notices,
+		tracked: tracked === current.socket,
+		sessionFileKept: sessionFile !== undefined && existsSync(sessionFile),
+	};
+}
+
 const drainFailures = (notices: readonly string[]) => notices.filter((line) => line.includes("drain failed"));
 
 describe.skipIf(process.platform === "win32")("senpi#3246 a control endpoint after a reload", () => {
@@ -112,80 +199,9 @@ describe.skipIf(process.platform === "win32")("senpi#3246 a control endpoint aft
 	});
 
 	it("#given a registration still in flight across a reload #when the new generation registers and a wake arrives #then only the new drain runs, the host tracks it, and no notice is shown", async () => {
-		// Shaped like the production registrant: every session_start registers without being awaited, and
-		// session_shutdown disposes what has registered so far, so an in-flight registration outlives it.
-		let generations = 0;
-		const drains: number[] = [];
-		const results = new Map<number, Promise<{ status: string; socket?: string }>>();
-		const factory: ExtensionFactory = (pi) => {
-			generations += 1;
-			const generation = generations;
-			let settled: { status: string; dispose?: () => Promise<void> } | undefined;
-			pi.on("session_start", () => {
-				const pending = pi.session.registerControlEndpoint({
-					inboxDir: join(inboxRoot, "inbox"),
-					drain: () => {
-						drains.push(generation);
-						// What the production drain does first: read the admission gate through its own `pi.session`.
-						pi.session.admissionGate();
-						return undefined;
-					},
-				});
-				results.set(
-					generation,
-					pending.then((registration) => {
-						settled = registration;
-						if (registration.status === "registered") cleanups.push(() => registration.dispose());
-						return registration;
-					}),
-				);
-			});
-			pi.on("session_shutdown", async () => {
-				await settled?.dispose?.();
-			});
-		};
-		let inboxRoot = "";
-		let openGate: () => void = () => {};
-		const gate = new Promise<void>((resolve) => {
-			openGate = resolve;
-		});
-		const { harness, mode, notices } = await terminal(
-			{ resourceLoader: await generationalLoader(factory) },
-			(harness) => {
-				inboxRoot = harness.tempDir;
-				// The startup registration stalls inside the host (its header write), past the reload.
-				const manager = harness.session.sessionManager;
-				const persist = manager.persistHeaderNow.bind(manager);
-				let first = true;
-				manager.persistHeaderNow = async () => {
-					if (first) {
-						first = false;
-						await gate;
-					}
-					await persist();
-				};
-			},
-		);
-		await harness.session.reload();
-		openGate();
-		const retired = await results.get(1);
-		const current = await results.get(2);
-		if (current?.status !== "registered" || current.socket === undefined) throw new Error(JSON.stringify(current));
-		const retiredWake = retired?.socket === undefined ? "none" : await wakeReply(retired.socket);
-		const currentWake = await wakeReply(current.socket);
-		const sessionFile = harness.session.sessionManager.getSessionFile();
-		const host = Reflect.get(mode, "sessionControlHost");
-		const tracked: unknown = Reflect.get(Reflect.get(host, "active") ?? {}, "socket");
+		const { notices, ...outcome } = await inFlightAcrossReload({ failTeardown: false });
 
-		expect({
-			retired: retired?.status,
-			retiredWake,
-			currentWake,
-			drains: [...new Set(drains)],
-			notices: drainFailures(notices),
-			tracked: tracked === current.socket,
-			sessionFileKept: sessionFile !== undefined && existsSync(sessionFile),
-		}).toEqual({
+		expect({ ...outcome, notices: drainFailures(notices) }).toEqual({
 			retired: "failed",
 			retiredWake: "none",
 			currentWake: "answered",
@@ -193,6 +209,24 @@ describe.skipIf(process.platform === "win32")("senpi#3246 a control endpoint aft
 			notices: [],
 			tracked: true,
 			sessionFileKept: true,
+		});
+	});
+
+	it("#given the retired endpoint's teardown fails #when the new generation registers #then its endpoint still serves and the failure is reported", async () => {
+		const { notices, retired, currentWake, drains, tracked } = await inFlightAcrossReload({ failTeardown: true });
+
+		expect({
+			retired,
+			currentWake,
+			drains,
+			tracked,
+			notices: notices.filter((line) => line.startsWith("control endpoint")),
+		}).toEqual({
+			retired: "failed",
+			currentWake: "answered",
+			drains: [2],
+			tracked: true,
+			notices: ["control endpoint teardown failed: session dir unwritable"],
 		});
 	});
 

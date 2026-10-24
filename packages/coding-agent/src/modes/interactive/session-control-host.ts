@@ -62,7 +62,13 @@ export class TuiSessionControlHost implements ControlEndpointHost {
 	}
 
 	private async registerNow(options: RegisterControlEndpointOptions): Promise<SessionControlRegistration> {
-		await this.disposeActive();
+		// A previous endpoint whose teardown failed is gone from this host either way: the failure is
+		// reported, and the new registration still gets its endpoint.
+		await this.disposeActive().catch((error: unknown) =>
+			this.context().surface.notice(
+				`control endpoint teardown failed: ${error instanceof Error ? error.message : String(error)}`,
+			),
+		);
 		const { registerSessionControlEndpoint } = await import("./session-control-endpoint.ts");
 		const outcome = await registerSessionControlEndpoint(
 			{ ...this.context(), editorRevision: () => this.editorRevision },
