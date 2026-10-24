@@ -100,3 +100,16 @@ describe("publish-only workflow", () => {
 		assert.doesNotMatch(codingAgentPackage.scripts["copy-binary-assets"], /&&\s*&&/);
 	});
 });
+
+describe("release step TypeScript heap", () => {
+	it("runs the release's npm run check with the same heap as the CI Check step", () => {
+		const ci = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+		const ciCheck = ci.match(/- name: Check\n[\s\S]*?run: npm run check/)?.[0];
+		assert.ok(ciCheck, "expected the CI Check step");
+		const ciHeap = ciCheck.match(/NODE_OPTIONS: (--max-old-space-size=\d+)/)?.[1];
+		assert.ok(ciHeap, "expected a heap size on the CI Check step");
+		const release = workflow.match(/- name: Run release\n[\s\S]*?\n        run: \|/)?.[0];
+		assert.ok(release, "expected the Run release step");
+		assert.equal(release.match(/NODE_OPTIONS: (--max-old-space-size=\d+)/)?.[1], ciHeap);
+	});
+});
