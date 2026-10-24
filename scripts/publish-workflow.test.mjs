@@ -135,3 +135,28 @@ describe("publish-only builds the tagged commit", () => {
 		);
 	});
 });
+
+describe("publish-only native addons and inputs", () => {
+	const nativeWorkflow = readFileSync(new URL("../.github/workflows/native-prebuilds.yml", import.meta.url), "utf8");
+
+	it("builds the native prebuilds from the same tag as the JS", () => {
+		const call = workflow.match(/  native-prebuilds:\n[\s\S]*?(?=\n  [a-z-]+:\n)/)?.[0];
+		assert.ok(call, "expected the native-prebuilds job");
+		assert.match(call, /with:\s+(?:#[^\n]*\s+)*ref: refs\/tags\/v\$\{\{ inputs\.version \}\}/);
+		assert.match(nativeWorkflow, /workflow_call:\s+inputs:[\s\S]*?\n      ref:\n[\s\S]*?default: ''/);
+		const checkout = nativeWorkflow.match(/- name: Checkout\n[\s\S]*?(?=\n      - name: )/)?.[0];
+		assert.ok(checkout, "expected the native-prebuilds Checkout step");
+		assert.match(checkout, /ref: \$\{\{ inputs\.ref \|\| '' \}\}/);
+	});
+
+	it("fails with a clear message before Checkout when publish-only has no version", () => {
+		const requireStep = workflow.match(/- name: Require a version for publish-only\n[\s\S]*?(?=\n      - name: )/)?.[0];
+		assert.ok(requireStep, "expected the version requirement step");
+		assert.match(requireStep, /if: inputs\.publish-only == true && inputs\.version == ''/);
+		assert.ok(workflow.indexOf("- name: Require a version for publish-only") < workflow.indexOf("      - name: Checkout\n        uses: actions/checkout"));
+	});
+
+	it("reports the published commit in the run summary for publish-only", () => {
+		assert.match(workflow, /\| Commit \| [^\n]*git rev-parse HEAD/);
+	});
+});

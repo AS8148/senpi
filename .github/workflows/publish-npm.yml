@@ -42,6 +42,9 @@ jobs:
   native-prebuilds:
     if: ${{ inputs.publish-only == true }}
     uses: ./.github/workflows/native-prebuilds.yml
+    with:
+      # The native addons ship in the same npm tarball, so they are built from the same tagged commit as the JS.
+      ref: refs/tags/v${{ inputs.version }}
 
   release:
     needs: native-prebuilds
@@ -56,6 +59,12 @@ jobs:
     # scripts/release-test-gate.mjs), so that mode gets 180 min.
     timeout-minutes: ${{ inputs.force_tests && 180 || 60 }}
     steps:
+      - name: Require a version for publish-only
+        if: inputs.publish-only == true && inputs.version == ''
+        run: |
+          echo "::error::publish-only requires an explicit version" >&2
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -228,5 +237,5 @@ jobs:
             echo "| Dry run | ${{ inputs.dry_run }} |"
             echo "| Force tests | ${{ inputs.force_tests }} |"
             echo "| Version | ${{ inputs.version || 'auto' }} |"
-            echo "| Commit | ${{ inputs.sha || github.sha }} |"
+            echo "| Commit | ${{ inputs.publish-only && '' || inputs.sha || github.sha }}$(test "${{ inputs.publish-only }}" = true && git rev-parse HEAD 2>/dev/null) |"
           } >> "$GITHUB_STEP_SUMMARY"
