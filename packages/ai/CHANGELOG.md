@@ -1,10 +1,13 @@
 # Changelog
 
-## [Unreleased]
+## [2026.10.24-4] - 2026-10-24
 
 ### Breaking Changes
 
 ### Added
+
+- Provider request options carry the originating session's working directory for subprocess-backed adapters ([#4181](https://github.com/code-yeongyu/senpi/pull/4181)).
+- Kimi Code (`kimi-coding`) serves Kimi K3.1 Pro as `k3.1-pro` and K3.1 Pro Highspeed as `k3.1-pro-highspeed`: thinking only (low / high / max), up to 1M context, image and video input ([#4183](https://github.com/code-yeongyu/senpi/pull/4183))
 
 ### Changed
 

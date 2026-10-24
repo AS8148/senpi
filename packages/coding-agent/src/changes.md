@@ -1,3 +1,21 @@
+## 2026-10-24 - Fresh standalone CLI sessions accept task ancestry (oh-my-openagent#10782)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: passes ancestry to fresh session creation and warns when session selection ignores it, preserving existing headers and ordinary fork identity.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: lifecycle role is derived from the header before the first prompt.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts`: the session header is created before runtime construction.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: `createSessionManager`.
+
 ## 2026-10-24 - Host commands select endpoint credentials without changing the profile (senpi#3815)
 
 ### What changed

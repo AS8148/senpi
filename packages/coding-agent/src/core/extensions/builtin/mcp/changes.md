@@ -1,3 +1,28 @@
+## 2026-10-24 - Error on unavailable elicitation and omit print/json capability (senpi#4185, PR #4196)
+
+### What changed
+
+- `index.ts` binds an elicitation UI only when the session context has human UI.
+- Connection options carry the declaring mode's elicitation support through reconnect and transport materialization. Legacy initialization, modern HTTP discovery/requests, and modern stdio metadata use the same capability selection.
+- Clients without elicitation support reject unsolicited requests with the SDK's `McpError` processing error through its public fallback handler, which does not require advertising a capability. The shared pool's single in-flight lessee routing is unchanged; an unavailable or ambiguous owner UI reaches the same error path.
+- Boolean collection uses `select` instead of `confirm`: the latter collapses cancellation into `false` in RPC, while the existing selection protocol preserves it as `undefined`. This also covers automated clients that do not declare a connection role.
+- An undefined input cancels even for an optional field; an empty answer may still skip that field. Empty submissions require an explicit Submit selection.
+
+No human at request time -> processing error (`-32603`, fixed message, no form content); dismissed or automatically cancelled dialog -> cancel with no content; decline only from an explicit Decline control, which this PR does not add (tracked in #4188/#4189). Distinguishing automated cancellation from human dismissal requires a cancellation-origin contract, tracked in #4197. Explicit Yes/No choices retain their boolean meaning.
+
+### Why
+
+The extension runner's no-op UI returns `false` for confirmation. Treating that object as human UI accepted boolean-only forms without a human response.
+RPC confirmation also maps cancellation to `false`, so changing an automated client's reply alone cannot distinguish cancellation from a human's explicit No.
+
+### Why an extension could not handle it
+
+The builtin owns capability advertisement, transport construction, and the UI provider used by server requests.
+
+### Expected merge conflict zones
+
+- Elicitation UI binding in `index.ts`, connection option propagation, and capability construction in `transport-sdk.ts` and `modern/dispatch.ts`.
+
 ## 2026-10-24 - Unreferenced servers keep their identity; catalog caches are read before generations (senpi#3858)
 
 ### What changed

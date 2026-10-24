@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2026.10.24-4] - 2026-10-24
 
 ### Breaking Changes
 
@@ -9,6 +9,8 @@
 ### Changed
 
 ### Fixed
+
+- Settle response stop reasons before `message_end` so `turn_end` handlers resolve the persisted assistant entry when a provider ends with `stop` and pending tool calls or `toolUse` without tool calls ([#3029](https://github.com/code-yeongyu/senpi/issues/3029)).
 
 ### Removed
 
