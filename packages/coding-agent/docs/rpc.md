@@ -102,7 +102,7 @@ Other context keys remain opaque.
 Automatic turn admission is also bounded independently of the hold. On unattended resume,
 `engineTurns.maxPerResumeWindow` defaults to 8, counting engine starts in loaded
 history since the last real input. A real input ends that resume window. The
-normal `engineTurns.maxPerUserInput` default stays 150. Only admitted new engine
+normal `engineTurns.maxPerUserInput` defaults to 0 (off). Only admitted new engine
 turns count, not wakes steered into running work or pending compaction; a limit emits the existing engine-paused
 notice and record. Setting either cap to 0 disables that particular cap.
 
@@ -606,7 +606,8 @@ parsing a version string:
   "launch_profile": {
     "profile_id": "ca7a4943…",
     "core": { "extensions": [], "multi_session": true, "session_runtime": "in-process" }
-  }
+  },
+  "agentDir": "/home/me/.senpi/agent"
 }
 ```
 
@@ -626,6 +627,9 @@ parsing a version string:
   `core.extensions` (absolute roots, deduplicated and sorted). `profile_id` is the sha256 of the canonical JSON
   of `core` with its keys in that sorted order (`extensions`, `multi_session`, `session_runtime`), so any client
   can recompute it and compare two hosts without comparing paths.
+- `agentDir` - the absolute agent directory the host reads and writes. A generation handoff is refused
+  `foreign_agent_dir` when it differs from the caller's own agent dir (see "Generation handoff"). Hosts
+  released before the field omit it.
 - `memory_pressure` - multi-session hosts only: `true` while this host's memory sampler reads its memory footprint
   above `SENPI_RPC_HOST_RSS_WARN_MB`, else `false`. Not identity and never an admission signal; `senpi host status`
   reports it per endpoint. Classic hosts and hosts released before the field omit it.
@@ -782,7 +786,7 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    their connection closes and reopen with `open_session { sessionPath }` on the successor. Losing
    ownership of the public socket triggers the same sequence even if SIGUSR1 never arrives.
 
-Two guards decide whether a handoff is attempted at all, and both fail closed:
+Three guards decide whether a handoff is attempted at all, and all of them fail closed:
 
 - The running host must advertise `generation_handoff`. SIGUSR1 TERMINATES a process that installed no
   handler for it, so a host from before the drain existed is never signalled - `handoffHost` answers
@@ -791,6 +795,16 @@ Two guards decide whether a handoff is attempted at all, and both fail closed:
   must be this endpoint) before that process is signalled. Without such a registration a handoff never
   signals a stranger (I1): it refuses while that host holds a session, and replaces an idle one without
   a signal unless a flat pre-layout-2 record proves it (see "Daemon state directory (layout 2)").
+- The running host must belong to the caller's agent dir. A client reads registrations under its OWN agent
+  dir, so pointed at another agent dir's socket it would see no record there and read a live, registered host
+  as an unregistered idle one. `handoffHost` therefore compares the host's advertised `agentDir` with its own
+  (both canonicalized through `realpath`) and refuses `{ action: "refuse", reason: "foreign_agent_dir",
+  upgradeable: false }` when they differ; `detail` names both directories. A host from before the field is placed
+  by the layout: when the socket is `<dir>/rpc/rpc.sock` and a layout-2 registration under `<dir>` proves a live
+  owner, the host belongs to `<dir>`. With neither, the handoff proceeds as before. Nothing is signalled.
+- Transition window: a host from before the `agentDir` field, serving a socket that is not another agent
+  dir's default `<dir>/rpc/rpc.sock` (or whose layout-2 record there proves no live owner), cannot be
+  placed and stays replaceable through the idle path above. Every host built with the field avoids it.
 
 On win32 a named pipe cannot be renamed: `handoffHost` refuses with `upgrade_unsupported` and
 `decideHostAction` never yields `handoff` there. Upgrades apply after `stopHost({ drain: true })` - which
@@ -884,12 +898,15 @@ A POSIX socket host with an id advertises `runtime_identity_handover` and accept
 `senpi host handoff --when idle --operation <id> --if-instance <instanceId> --if-generation <n>
 --target-build <runtimeBuildId>`. The CLI refuses `target_build_mismatch` unless the target is its own
 `clientRuntimeBuildId` (the successor runs the CLI's runtime), `stale_generation` unless the socket is served
-by the named generation, and `handover_unsupported` when the host does not advertise the capability. It then
-sends the host `begin_handover`, and the HOST owns the operation:
+by the named generation, `handover_unsupported` when the host does not advertise the capability, and
+`foreign_agent_dir` when the host belongs to another agent dir (the same check as the generation handoff's,
+`detail` naming both). It then sends the host `begin_handover`, carrying its own `agent_dir`, and the HOST
+owns the operation:
 
-1. a request with an `operationId` it already holds answers with that operation when the terms match (and
-   `operation_conflict` when they do not); a new operation is checked first against the named generation
-   (`stale_generation`);
+1. a request naming another `agent_dir` than the host's own refuses `foreign_agent_dir` before anything else
+   (a request without the field, from a CLI before it existed, is not checked); a request with an `operationId`
+   it already holds answers with that operation when the terms match (and `operation_conflict` when they do
+   not); a new operation is checked first against the named generation (`stale_generation`);
 2. it stops admitting new work: `prompt`, `steer`, `follow_up`, `send_custom_message`, `append_user_message`,
    `bash`, `compact`, `wake` and the two message edits answer `success: false` with an error starting
    `handover_pending:`. Running turns keep running and keep their control traffic (`abort` included);
