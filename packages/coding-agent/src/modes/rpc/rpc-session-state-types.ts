@@ -87,6 +87,7 @@ export interface RpcLoadedMcpServer {
 	toolCount: number;
 	status: RpcMcpServerStatus;
 	authStatus: "unsupported" | "notLoggedIn" | "bearerToken" | "oAuth";
+	lastError?: string;
 }
 
 // ============================================================================

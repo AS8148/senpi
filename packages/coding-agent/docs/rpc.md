@@ -1,5 +1,21 @@
 # RPC Mode
 
+### Recovery after shared output overflow
+
+The unattached shared output lane is bounded to 4096 records / 64 MiB. Overflow
+seals the routing handle; its retained runtime may still be open, but its lost
+output cannot be replayed. Reattaching with `open_session` is refused with
+`error: "session_output_overflow"`, `errorCode: "session_output_overflow"` and
+`errorData: { sessionId, sessionPath, action: "unload_and_reopen" }`. Session
+commands on that still-open handle return the same error code and action rather
+than silently dropping their replies.
+
+Recover using `unload_session { sessionId }`, then `open_session { sessionPath }`
+to obtain a fresh handle. Unload keeps its ordinary active-work, child-task and
+other-client protections: inspect a refused unload's reason/action rather than
+automatically forcing it. The overflow seal and capacity limits remain in force
+until the old runtime is disposed.
+
 RPC mode enables headless operation of the coding agent via a JSON protocol over stdin/stdout. This is useful for embedding the agent in other applications, IDEs, or custom UIs.
 
 **Note for Node.js/TypeScript users**: If you're building a Node.js application, consider using `AgentSession` directly from `@code-yeongyu/senpi` instead of spawning a subprocess. See [`src/core/agent-session.ts`](../src/core/agent-session.ts) for the API. For a subprocess-based TypeScript client, see [`src/modes/rpc/rpc-client.ts`](../src/modes/rpc/rpc-client.ts).
@@ -4632,6 +4648,16 @@ Each command has:
 #### get_loaded_surfaces
 
 Get the extensions and MCP servers loaded by the active runtime. Skills remain available through `get_commands`, where each loaded skill is represented by one `source: "skill"` row.
+
+An MCP server with a failed configuration reference reports `status: "degraded"`
+and an optional `lastError` naming the field and failure reason, never the resolved
+value. Other connection diagnostics also use `lastError` when present.
+Every resolved reference value is treated as sensitive and redacted from outbound
+text, even non-secret values such as paths and values from earlier rotations.
+Values shorter than four characters are not redacted. Structured snapshots retain
+their keys, numbers, booleans, nulls and array/object shape; redaction changes only
+string values. For MCP secrets use `env.*` or `headers`, not `args[]`, whose
+resolved values are visible in the server's process list.
 
 ```json
 {"type": "get_loaded_surfaces"}
