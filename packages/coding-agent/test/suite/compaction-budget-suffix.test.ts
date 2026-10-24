@@ -108,6 +108,7 @@ describe("senpi#4161 budget-only compaction recovery", () => {
 						? message.content.flatMap((block) => (block.type === "text" ? [block.text.length] : []))
 						: [],
 				);
+				expect(Math.max(0, ...toolTextSizes)).toBeLessThan(100_000);
 				console.info(
 					"SUMMARY_INPUT",
 					JSON.stringify({
@@ -138,7 +139,11 @@ describe("senpi#4161 budget-only compaction recovery", () => {
 		// Given a transcript with no fitting suffix, including a non-message oldest entry.
 		const manager = SessionManager.inMemory();
 		manager.appendModelChange("faux", "large");
-		manager.appendMessage({ role: "user", content: "log ".repeat(700_000), timestamp: 1 });
+		const firstKeptEntryId = manager.appendMessage({
+			role: "user",
+			content: "log ".repeat(700_000),
+			timestamp: 1,
+		});
 		manager.appendMessage(fauxAssistantMessage("reply ".repeat(700_000), { timestamp: 2 }));
 		const branch = manager.getBranch();
 		const preparation = prepareCompaction(branch, DEFAULT_COMPACTION_SETTINGS, true);
@@ -148,7 +153,7 @@ describe("senpi#4161 budget-only compaction recovery", () => {
 		// When every candidate is rejected.
 		expect(
 			createRequiredCompactionFallback(
-				preparation,
+				{ ...preparation, firstKeptEntryId },
 				WINDOW,
 				"summarization-provider-failure",
 				{},
@@ -161,9 +166,11 @@ describe("senpi#4161 budget-only compaction recovery", () => {
 
 		// Then a metadata reconstruction failure cannot hide the dominant budget cause.
 		expect(diagnostic.rejectionReason).toBe("retained-token-budget-exceeded");
-		expect(diagnostic.rejectionCounts["retained-token-budget-exceeded"]).toBeGreaterThan(1);
-		expect(diagnostic.rejectionCounts["context-reconstruction-failed"]).toBe(1);
+		expect(diagnostic.rejectionCounts).toEqual({
+			"retained-token-budget-exceeded": 2,
+			"context-reconstruction-failed": 1,
+		});
 		expect(diagnostic.firstCandidate.estimatedTokens).toBeGreaterThan(diagnostic.budgetTokens);
-		expect(diagnostic.bestCandidate.estimatedTokens).toBeLessThanOrEqual(diagnostic.firstCandidate.estimatedTokens);
+		expect(diagnostic.bestCandidate.estimatedTokens).toBeLessThan(diagnostic.firstCandidate.estimatedTokens);
 	});
 });
