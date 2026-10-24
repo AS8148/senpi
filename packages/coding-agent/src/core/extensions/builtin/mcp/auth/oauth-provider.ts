@@ -9,7 +9,11 @@ import type {
 import type { McpLogger } from "../log.ts";
 import { fingerprintSecret } from "../log.ts";
 import { OAuthFlowError } from "./oauth-errors.ts";
-import { credentialsMatchIssuer, validatedAuthorizationServerIssuer } from "./oauth-issuer.ts";
+import {
+	canonicalAuthorizationServerIssuer,
+	credentialsMatchIssuer,
+	validatedAuthorizationServerIssuer,
+} from "./oauth-issuer.ts";
 import type { McpStoredAuth, McpTokenStore } from "./token-store.ts";
 
 // Buffer before absolute token expiry at which a refresh is considered due.
@@ -115,15 +119,18 @@ export class McpOAuthProvider implements OAuthClientProvider {
 		return this.#options.clientMetadataUrl;
 	}
 
-	get clientMetadata(): OAuthClientMetadata & { application_type: "native" | "web" } {
+	get clientMetadata(): OAuthClientMetadata & { application_type?: "native" | "web" } {
 		const redirect = this.#options.redirectUrl;
 		return {
-			application_type:
-				redirect === undefined ||
-				!["http:", "https:"].includes(new URL(redirect).protocol) ||
-				["127.0.0.1", "localhost", "[::1]"].includes(new URL(redirect).hostname)
-					? "native"
-					: "web",
+			...(redirect === undefined
+				? {}
+				: {
+						application_type:
+							!["http:", "https:"].includes(new URL(redirect).protocol) ||
+							["127.0.0.1", "localhost", "[::1]"].includes(new URL(redirect).hostname)
+								? "native"
+								: "web",
+					}),
 			redirect_uris: redirect === undefined ? [] : [String(redirect)],
 			grant_types: ["authorization_code", "refresh_token"],
 			response_types: ["code"],
@@ -152,7 +159,11 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	}
 
 	async saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
-		const issuer = this.discoveryState()?.authorizationServerMetadata?.issuer ?? info.issuer;
+		const discovery = this.discoveryState();
+		const issuer =
+			discovery === undefined
+				? info.issuer && canonicalAuthorizationServerIssuer(info.issuer)
+				: validatedAuthorizationServerIssuer(discovery, this.serverName);
 		await this.#store.update((current) => ({ ...(current ?? {}), clientInfo: { ...info, issuer } }));
 	}
 
@@ -169,7 +180,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 				clientInfo:
 					clientIssuer === undefined || attributed.clientInfo === undefined
 						? undefined
-						: { ...attributed.clientInfo, issuer: clientIssuer },
+						: { ...attributed.clientInfo, issuer },
 				discoveryState,
 			};
 		});
@@ -179,8 +190,13 @@ export class McpOAuthProvider implements OAuthClientProvider {
 		const current = this.#store.read();
 		const state = current?.discoveryState;
 		if (state !== undefined) {
-			const issuer = validatedAuthorizationServerIssuer(state, this.serverName);
-			if (!credentialsMatchIssuer(current, issuer)) return undefined;
+			try {
+				const issuer = validatedAuthorizationServerIssuer(state, this.serverName);
+				if (!credentialsMatchIssuer(current, issuer)) return undefined;
+			} catch (error) {
+				if (error instanceof OAuthFlowError) return undefined;
+				throw error;
+			}
 		}
 		return state;
 	}
@@ -190,7 +206,11 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	}
 
 	async saveTokens(tokens: OAuthTokens): Promise<void> {
-		const issuer = this.discoveryState()?.authorizationServerMetadata?.issuer ?? tokens.issuer;
+		const discovery = this.discoveryState();
+		const issuer =
+			discovery === undefined
+				? tokens.issuer && canonicalAuthorizationServerIssuer(tokens.issuer)
+				: validatedAuthorizationServerIssuer(discovery, this.serverName);
 		await this.#store.update((current) => mergeTokensIntoStoredAuth(current, { ...tokens, issuer }, this.serverUrl));
 		this.#logFingerprint("saveTokens", tokens.access_token);
 	}

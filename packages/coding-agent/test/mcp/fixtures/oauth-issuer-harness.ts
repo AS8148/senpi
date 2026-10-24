@@ -29,6 +29,7 @@ export async function setup(clientId?: string) {
 		issuer,
 		metadataIssuer: issuer,
 		prm: true,
+		metadata: true,
 		registration: true,
 		rejectRegistration: false,
 		registrations: 0,
@@ -42,6 +43,7 @@ export async function setup(clientId?: string) {
 				: new Response(null, { status: 404 });
 		}
 		if (url.includes(".well-known")) {
+			if (!state.metadata) return new Response(null, { status: 404 });
 			return Response.json({
 				issuer: state.metadataIssuer,
 				authorization_endpoint: `${state.issuer}/authorize`,

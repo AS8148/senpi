@@ -102,4 +102,46 @@ describe("MCP OAuth metadata issuer trust", () => {
 		expect(error).toMatchObject({ oauthKind: "needs_auth" });
 		expect(String(error)).not.toContain("untrusted-server-error");
 	});
+
+	it("rediscovers an invalid cached document after the server fixes its metadata", async () => {
+		const { provider, store, fetchFn, resource, issuer } = await setup();
+		await store.write({
+			discoveryState: {
+				authorizationServerUrl: issuer,
+				resourceMetadata: { resource, authorization_servers: [issuer] },
+				authorizationServerMetadata: {
+					issuer: "https://wrong.example.com",
+					authorization_endpoint: `${issuer}/authorize`,
+					token_endpoint: `${issuer}/token`,
+					response_types_supported: ["code"],
+				},
+			},
+		});
+
+		expect((await beginAuthorization(provider, { fetchFn })).status).toBe("redirect");
+		expect(provider.discoveryState()?.authorizationServerMetadata?.issuer).toBe(issuer);
+	});
+
+	it("rejects a callback before SDK discovery when its credential stamps conflict", async () => {
+		const { provider, store, fetchFn } = await setup();
+		await beginAuthorization(provider, { fetchFn });
+		const callbackState = provider.lastAuthorizationUrl?.searchParams.get("state") ?? "";
+		await store.update((current) => ({ ...current, issuer: "https://other.example.com" }));
+		const requests: string[] = [];
+
+		await expect(
+			completeAuthorization(
+				provider,
+				`http://127.0.0.1:8123/callback?code=code&state=${callbackState}&iss=https://other.example.com`,
+				{
+					fetchFn: (input, init) => {
+						requests.push(String(input));
+						return fetchFn(input, init);
+					},
+				},
+			),
+		).rejects.toMatchObject({ oauthKind: "needs_auth" });
+
+		expect(requests).toEqual([]);
+	});
 });

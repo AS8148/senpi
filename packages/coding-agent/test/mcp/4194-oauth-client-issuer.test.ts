@@ -10,6 +10,11 @@ import { McpRefreshManager } from "../../src/core/extensions/builtin/mcp/auth/oa
 import { setup } from "./fixtures/oauth-issuer-harness.ts";
 
 describe("MCP OAuth persisted client issuer binding", () => {
+	it("does not declare a redirect application type for a client without redirects", async () => {
+		const { store, resource } = await setup();
+		const provider = new McpOAuthProvider({ serverName: "issuer", serverUrl: resource, store });
+		expect(provider.clientMetadata.application_type).toBeUndefined();
+	});
 	for (const changedIssuer of [
 		"https://auth.example.com:8443/tenant",
 		"https://auth.example.com:9443/other",
