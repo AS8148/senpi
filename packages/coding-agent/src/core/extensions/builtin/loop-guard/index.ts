@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "../../types.ts";
 import { CONTINUATION_HOLD_STATE_EVENT, WAKE_SOURCE_STATE_EVENT } from "../monitor-state-event.ts";
-import { detectLoop, NoticeGate, windowedRepeatCount } from "./detectors.ts";
+import { detectLoop, NoticeGate } from "./detectors.ts";
 import { IdenticalLoopEscalation } from "./escalation.ts";
 import {
 	buildLoopGuardBlockReason,
@@ -14,6 +14,7 @@ import {
 import { WINDOWED_REPEAT_THRESHOLD } from "./policy.ts";
 import { renderLoopGuardEscalation, renderLoopGuardNotice } from "./renderer.ts";
 import { ToolCallTracker } from "./tracker.ts";
+import type { ToolCallRecord } from "./tracker.ts";
 
 const LOOP_GUARD_HARD_STOP_WAKE_SOURCE = "loop-guard-hard-stop";
 
@@ -22,6 +23,7 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 	const gate = new NoticeGate();
 	const escalation = new IdenticalLoopEscalation();
 	let pendingRecoveryToolName: string | undefined;
+	let holdOwnerFingerprint: string | undefined;
 	let recoveryWakeSourceActive = false;
 	let continuationHoldActive = false;
 
@@ -58,13 +60,17 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 	// the recovery and hold state its hard stop armed goes with it.
 	const ageOutWindowedEpisodes = (): void => {
 		for (const fingerprint of escalation.windowedEpisodeFingerprints) {
-			if (windowedRepeatCount(tracker.records, fingerprint) < WINDOWED_REPEAT_THRESHOLD) {
+			// Forgive on a real state change (a non-observing call resets the cumulative
+			// count) or when the signature has not appeared for a whole window (the loop
+			// clearly stopped); during a live loop neither condition flaps at the edge.
+			if (tracker.windowedCount(fingerprint) < WINDOWED_REPEAT_THRESHOLD || !tracker.seenInWindow(fingerprint)) {
 				escalation.clearWindowedEpisode(fingerprint);
 			}
 		}
 		// The recovery and hold state belongs to whichever hard stop armed it; release it
 		// only when no episode of either kind remains to keep blocking.
 		if (!escalation.hasActiveEpisodes()) {
+			holdOwnerFingerprint = undefined;
 			pendingRecoveryToolName = undefined;
 			setRecoveryWakeSourceActive(false);
 			setContinuationHoldActive(false);
@@ -81,16 +87,23 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 		if (event.source !== "extension") reset();
 	});
 
+	let currentRecord: ToolCallRecord | undefined;
+
 	pi.on("tool_execution_start", (event) => {
 		const record = tracker.record(event.toolName, event.args);
+		currentRecord = record;
 		ageOutWindowedEpisodes();
 		const patternChanged = escalation.observeAttempt(event.toolCallId, record);
-		if (patternChanged && !escalation.hasActiveEpisodes()) {
+		// Release recovery/hold state when the episode that hard-stopped is gone, so an
+		// unrelated windowed episode cannot keep another loop's hold alive (round 7).
+		const holdOwnerGone = holdOwnerFingerprint === undefined || !escalation.hasEpisode(holdOwnerFingerprint);
+		if (patternChanged && holdOwnerGone) {
+			holdOwnerFingerprint = undefined;
 			pendingRecoveryToolName = undefined;
 			setRecoveryWakeSourceActive(false);
 			setContinuationHoldActive(false);
 		}
-		const detection = detectLoop(tracker.records, gate);
+		const detection = detectLoop(tracker.records, gate, tracker);
 		if (detection === undefined) return;
 		escalation.observeNotice(detection);
 		pi.sendMessage(
@@ -139,6 +152,7 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 					if (ctx.hasUI) ctx.ui.notify(warning, "warning");
 					pendingRecoveryToolName = decision.toolName;
 				}
+				holdOwnerFingerprint = currentRecord?.signature;
 				ctx.abort("system");
 				return {
 					block: true,

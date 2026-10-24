@@ -42,7 +42,7 @@ export function buildLoopGuardReminder(detection: LoopGuardDetection): string {
 				const polling = POLLING_TOOL_NAMES.has(toolName);
 				const intro = polling
 					? `no state-changing call (edit, write, bash, eval, ...) ran between them, and a poll whose result has not changed is still the same result:`
-					: `no state-changing call (edit, write, bash, eval, ...) ran between them, so none of those repeats could observe anything you changed:`;
+					: `only calls from known read-only tools (read, ls, grep, todo, ...) ran between them, so from your side there was nothing new to observe:`;
 				return [
 					`<system-reminder>`,
 					`LOOP GUARD - REPEATED IDENTICAL TOOL CALLS: you called \`${toolName}\` ${count} times in this segment with the EXACT same arguments, and ${intro}`,

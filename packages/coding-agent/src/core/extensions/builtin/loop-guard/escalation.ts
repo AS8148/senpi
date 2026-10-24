@@ -140,6 +140,11 @@ export class IdenticalLoopEscalation {
 		return new Set(this.windowedEpisodes.keys());
 	}
 
+	/** True while an episode for exactly this fingerprint can still block. */
+	hasEpisode(fingerprint: string): boolean {
+		return this.windowedEpisodes.has(fingerprint) || this.episode?.fingerprint === fingerprint;
+	}
+
 	/** True while any episode (consecutive or windowed) can still block. */
 	hasActiveEpisodes(): boolean {
 		return this.episode !== undefined || this.windowedEpisodes.size > 0;

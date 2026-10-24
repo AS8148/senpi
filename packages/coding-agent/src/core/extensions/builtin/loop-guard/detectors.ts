@@ -86,11 +86,16 @@ export function detectIdenticalRun(records: readonly ToolCallRecord[]): LoopGuar
 	return { kind: "identical", windowed: false, toolName: last.toolName, count: run, fingerprint: last.signature };
 }
 
-export function detectWindowedRepeat(records: readonly ToolCallRecord[]): LoopGuardDetection | undefined {
+export function detectWindowedRepeat(
+	records: readonly ToolCallRecord[],
+	cumulativeCounts?: { windowedCount(signature: string): number },
+): LoopGuardDetection | undefined {
 	if (detectIdenticalRun(records) !== undefined) return undefined;
 	const last = records[records.length - 1];
 	if (last === undefined) return undefined;
-	const occurrences = windowedRepeatCount(records, last.signature);
+	const occurrences = cumulativeCounts
+		? cumulativeCounts.windowedCount(last.signature)
+		: windowedRepeatCount(records, last.signature);
 	if (occurrences < WINDOWED_REPEAT_THRESHOLD) return undefined;
 	return {
 		kind: "identical",
@@ -174,12 +179,22 @@ export function detectCycle(records: readonly ToolCallRecord[]): LoopGuardDetect
 			period,
 			count: repetitions,
 			cycleTools: cycle.map((record) => record.toolName),
-			// Rotation-invariant: a cycle and its rotation are one loop, so the gate entry
-			// (and its notice throttle) must not alternate between two keys per record.
-			fingerprint: [...cycle.map((record) => record.signature)].sort().join("\u0001"),
+			// Rotation-canonical (rotate to the lexicographically smallest signature):
+			// a cycle and its rotation are one loop, so the gate entry (and its notice
+			// throttle) must not alternate between two keys per record, while distinct
+			// orderings of the same tools stay distinct cycles.
+			fingerprint: canonicalRotation(cycle.map((record) => record.signature)).join("\u0001"),
 		};
 	}
 	return undefined;
+}
+
+function canonicalRotation(signatures: readonly string[]): readonly string[] {
+	let smallest = 0;
+	for (let i = 1; i < signatures.length; i++) {
+		if (signatures[i]! < signatures[smallest]!) smallest = i;
+	}
+	return [...signatures.slice(smallest), ...signatures.slice(0, smallest)];
 }
 
 interface GateEntry {
@@ -191,6 +206,8 @@ interface GateEntry {
 function maximumObservableCount(detection: LoopGuardDetection): number {
 	switch (detection.kind) {
 		case "identical":
+			// Windowed counts are cumulative and unbounded; only the consecutive count caps at the window.
+			return detection.windowed ? Number.POSITIVE_INFINITY : TRACK_WINDOW;
 		case "similar":
 			return TRACK_WINDOW;
 		case "cycle":
@@ -243,10 +260,14 @@ export class NoticeGate {
 	}
 }
 
-export function detectLoop(records: readonly ToolCallRecord[], gate: NoticeGate): LoopGuardDetection | undefined {
+export function detectLoop(
+	records: readonly ToolCallRecord[],
+	gate: NoticeGate,
+	tracker?: { windowedCount(signature: string): number },
+): LoopGuardDetection | undefined {
 	const detections = [
 		detectIdenticalRun(records),
-		detectWindowedRepeat(records),
+		detectWindowedRepeat(records, tracker),
 		detectCycle(records),
 		detectSimilarRun(records),
 	];
@@ -254,13 +275,20 @@ export function detectLoop(records: readonly ToolCallRecord[], gate: NoticeGate)
 	for (const detection of detections) {
 		if (detection !== undefined) active.add(NoticeGate.key(detection));
 	}
-	// Only a WINDOWED entry survives the filler calls between repeats (its count keeps
-	// growing across them); a consecutive entry must expire on any break so a new run
-	// of the same call notifies at the consecutive threshold again, exactly as before
-	// this PR (review round 5: a raw-count retention for consecutive entries delayed
-	// the existing ladder's second notice from 3 to 6+).
-	for (const fingerprint of windowedOverThreshold(records)) {
-		active.add(`identical:w\u0000${fingerprint}`);
+	// Only a WINDOWED entry survives the filler calls between repeats: the cumulative
+	// count only drops when a non-observing call actually resets it (a real state
+	// change), never by window eviction, so there is no threshold-edge flapping; a
+	// consecutive entry expires on any break exactly as on main (round-5 pin test).
+	if (tracker !== undefined) {
+		for (const record of records) {
+			if (tracker.windowedCount(record.signature) >= WINDOWED_REPEAT_THRESHOLD) {
+				active.add(`identical:w\u0000${record.signature}`);
+			}
+		}
+	} else {
+		for (const fingerprint of windowedOverThreshold(records)) {
+			active.add(`identical:w\u0000${fingerprint}`);
+		}
 	}
 	gate.prune(active);
 	for (const detection of detections) {

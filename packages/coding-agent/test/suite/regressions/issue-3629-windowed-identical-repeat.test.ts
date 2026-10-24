@@ -24,6 +24,30 @@ async function runInterleavedRound(harness: LoopGuardHarness, round: number): Pr
 	return attempt(harness, `eval-${round}`, "eval", { ...EVAL_ARGS });
 }
 
+describe("issue 3629: property sweep across repeat spacings", () => {
+	it("bounds notices and blocks at every filler spacing 0..10", async () => {
+		for (let fillers = 0; fillers <= 10; fillers++) {
+			const harness = createLoopGuardHarness();
+			let blockedCount = 0;
+			for (let round = 1; round <= 300; round++) {
+				for (let f = 0; f < fillers; f++) {
+					await attempt(harness, `fill-${round}-${f}`, "read", { path: `src/other-${f}.ts` });
+				}
+				const result = await attempt(harness, `eval-${round}`, "eval", { ...EVAL_ARGS });
+				if (isBlockResult(result)) blockedCount++;
+			}
+			const notices = harness.customMessages.filter((message) => message.customType === "loop-guard:notice");
+			// eslint-disable-next-line no-console
+			console.log(`spacing=${fillers} notices=${notices.length} blocked=${blockedCount}`);
+			// spacing 0 rides the consecutive ladder (base doubles 3/6/12/24/48/sat);
+			// every wider spacing rides the windowed path, which must stay bounded too.
+			expect(notices.length).toBeLessThanOrEqual(12);
+			expect(blockedCount).toBeGreaterThanOrEqual(3);
+			expect(harness.actions).toContain("abort:system");
+		}
+	});
+});
+
 describe("issue 3629: interleaved identical repeats escalate to a hard stop", () => {
 	it("does not flood notices when the interleaved todo call repeats identically too", async () => {
 		const harness = createLoopGuardHarness();
