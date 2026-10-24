@@ -1179,6 +1179,28 @@ describe("VS Code terminal without TERM_PROGRAM (#2826)", () => {
 		assert.strictEqual(caps.hyperlinks, false);
 	});
 
+	it("lets another terminal that sets TERM_PROGRAM win over the inherited VS Code marker", () => {
+		const env = { ...remoteWslVsCode, TERM_PROGRAM: "someterm" };
+		assert.strictEqual(withEnv(env, () => detectCapabilities()).hyperlinks, false);
+		assert.strictEqual(detectTerminalCapabilities({ ...env }, "linux").hyperlinks, false);
+	});
+
+	it("keeps hyperlinks off for screen inside VS Code in both detectors", () => {
+		for (const env of [
+			{ ...remoteWslVsCode, TERM: "screen-256color" },
+			{ ...remoteWslVsCode, TERM: "screen-256color", TERM_PROGRAM: "vscode" },
+		]) {
+			assert.strictEqual(withEnv(env, () => detectCapabilities()).hyperlinks, false);
+			assert.strictEqual(detectTerminalCapabilities({ ...env }, "linux").hyperlinks, false);
+		}
+	});
+
+	it("lets the JetBrains terminal win over the inherited VS Code marker", () => {
+		const env = { ...remoteWslVsCode, TERMINAL_EMULATOR: "JetBrains-JediTerm" };
+		assert.strictEqual(withEnv(env, () => detectCapabilities()).hyperlinks, false);
+		assert.strictEqual(detectTerminalCapabilities({ ...env }, "linux").hyperlinks, false);
+	});
+
 	it("still follows the tmux probe inside VS Code instead of forcing links on", () => {
 		const tmuxWithoutHyperlinks = () => "3.4|off|on|1|1|1|xterm-256color|||";
 		const caps = detectTerminalCapabilities(
