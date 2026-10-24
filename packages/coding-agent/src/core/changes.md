@@ -1,14 +1,15 @@
-## 2026-10-15 - A reload retires the control endpoints its old extension generation registered (senpi#3246)
+## 2026-10-24 - A reload retires the control endpoints its old extension generation registered (senpi#3246)
 
 ### What changed
 
-- `packages/coding-agent/src/core/session-control-actions.ts`: `createSessionControlActions` returns a `GenerationSessionControlActions`, which owns every control endpoint registered through it. `retire()` disposes them and refuses a registration that completes after retirement.
+- `packages/coding-agent/src/core/session-control-actions.ts`: `createSessionControlActions` returns a `GenerationSessionControlActions`, which owns every control endpoint registered through it. `retire()` disposes them and refuses a registration that completes after retirement. The `drain` it hands the host answers nothing once the generation is retired, so a registration still opening across a reload never runs the retired generation's `drain`, not even the endpoint's first `inbox` pass.
 - `packages/coding-agent/src/core/agent-session.ts`: the session keeps the current generation's actions. `reload()` retires the old generation's actions just before it invalidates the old runner.
-- `packages/coding-agent/src/modes/interactive/session-control-host.ts`: an endpoint disposed by its owner also leaves the host, so no later editor edge or question update reaches it.
+- `packages/coding-agent/src/modes/interactive/session-control-host.ts`: an endpoint disposed by its owner also leaves the host, so no later editor edge or question update reaches it. Registrations run one at a time, so one still opening when the new generation registers cannot finish last and leave the new endpoint serving untracked.
+- `packages/coding-agent/src/modes/interactive/session-control-endpoint.ts`: a drain failure that repeats is shown once, until a pass succeeds again.
 
 ### Why
 
-A control endpoint's `drain` is a closure of the extension generation that registered it, but nothing tied the endpoint to that generation. After a hot reload (the config-reload extension, `/reload`, `omo update` rewriting extension bundles), an extension that registered only at startup left its endpoint serving. Every wake then ran the retired generation's `drain` and printed "control endpoint drain failed: stale extension generation after reload", and deliveries stopped being admitted.
+A control endpoint's `drain` is a closure of the extension generation that registered it, but nothing tied the endpoint to that generation. After a hot reload (the config-reload extension, `/reload`, `omo update` rewriting extension bundles), an extension that registered only at startup, or whose startup registration was still opening when the reload began (the production registrant registers on every `session_start` without awaiting it and disposes on `session_shutdown` only what has registered), left its endpoint serving. Every wake then ran the retired generation's `drain` and printed "control endpoint drain failed: stale extension generation after reload", and deliveries stopped being admitted.
 
 ### Why an extension could not handle it
 

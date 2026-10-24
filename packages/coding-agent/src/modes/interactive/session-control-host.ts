@@ -43,13 +43,25 @@ export class TuiSessionControlHost implements ControlEndpointHost {
 	private openTickets = 0;
 	private bufferedElsewhere = false;
 	private handoff: SubmissionTicket | undefined;
+	private registering: Promise<unknown> = Promise.resolve();
 	private readonly context: () => Omit<TuiControlContext, "editorRevision">;
 
 	constructor(context: () => Omit<TuiControlContext, "editorRevision">) {
 		this.context = context;
 	}
 
-	async register(options: RegisterControlEndpointOptions): Promise<SessionControlRegistration> {
+	/**
+	 * One registration at a time: one still opening when another starts (a retiring extension
+	 * generation's, still in flight across a reload, and the new generation's) would otherwise finish
+	 * last and replace `active`, leaving the other endpoint serving with no host tracking it (senpi#3246).
+	 */
+	register(options: RegisterControlEndpointOptions): Promise<SessionControlRegistration> {
+		const next = this.registering.then(() => this.registerNow(options));
+		this.registering = next.catch(() => undefined);
+		return next;
+	}
+
+	private async registerNow(options: RegisterControlEndpointOptions): Promise<SessionControlRegistration> {
 		await this.disposeActive();
 		const { registerSessionControlEndpoint } = await import("./session-control-endpoint.ts");
 		const outcome = await registerSessionControlEndpoint(

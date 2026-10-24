@@ -43,7 +43,12 @@ export function createSessionControlActions(deps: SessionControlActionDeps): Gen
 			if (process.platform === "win32") return { status: "unsupported", reason: "unsupported_platform" };
 			const host = deps.host();
 			if (host === undefined) return { status: "unsupported", reason: "unsupported_mode" };
-			const registration = await host.register(options);
+			// The endpoint may run a pass before this registration returns (its first `inbox` wake): a retired
+			// generation's `drain` is never called, whatever the timing.
+			const registration = await host.register({
+				...options,
+				drain: async (event) => (retired ? undefined : options.drain(event)),
+			});
 			if (registration.status !== "registered") return registration;
 			// Registered while this generation was being retired: it is released at once, never left serving.
 			if (retired) {
