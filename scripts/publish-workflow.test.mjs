@@ -25,8 +25,8 @@ describe("publish-only workflow", () => {
 			nativePrebuildWorkflow,
 			/path: \$\{\{ runner\.temp \}\}\/native-prebuild-artifact\s*$/m,
 		);
-		assert.match(workflow, /native-prebuilds:\s+(?:if: [^\n]+\s+)?uses: \.\/\.github\/workflows\/native-prebuilds\.yml/);
-		assert.match(workflow, /native-prebuilds:\s+if: \$\{\{ inputs\.publish-only == true \}\}\s+uses:/);
+		assert.match(workflow, /native-prebuilds:\s+(?:needs: require-version\s+)?(?:if: [^\n]+\s+)?uses: \.\/\.github\/workflows\/native-prebuilds\.yml/);
+		assert.match(workflow, /native-prebuilds:\s+needs: require-version\s+if: \$\{\{ inputs\.publish-only == true \}\}\s+uses:/);
 		assert.match(
 			workflow,
 			/needs: native-prebuilds\s+if: \$\{\{ always\(\) && \(inputs\.publish-only != true \|\| needs\.native-prebuilds\.result == 'success'\) \}\}/,
@@ -149,14 +149,36 @@ describe("publish-only native addons and inputs", () => {
 		assert.match(checkout, /ref: \$\{\{ inputs\.ref \|\| '' \}\}/);
 	});
 
-	it("fails with a clear message before Checkout when publish-only has no version", () => {
-		const requireStep = workflow.match(/- name: Require a version for publish-only\n[\s\S]*?(?=\n      - name: )/)?.[0];
-		assert.ok(requireStep, "expected the version requirement step");
-		assert.match(requireStep, /if: inputs\.publish-only == true && inputs\.version == ''/);
-		assert.ok(workflow.indexOf("- name: Require a version for publish-only") < workflow.indexOf("      - name: Checkout\n        uses: actions/checkout"));
+	it("fails an empty publish-only version with the guard's message before native-prebuilds runs", () => {
+		const job = workflow.match(/  require-version:\n[\s\S]*?(?=\n  [a-z-]+:\n)/)?.[0];
+		assert.ok(job, "expected the require-version job");
+		assert.match(job, /if: \$\{\{ inputs\.publish-only == true \}\}/);
+		assert.match(workflow, /  native-prebuilds:\n    needs: require-version\n/);
+		const script = job.match(/run: \|\n([\s\S]*)/)?.[1].replace(/^ {10}/gm, "");
+		assert.ok(script, "expected the guard script");
+		const run = (version) => spawnSync("bash", ["-c", script], { env: { PATH: process.env.PATH, EXPECTED_VERSION: version }, encoding: "utf8" });
+		const empty = run("");
+		assert.equal(empty.status, 1);
+		assert.match(empty.stderr, /publish-only requires an explicit version/);
+		assert.equal(run("2026.10.23-1").status, 0);
 	});
 
-	it("reports the published commit in the run summary for publish-only", () => {
-		assert.match(workflow, /\| Commit \| [^\n]*git rev-parse HEAD/);
+	it("reports the published commit in the run summary for publish-only, and the dispatch commit otherwise", () => {
+		const step = workflow.match(/- name: Workflow summary\n[\s\S]*?run: \|\n([\s\S]*?)(?=\n\n|\n      - name: |$)/)?.[1];
+		assert.ok(step, "expected the Workflow summary script");
+		const head = spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+		const render = (publishOnly) => {
+			const script = step
+				.replace(/^ {10}/gm, "")
+				.replaceAll("${{ inputs.publish-only }}", String(publishOnly))
+				.replaceAll("${{ inputs.sha || github.sha }}", "DISPATCHSHA")
+				.replace(/\$\{\{[^}]*\}\}/g, "x")
+				.replaceAll('"$GITHUB_STEP_SUMMARY"', "/dev/stdout");
+			const result = spawnSync("bash", ["-c", script], { encoding: "utf8" });
+			assert.equal(result.status, 0, result.stderr);
+			return result.stdout.match(/\| Commit \| (.*) \|/)?.[1];
+		};
+		assert.equal(render(true), head);
+		assert.equal(render(false), "DISPATCHSHA");
 	});
 });

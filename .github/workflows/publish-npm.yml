@@ -39,7 +39,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  require-version:
+    # Runs before everything else in publish-only, so an empty version fails here with a clear message instead of as a
+    # checkout of refs/tags/v in native-prebuilds (which would also skip the release job and any later guard).
+    if: ${{ inputs.publish-only == true }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a version for publish-only
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          test -n "$EXPECTED_VERSION" || {
+            echo "::error::publish-only requires an explicit version" >&2
+            exit 1
+          }
+
   native-prebuilds:
+    needs: require-version
     if: ${{ inputs.publish-only == true }}
     uses: ./.github/workflows/native-prebuilds.yml
     with:
@@ -59,12 +75,6 @@ jobs:
     # scripts/release-test-gate.mjs), so that mode gets 180 min.
     timeout-minutes: ${{ inputs.force_tests && 180 || 60 }}
     steps:
-      - name: Require a version for publish-only
-        if: inputs.publish-only == true && inputs.version == ''
-        run: |
-          echo "::error::publish-only requires an explicit version" >&2
-          exit 1
-
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -227,6 +237,11 @@ jobs:
         if: always()
         shell: bash
         run: |
+          if [ "${{ inputs.publish-only }}" = true ]; then
+            commit="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+          else
+            commit="${{ inputs.sha || github.sha }}"
+          fi
           {
             echo "## Release"
             echo
@@ -237,5 +252,5 @@ jobs:
             echo "| Dry run | ${{ inputs.dry_run }} |"
             echo "| Force tests | ${{ inputs.force_tests }} |"
             echo "| Version | ${{ inputs.version || 'auto' }} |"
-            echo "| Commit | ${{ inputs.publish-only && '' || inputs.sha || github.sha }}$(test "${{ inputs.publish-only }}" = true && git rev-parse HEAD 2>/dev/null) |"
+            echo "| Commit | $commit |"
           } >> "$GITHUB_STEP_SUMMARY"
