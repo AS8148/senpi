@@ -109,26 +109,6 @@ The session owns the release array, prompt admission and held-input settlement b
 
 - MEDIUM: `_getThinkingForModelSwitch` and the `_setThinkingLevel` append calls in `agent-session.ts`; the startup thinking resolution in `sdk.ts`; `appendThinkingLevelChange` in `session-manager.ts`.
 
-## 2026-10-23 - Reading the lifecycle never writes (senpi#3980)
-
-### What changed
-
-- `packages/coding-agent/src/core/agent-session.ts`: the `lifecycle` getter returns the ledger snapshot without recomputing. `executeBash` refreshes the lifecycle when a user shell command starts and when it ends, and `compaction_start` / `compaction_end` refresh it like `session_paused` / `session_resumed`.
-
-### Why
-
-- `packages/coding-agent/src/core/agent-session.ts`: the getter recomputed, so a `get_state` read while a fact had changed without an event (a running user shell command) appended and emitted a lifecycle record. Every fact now raises its own change edge, so a read is a read: the compaction and auto-compaction abort controllers are accessors whose set and clear recompute the lifecycle, so an edge fires after a compaction's `finally` releases it, not only at `compaction_end` (senpi#4120 review). The branch-summary controller recomputes only when it is cleared: a lifecycle record written at its set became the tree leaf under the running navigation, so `navigate_tree` / `edit_user_message` landed on or cancelled to the wrong entry (senpi#4120 CI).
-- `packages/coding-agent/src/core/session-work-barrier.ts`: the barrier takes an `onActiveChange` callback, called when the last holder releases it (not when work starts: every holder that makes the session busy raises its own start edge, and a start edge recomputed during restore); `AgentSession` passes `refreshLifecycle`, so the end of work held by the barrier (compaction admission, reload, extension binding, a scheduled continuation) is a lifecycle edge. `refreshLifecycle` is a no-op after `dispose()`, so work that dispose aborted cannot write a lifecycle record when it unwinds.
-- `packages/coding-agent/src/core/lifecycle-session-binding.ts`: `dispose()` marks the binding disposed, and every write the binding makes goes through one sink, `write()`, which does nothing after that: the controller's records, custody and child reports, its events, the restore-time `interrupted-run` and interrupted tool results; `recover()` stops if dispose lands while it reads the goal facts, before any restore write or redelivery (senpi#4120 reviews).
-
-### Why an extension could not handle it
-
-- `packages/coding-agent/src/core/agent-session.ts`: the lifecycle getter, user bash bookkeeping and compaction events are session core state.
-
-### Expected merge conflict zones
-
-- `packages/coding-agent/src/core/agent-session.ts`: the `lifecycle` getter, the start and `finally` of `executeBash`, and the first line of `_emit`.
-
 ## 2026-10-20 - Contain project skill links and retain security notices (senpi#3796)
 
 ### What changed
