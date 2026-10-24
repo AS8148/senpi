@@ -1,5 +1,6 @@
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
+import type { MirroredLimits } from "../../core/subscription-limits/limit-store.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcSessionState } from "./rpc-types.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
@@ -36,7 +37,14 @@ export interface WorkerSnapshot {
 }
 
 export type HostToSessionWorker =
-	| { type: "prepare"; request: number; configuration: CliRuntimeConfiguration; profile: RpcSessionLaunchProfile }
+	| {
+			type: "prepare";
+			request: number;
+			configuration: CliRuntimeConfiguration;
+			profile: RpcSessionLaunchProfile;
+			/** The host's subscription limit records when the isolate starts (senpi#3695). */
+			subscriptionLimits: readonly MirroredLimits[];
+	  }
 	| { type: "commit"; request: number }
 	| {
 			type: "bind";
@@ -53,6 +61,8 @@ export type HostToSessionWorker =
 	| { type: "permission_preset"; request: number; preset: string }
 	| { type: "cancel_ui" }
 	| { type: "cancel_grant"; id: string }
+	/** A change to the host's subscription limit records after `prepare`, mirrored into the isolate (senpi#3695). */
+	| { type: "subscription_limits"; accounts: readonly MirroredLimits[] }
 	| { type: "close" };
 
 export type SessionWorkerToHost =
@@ -73,6 +83,8 @@ export type SessionWorkerToHost =
 	| { type: "capabilities"; connection?: string; capabilities: readonly string[]; signal: SharedArrayBuffer }
 	| { type: "loaded_surfaces"; previous?: string; digest: string; signal: SharedArrayBuffer }
 	| { type: "request_close" }
+	/** A record a turn in the isolate reported, mirrored into the host's store (senpi#3695). */
+	| { type: "subscription_limits"; limits: MirroredLimits }
 	| { type: "failure"; error: string };
 
 /**
