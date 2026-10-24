@@ -71,17 +71,10 @@ export function resolveBeforeAgentStartMessage(input: {
 	reminderEnabled?: boolean;
 }): BeforeAgentStartEventResult["message"] | undefined {
 	if (!input.reminder || input.reminderEnabled === false) return input.message;
-	if (!input.message) return undefined;
+	if (!input.message) {
+		return { customType: "compaction-token-budget", content: input.reminder, display: false };
+	}
 	return { ...input.message, content: `${input.message.content}\n\n${input.reminder}` };
-}
-
-export function resolveReminderSystemPrompt(input: {
-	systemPrompt: string;
-	reminder?: string;
-	reminderEnabled?: boolean;
-}): string | undefined {
-	if (!input.reminder || input.reminderEnabled === false) return undefined;
-	return `${input.systemPrompt}\n\n${input.reminder}`;
 }
 
 export function resolveIdleWarmAction(
