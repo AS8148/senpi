@@ -11,11 +11,6 @@
  *   show mean adjacent-args bigram-Dice ~0.52-0.55 (p90 <= 0.72), while repetitive
  *   classes (read pagination, bash_output/task_output polling) sit at 0.84-0.93.
  *   0.85 cleanly separates distinct work from near-identical repetition.
- * - WINDOWED_REPEAT_THRESHOLD = 8: a legitimate senpi-codemode stress fixture
- *   plateaued at exactly 6 identical eval calls before varying args (2026-09-19
- *   daemon-host-runner storm), while real incidents repeat one identical call 197
- *   (todo view, session 01a00f43), 455+ (eval, senpi#3629) and 655 (bash_output)
- *   times. 8 sits above the legitimate ceiling and far below every incident.
  */
 
 /** Max tool-call records kept per prompt segment. Covers 6-period cycles at escalated counts. */
@@ -23,31 +18,6 @@ export const TRACK_WINDOW = 64;
 
 /** Consecutive byte-identical (tool + canonical args) calls before the firm reminder fires. */
 export const IDENTICAL_RUN_THRESHOLD = 3;
-
-/** Occurrences of one byte-identical signature in the windowed count before the windowed reminder fires. */
-export const WINDOWED_REPEAT_THRESHOLD = 8;
-
-/** Tools that never change observable state, so repeats between them can only be re-reading the same answer.
- * The default is the opposite: any tool NOT on this list (computer, MCP/browser tools, task*, unknown extensions)
- * is treated as able to change something, so it resets the windowed count (senpi#3641 review round 4).
- * The todo tool is deliberately INCLUDED here as read-only (goal/continuation.ts treats todo as mutating for its own progress check — that asymmetry is intentional, loop-guard wants the #3629 interleave to count): #3629's loop interleaved todo views with identical eval
- * calls, and the eval call is the state-changer that counts; a todo view between two identical polls is not new state. */
-export const OBSERVING_TOOL_NAMES: ReadonlySet<string> = new Set([
-	"read",
-	"ls",
-	"glob",
-	"grep",
-	"todo",
-	"todo_view",
-	"webfetch",
-	"web_search",
-	"bash_output",
-	"lsp_diagnostics",
-	"lsp_symbols",
-	"lsp_goto_definition",
-	"lsp_find_references",
-	"task_output",
-]);
 
 /** Admitted identical-loop reminders ignored before the next same call is blocked. */
 export const IDENTICAL_BLOCK_NOTICE_THRESHOLD = 2;

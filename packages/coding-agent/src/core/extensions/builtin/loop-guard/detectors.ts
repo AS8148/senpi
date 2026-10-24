@@ -4,11 +4,9 @@ import {
 	CYCLE_REPETITION_THRESHOLD,
 	ESCALATION_FACTOR,
 	IDENTICAL_RUN_THRESHOLD,
-	OBSERVING_TOOL_NAMES,
 	SIMILAR_RUN_THRESHOLD,
 	SIMILARITY_THRESHOLD,
 	TRACK_WINDOW,
-	WINDOWED_REPEAT_THRESHOLD,
 } from "./policy.ts";
 import { meanAdjacentSimilarity } from "./similarity.ts";
 import type { ToolCallRecord } from "./tracker.ts";
@@ -23,13 +21,7 @@ const TARGET_FIELDS = new Map<string, readonly string[]>([
 ]);
 
 export type LoopGuardDetection =
-	| {
-			readonly kind: "identical";
-			readonly windowed: boolean;
-			readonly toolName: string;
-			readonly count: number;
-			readonly fingerprint: string;
-	  }
+	| { readonly kind: "identical"; readonly toolName: string; readonly count: number; readonly fingerprint: string }
 	| {
 			readonly kind: "similar";
 			readonly toolName: string;
@@ -83,57 +75,7 @@ export function detectIdenticalRun(records: readonly ToolCallRecord[]): LoopGuar
 		run++;
 	}
 	if (run < IDENTICAL_RUN_THRESHOLD) return undefined;
-	return { kind: "identical", windowed: false, toolName: last.toolName, count: run, fingerprint: last.signature };
-}
-
-export function detectWindowedRepeat(
-	records: readonly ToolCallRecord[],
-	cumulativeCounts?: { windowedCount(signature: string): number },
-): LoopGuardDetection | undefined {
-	if (detectIdenticalRun(records) !== undefined) return undefined;
-	const last = records[records.length - 1];
-	if (last === undefined) return undefined;
-	const occurrences = cumulativeCounts
-		? cumulativeCounts.windowedCount(last.signature)
-		: windowedRepeatCount(records, last.signature);
-	if (occurrences < WINDOWED_REPEAT_THRESHOLD) return undefined;
-	return {
-		kind: "identical",
-		windowed: true,
-		toolName: last.toolName,
-		count: occurrences,
-		fingerprint: last.signature,
-	};
-}
-
-/**
- * Occurrences of `signature` since the most recent call from any tool that is not
- * known-observing (whole window when every call is known-observing). Unknown tools —
- * computer, MCP/browser tools, task*, any extension tool — reset the count, because
- * the detector cannot prove they leave state unchanged; the signature's own occurrences
- * always count, since a call repeating identically is itself the pathology.
- */
-export function windowedRepeatCount(records: readonly ToolCallRecord[], signature: string): number {
-	let occurrences = 0;
-	for (const record of records) {
-		if (record.signature === signature) {
-			occurrences++;
-		} else if (!OBSERVING_TOOL_NAMES.has(record.toolName)) {
-			occurrences = 0;
-		}
-	}
-	return occurrences;
-}
-
-/** Fingerprints whose windowed repeat count still meets the threshold, whether or not the last call is one of them. */
-export function windowedOverThreshold(records: readonly ToolCallRecord[]): ReadonlySet<string> {
-	const over = new Set<string>();
-	for (const record of records) {
-		if (!over.has(record.signature) && windowedRepeatCount(records, record.signature) >= WINDOWED_REPEAT_THRESHOLD) {
-			over.add(record.signature);
-		}
-	}
-	return over;
+	return { kind: "identical", toolName: last.toolName, count: run, fingerprint: last.signature };
 }
 
 export function detectSimilarRun(records: readonly ToolCallRecord[]): LoopGuardDetection | undefined {
@@ -179,24 +121,10 @@ export function detectCycle(records: readonly ToolCallRecord[]): LoopGuardDetect
 			period,
 			count: repetitions,
 			cycleTools: cycle.map((record) => record.toolName),
-			// Rotation-canonical (rotate to the lexicographically smallest signature):
-			// a cycle and its rotation are one loop, so the gate entry (and its notice
-			// throttle) must not alternate between two keys per record, while distinct
-			// orderings of the same tools stay distinct cycles.
-			fingerprint: canonicalRotation(cycle.map((record) => record.signature)).join("\u0001"),
+			fingerprint: cycle.map((record) => record.signature).join("\u0001"),
 		};
 	}
 	return undefined;
-}
-
-function canonicalRotation(signatures: readonly string[]): readonly string[] {
-	let smallest = 0;
-	for (let i = 1; i < signatures.length; i++) {
-		const current = signatures[i];
-		const best = signatures[smallest];
-		if (current !== undefined && best !== undefined && current < best) smallest = i;
-	}
-	return [...signatures.slice(smallest), ...signatures.slice(0, smallest)];
 }
 
 interface GateEntry {
@@ -208,8 +136,6 @@ interface GateEntry {
 function maximumObservableCount(detection: LoopGuardDetection): number {
 	switch (detection.kind) {
 		case "identical":
-			// Windowed counts are cumulative and unbounded; only the consecutive count caps at the window.
-			return detection.windowed ? Number.POSITIVE_INFINITY : TRACK_WINDOW;
 		case "similar":
 			return TRACK_WINDOW;
 		case "cycle":
@@ -218,22 +144,13 @@ function maximumObservableCount(detection: LoopGuardDetection): number {
 }
 
 export class NoticeGate {
-	private entries = new Map<string, GateEntry>();
-
-	static key(detection: LoopGuardDetection): string {
-		// Windowed and consecutive detections of one signature throttle separately:
-		// a windowed entry must survive filler calls (its count keeps growing), while
-		// a consecutive entry must expire on any break so a new run notifies at 3 again
-		// (senpi#3641 review round 5: sharing one key delayed the consecutive ladder).
-		const windowed = detection.kind === "identical" && detection.windowed;
-		return `${detection.kind}:${windowed ? "w" : "c"}\u0000${detection.fingerprint}`;
-	}
+	private entries = new Map<LoopGuardKind, GateEntry>();
 
 	admit(detection: LoopGuardDetection): boolean {
 		const maximumCount = maximumObservableCount(detection);
-		const existing = this.entries.get(NoticeGate.key(detection));
+		const existing = this.entries.get(detection.kind);
 		if (existing === undefined || existing.fingerprint !== detection.fingerprint) {
-			this.entries.set(NoticeGate.key(detection), {
+			this.entries.set(detection.kind, {
 				fingerprint: detection.fingerprint,
 				lastNotifiedCount: detection.count,
 				saturationNotified: detection.count >= maximumCount,
@@ -250,10 +167,9 @@ export class NoticeGate {
 		return false;
 	}
 
-	/** Removes entries whose kind+fingerprint key is no longer active (detected or still over the windowed threshold). */
-	prune(active: ReadonlySet<string>): void {
-		for (const key of this.entries.keys()) {
-			if (!active.has(key)) this.entries.delete(key);
+	prune(active: ReadonlyMap<LoopGuardKind, string>): void {
+		for (const [kind, entry] of this.entries) {
+			if (active.get(kind) !== entry.fingerprint) this.entries.delete(kind);
 		}
 	}
 
@@ -262,35 +178,11 @@ export class NoticeGate {
 	}
 }
 
-export function detectLoop(
-	records: readonly ToolCallRecord[],
-	gate: NoticeGate,
-	tracker?: { windowedCount(signature: string): number },
-): LoopGuardDetection | undefined {
-	const detections = [
-		detectIdenticalRun(records),
-		detectWindowedRepeat(records, tracker),
-		detectCycle(records),
-		detectSimilarRun(records),
-	];
-	const active = new Set<string>();
+export function detectLoop(records: readonly ToolCallRecord[], gate: NoticeGate): LoopGuardDetection | undefined {
+	const detections = [detectIdenticalRun(records), detectCycle(records), detectSimilarRun(records)];
+	const active = new Map<LoopGuardKind, string>();
 	for (const detection of detections) {
-		if (detection !== undefined) active.add(NoticeGate.key(detection));
-	}
-	// Only a WINDOWED entry survives the filler calls between repeats: the cumulative
-	// count only drops when a non-observing call actually resets it (a real state
-	// change), never by window eviction, so there is no threshold-edge flapping; a
-	// consecutive entry expires on any break exactly as on main (round-5 pin test).
-	if (tracker !== undefined) {
-		for (const record of records) {
-			if (tracker.windowedCount(record.signature) >= WINDOWED_REPEAT_THRESHOLD) {
-				active.add(`identical:w\u0000${record.signature}`);
-			}
-		}
-	} else {
-		for (const fingerprint of windowedOverThreshold(records)) {
-			active.add(`identical:w\u0000${fingerprint}`);
-		}
+		if (detection !== undefined) active.set(detection.kind, detection.fingerprint);
 	}
 	gate.prune(active);
 	for (const detection of detections) {
