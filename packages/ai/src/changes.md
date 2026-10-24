@@ -1,3 +1,40 @@
+## 2026-10-12 - Remove the /llama llama.cpp integration (senpi#3202)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `KnownClassifierApi` drops the `"llama-cpp-classify"` member.
+
+### Why
+
+- `packages/ai/src/types.ts`: Q ordered removal of the `/llama` feature, including its dedicated classifier API.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: an extension cannot narrow the shared `KnownClassifierApi` type union.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the `KnownClassifierApi` union.
+
+## 2026-10-21 - ModelCost.unknown and Usage.costUnknown (senpi#3844)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `ModelCost` gains optional `unknown: true`; `Usage` gains optional `costUnknown: true`.
+- `packages/ai/src/models.ts`: `calculateCost` on a model whose cost is `unknown` zeroes the cost fields and sets `usage.costUnknown` instead of multiplying placeholder rates.
+
+### Why
+
+- Lets a model with no known price report its turns as cost-unknown, so consumers show no amount instead of a reported $0 (senpi#3844).
+
+### Why an extension could not handle it
+
+- Cost calculation and the `Usage` contract live in the ai package.
+
+### Expected merge conflict zones
+
+- LOW: the `ModelCost` and `Usage` interfaces in `types.ts`; the head of `calculateCost` in `models.ts`.
+
 ## 2026-10-21 - Kimi keeps its blank-key, region-only login (senpi#3869)
 
 ### What changed
