@@ -1,13 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-	createModels,
-	fauxAssistantMessage,
-	fauxProvider,
-	type AuthType,
-	type Model,
-} from "@earendil-works/pi-ai";
+import { createModels, fauxAssistantMessage, fauxProvider, type AuthType, type Model } from "@earendil-works/pi-ai";
 import { listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
 import { kimiCodingProvider } from "@earendil-works/pi-ai/providers/kimi-coding";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -177,10 +171,7 @@ describe.each(["oauth", "api_key"] as const)("Kimi %s accounts in the shared poo
 		await consume(runtime, model);
 		const rotated = faux.getCallLog().slice(beforeRotation);
 		expect(rotated).toHaveLength(2);
-		expect(bases.slice(beforeRotation)).toEqual([
-			"https://api.kimi.com/coding",
-			"https://api.kimi.ai/coding",
-		]);
+		expect(bases.slice(beforeRotation)).toEqual(["https://api.kimi.com/coding", "https://api.kimi.ai/coding"]);
 		for (const [index, region] of regions.entries()) {
 			if (type === "oauth") {
 				expect(rotated[index]?.options?.headers).toMatchObject({ Authorization: `Bearer access-${region}` });
