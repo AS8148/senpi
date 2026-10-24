@@ -288,3 +288,25 @@ it("a failing mirror listener is contained and the public broadcast still runs",
 	).not.toThrow();
 	expect(heard).toEqual(["work"]);
 });
+
+// senpi#3695 (fifth review, LOW 1): host and worker each writing locally from the same held record at the same
+// millisecond get the same change stamp; neither update may be lost, and both stores must still converge.
+it("concurrent same-stamp writes on host and worker keep both updates and converge", () => {
+	const { host, worker, settle } = mirrorPair();
+	const instant = new Date(at("00"));
+	host.report("anthropic-subscription", "work", { windows: base.windows, reportedAt: instant });
+	settle();
+	worker.record(
+		"anthropic-subscription",
+		"work",
+		[{ id: "claude:7d", label: "7d", windowMinutes: 10080, usedPercent: 33 }],
+		instant,
+	);
+	host.report("anthropic-subscription", "work", { error: "rate limited", reportedAt: instant });
+
+	expect(settle()).toBeLessThan(100);
+	expect(worker.mirrorSnapshot()).toEqual(host.mirrorSnapshot());
+	const [held] = host.snapshot();
+	expect(held?.error).toBe("rate limited");
+	expect(held?.windows.map((window) => window.id).sort()).toEqual(["claude:5h", "claude:7d"]);
+});
