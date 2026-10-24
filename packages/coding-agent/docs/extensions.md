@@ -2150,7 +2150,9 @@ const receipts = await pi.sendMessage(
 
 Use `pi.lifecycle.obligations.open(key, kind, detail?)` to retain unfinished work
 before it can leave a producer. `kind` is `"children"` or `"background"`; opening
-the same live key is idempotent. The returned token supports:
+the same live key is idempotent. Keys starting with `delivery:` or `wake-source:` are
+reserved for the engine: `open` and `transfer` refuse them with a `ReservedCustodyKey`
+error. The returned token supports:
 
 - `transfer(nextKey, kind?)`: moves custody synchronously, opening the next owner
   before closing the current one. Transferring a closed token is an error.
