@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { z } from "zod/v3";
+import { ResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { normalizeServer } from "../../src/core/extensions/builtin/mcp/config.ts";
 import { createMcpLogger } from "../../src/core/extensions/builtin/mcp/log.ts";
 import { ServerConnection } from "../../src/core/extensions/builtin/mcp/connection.ts";
@@ -204,9 +204,9 @@ describe("modern MRTR adapter", () => {
 		async (method) => {
 			const { physical, script } = await connect([inputResult()]);
 			script.methods.add(method);
-			await expect(
-				physical.request({ method, params: {} }, z.record(z.string(), z.unknown())),
-			).rejects.toMatchObject({ code: "MCP_MRTR_INVALID_RESULT" });
+			await expect(physical.request({ method, params: {} }, ResultSchema)).rejects.toMatchObject({
+				code: "MCP_MRTR_INVALID_RESULT",
+			});
 			expect(script.requests).toHaveLength(1);
 		},
 	);
@@ -251,7 +251,7 @@ describe("modern MRTR adapter", () => {
 		await expect(
 			physical.request(
 				{ method: "tools/call", params: { name: "fixture", requestState: "injected" } },
-				z.record(z.string(), z.unknown()),
+				ResultSchema,
 			),
 		).rejects.toMatchObject({ code: "MCP_MRTR_INVALID_INPUT" });
 		expect(script.requests).toHaveLength(0);

@@ -1,8 +1,12 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { type JSONRPCMessage, LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
+import {
+	type JSONRPCMessage,
+	LATEST_PROTOCOL_VERSION,
+	ProgressSchema,
+	ResultSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { z } from "zod/v3";
 import { ServerConnection } from "../../src/core/extensions/builtin/mcp/connection.ts";
 import { installModernRequestAdapter, type MrtrClock } from "../../src/core/extensions/builtin/mcp/modern/request.ts";
 import { createMcpRequestOrigin, mcpRequestOptions } from "../../src/core/extensions/builtin/mcp/request-origin.ts";
@@ -235,7 +239,7 @@ describe("MRTR deadlines and settlement", () => {
 		const f = await fixture([{ resultType: "input_required", requestState: "" }, { final: 42 }]);
 		const result = await f.client.request(
 			{ method: "tools/call", params: { name: "test" } },
-			z.object({ final: z.number() }),
+			ResultSchema.pick({}).extend({ final: ProgressSchema.shape.progress }).strip(),
 		);
 		expect(result).toEqual({ final: 42 });
 		expect(f.transport.calls).toHaveLength(2);

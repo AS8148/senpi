@@ -2,13 +2,11 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { AnySchema, SchemaOutput } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { Request } from "@modelcontextprotocol/sdk/types.js";
-// npm can resolve the SDK against Zod 3 while this package uses Zod 4.
-import { z } from "zod/v3";
 import type { McpElicitationUiProvider } from "../elicitation.ts";
 import { configureMcpElicitation, mcpClientCapabilities } from "../elicitation.ts";
 import { type McpRequestOrigin, physicalMcpClient, takeMcpRequestOrigin } from "../request-origin.ts";
 import { AuthError } from "../errors.ts";
-import { loadMcpSdkClient, loadMcpSdkZodCompat } from "../sdk.lazy.ts";
+import { loadMcpSdkClient, loadMcpSdkTypes, loadMcpSdkZodCompat } from "../sdk.lazy.ts";
 import { type McpClock, mcpElapsedClock } from "../wrap.ts";
 import { collectMrtrForm, isRecord, type MrtrInputResponse, validateMrtrForm } from "./elicitation.ts";
 import { McpMrtrError } from "./errors.ts";
@@ -27,7 +25,6 @@ export interface ModernProtocolState {
 export type MrtrClock = McpClock;
 const states = new WeakMap<Client, ModernProtocolState>();
 export const isModernMcpClient = (client: Client) => states.get(physicalMcpClient(client))?.version !== undefined;
-const rawResult = z.record(z.string(), z.unknown());
 const own = (value: object, key: string) => Object.hasOwn(value, key);
 const byteSize = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
 
@@ -251,6 +248,8 @@ export function installModernRequestAdapter(
 		if (origin?.signal.aborted) onOwnerAbort();
 		try {
 			const { safeParse } = await interrupted(loadMcpSdkZodCompat(), operation.signal);
+			// Use the SDK's own Zod identity, including when npm installs another copy for this package.
+			const { ResultSchema } = await interrupted(loadMcpSdkTypes(), operation.signal);
 			await resolveAuthority();
 			for (let round = 0; ; round++) {
 				await resolveAuthority();
@@ -272,7 +271,7 @@ export function installModernRequestAdapter(
 				let result: Record<string, unknown>;
 				try {
 					check();
-					result = await sdkRequest({ method: request.method, params: outgoing }, rawResult, {
+					result = await sdkRequest({ method: request.method, params: outgoing }, ResultSchema, {
 						...sdkOptions,
 						signal: attempt.signal,
 						timeout: Math.min(timeout, remaining),
