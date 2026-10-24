@@ -25,10 +25,9 @@ import {
 } from "@earendil-works/pi-ai";
 import {
 	createTerminalFailureAssistantMessage,
-	demoteToolUseWithoutToolCalls,
 	isStreamIdleTimeoutError,
 	normalizeTerminalAssistantMessage,
-	promoteStopWithPendingToolCalls,
+	settleStopReason,
 	shouldFinalizeIdleAsStop,
 	shouldTerminateAssistantTurn,
 } from "./assistant-terminal-state.ts";
@@ -320,7 +319,7 @@ async function runLoop(
 				withEmptyAssistantRecovery(requestConfig.model, streamFunction),
 				isInitialProviderRequest ? config.timeoutMs : requestConfig.timeoutMs,
 			);
-			const message = demoteToolUseWithoutToolCalls(promoteStopWithPendingToolCalls(streamed.message));
+			const message = streamed.message;
 			const providerToolResults = streamed.providerToolResults;
 			newMessages.push(message);
 			const toolResults: ToolResultMessage[] = [];
@@ -759,7 +758,7 @@ async function streamAssistantResponse(
 
 					case "done":
 					case "error": {
-						const finalMessage = normalizeTerminalAssistantMessage(await result(), event);
+						const finalMessage = settleStopReason(normalizeTerminalAssistantMessage(await result(), event));
 						stampTiming(finalMessage);
 						if (addedPartial) {
 							context.messages[context.messages.length - 1] = finalMessage;
@@ -781,7 +780,7 @@ async function streamAssistantResponse(
 			eventReader.dispose();
 		}
 
-		const finalMessage = await result();
+		const finalMessage = settleStopReason(await result());
 		stampTiming(finalMessage);
 		if (addedPartial) {
 			context.messages[context.messages.length - 1] = finalMessage;
@@ -793,7 +792,7 @@ async function streamAssistantResponse(
 		return { message: finalMessage, providerToolResults };
 	} catch (error) {
 		if (isStreamIdleTimeoutError(error) && shouldFinalizeIdleAsStop(partialMessage, providerToolResults)) {
-			const finalMessage: AssistantMessage = {
+			const finalMessage = settleStopReason({
 				role: "assistant",
 				content: partialMessage?.content ?? [{ type: "text", text: "" }],
 				api: partialMessage?.api ?? config.model.api,
@@ -812,7 +811,7 @@ async function streamAssistantResponse(
 				},
 				stopReason: "stop",
 				timestamp: partialMessage?.timestamp ?? Date.now(),
-			};
+			});
 			stampTiming(finalMessage);
 			if (addedPartial) {
 				context.messages[context.messages.length - 1] = finalMessage;
