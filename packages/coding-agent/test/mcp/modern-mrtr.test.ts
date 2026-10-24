@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { normalizeServer } from "../../src/core/extensions/builtin/mcp/config.ts";
 import { createMcpLogger } from "../../src/core/extensions/builtin/mcp/log.ts";
 import { ServerConnection } from "../../src/core/extensions/builtin/mcp/connection.ts";

@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { type JSONRPCMessage, LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { ServerConnection } from "../../src/core/extensions/builtin/mcp/connection.ts";
 import { installModernRequestAdapter, type MrtrClock } from "../../src/core/extensions/builtin/mcp/modern/request.ts";
 import { createMcpRequestOrigin, mcpRequestOptions } from "../../src/core/extensions/builtin/mcp/request-origin.ts";

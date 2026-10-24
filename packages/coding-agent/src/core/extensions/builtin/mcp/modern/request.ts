@@ -2,7 +2,8 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { AnySchema, SchemaOutput } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { Request } from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod";
+// npm can resolve the SDK against Zod 3 while this package uses Zod 4.
+import { z } from "zod/v3";
 import type { McpElicitationUiProvider } from "../elicitation.ts";
 import { configureMcpElicitation, mcpClientCapabilities } from "../elicitation.ts";
 import { type McpRequestOrigin, physicalMcpClient, takeMcpRequestOrigin } from "../request-origin.ts";
