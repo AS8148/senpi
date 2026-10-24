@@ -1,3 +1,40 @@
+## 2026-10-24 - Fresh standalone CLI sessions accept task ancestry (oh-my-openagent#10782)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: passes ancestry to fresh session creation and warns when session selection ignores it, preserving existing headers and ordinary fork identity.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: lifecycle role is derived from the header before the first prompt.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts`: the session header is created before runtime construction.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: `createSessionManager`.
+
+## 2026-10-24 - Host commands select endpoint credentials without changing the profile (senpi#3815)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-command.ts` and `packages/coding-agent/src/cli/host-session-command.ts`: accept `--rpc-key-root <dir>` and run the host request inside that credential root, so nested probes and ensures authenticate against it. `SENPI_RPC_KEY_ROOT` is the environment default, then the agent dir. Settings, skills, MCP configuration and every other profile input stay the caller's.
+- `packages/coding-agent/src/cli/host-command-args.ts` (new, fork-only): the host argument parser, moved out of `host-command.ts` (which re-exports `parseHostArgs`), with the new flag.
+
+### Why
+
+- `packages/coding-agent/src/cli/host-command.ts`, `packages/coding-agent/src/cli/host-session-command.ts`: a client running under a separate profile must still prove the key of the endpoint it dials.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/cli/host-command.ts`, `packages/coding-agent/src/cli/host-session-command.ts`: host CLI parsing and endpoint startup run before any session extension loads.
+
+### Expected merge conflict zones
+
+- LOW: option parsing, usage text and the runner call in `packages/coding-agent/src/cli/host-command.ts` and `packages/coding-agent/src/cli/host-session-command.ts`.
+
 ## 2026-10-23 - Print formats share the final failure exit status (senpi#4061)
 
 ### What changed

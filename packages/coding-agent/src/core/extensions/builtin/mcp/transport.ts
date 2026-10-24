@@ -38,6 +38,7 @@ export type CreateMcpTransportOptions = {
 	readonly logger: McpLogger;
 	readonly env?: Record<string, string | undefined>;
 	readonly elicitationUiProvider?: McpElicitationUiProvider;
+	readonly elicitationEnabled?: boolean;
 	// Present only when OAuth is the resolved auth mode for this server.
 	readonly authProvider?: McpOAuthProvider;
 	/** Re-reads a declaring server's references for this transport (senpi#3858). */
@@ -158,6 +159,7 @@ function createConnection(
 					materializeNegotiatedTransport(
 						{
 							elicitationUiProvider: options.elicitationUiProvider,
+							elicitationEnabled: options.elicitationEnabled,
 							logger: options.logger,
 							onStart: captureRootPid,
 							sink: asyncErrorSink,

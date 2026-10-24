@@ -1,3 +1,21 @@
+## 2026-10-24 - Claude SDK requests use their session project (senpi#2848)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream.ts`: resident and auxiliary requests, option construction, SDK query dispatch, and lane-settings reads share a strict session-cwd validator. Missing or relative directories fail clearly instead of selecting the host project. Provider registration uses the extension session's directory, and `/btw` and `look_at` forward their context's directory.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream.ts`: the host directory could select another project's Claude Code memory and disagree with the session's compaction-owner policy. Reported by @jaeheungahn in code-yeongyu/oh-my-openagent#11189.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream.ts`: this is the bundled SDK adapter's own query-options construction.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream.ts`: provider settings resolution and `buildAnthropicSubscriptionQueryOptions` arguments.
+
 ## 2026-10-22 - All-accounts refusals are pool verdicts, not auth failures (senpi#2081)
 
 ### What changed

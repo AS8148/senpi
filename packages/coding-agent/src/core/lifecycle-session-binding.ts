@@ -80,11 +80,21 @@ export class LifecycleSessionBinding {
 			if (record.ticketId && (record.state === "consumed" || deliveries.has(record.ticketId)))
 				this.controller.ledger.interrupted = true;
 			if (record.state !== "queued" || !record.payload || !record.ticketId) continue;
+			const ticketId = record.ticketId;
 			const message = { role: "custom" as const, ...record.payload.message, timestamp: 0 };
 			const deliveryId = deliveryIdOf(message);
 			if (deliveryId === undefined) continue;
-			if (deliveries.has(record.ticketId)) session.externalAdmission.observePersisted(message);
-			else session.externalAdmission.restoreQueued(deliveryId);
+			if (deliveries.has(ticketId)) session.externalAdmission.observePersisted(message);
+			else
+				session.externalAdmission.restoreQueued(
+					deliveryId,
+					() =>
+						// Consumption writes the entry before message_end observes it in external admission.
+						session.sessionManager.reduceHistory(lifecycleDeliveryEntries).has(ticketId) ||
+						this.controller.obligations.active.some(
+							(current) => current.ticketId === ticketId && current.state === "queued",
+						),
+				);
 		}
 		this.unsubscribeHuman = bindLifecycleHumanInput(session, (event) => this.controller.humanInput(event.at));
 		this.unsubscribeAdmission = session.externalAdmission.onInputsSettled(() => this.controller.admissionSettled());

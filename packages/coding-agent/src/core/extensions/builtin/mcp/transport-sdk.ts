@@ -12,11 +12,7 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { McpOAuthProvider } from "./auth/oauth-provider.ts";
-import {
-	configureMcpElicitation,
-	MCP_CLIENT_ELICITATION_CAPABILITY,
-	type McpElicitationUiProvider,
-} from "./elicitation.ts";
+import { configureMcpElicitation, type McpElicitationUiProvider, mcpClientCapabilities } from "./elicitation.ts";
 import type { McpLogger } from "./log.ts";
 import { ProjectStdioTransport } from "./project-stdio-transport.ts";
 import { loadMcpSdkClient, loadMcpSdkStdioTransport, loadMcpSdkStreamableHttpTransport } from "./sdk.lazy.ts";
@@ -56,6 +52,7 @@ export interface MaterializeMcpTransportOptions {
 	readonly logger: McpLogger;
 	readonly sink: McpAsyncErrorSink;
 	readonly elicitationUiProvider: McpElicitationUiProvider | undefined;
+	readonly elicitationEnabled?: boolean;
 	/** Invoked once the stdio child has started, so the caller can capture its pid. */
 	readonly onStart: () => void;
 }
@@ -63,7 +60,7 @@ export interface MaterializeMcpTransportOptions {
 export async function materializeMcpTransport(
 	options: MaterializeMcpTransportOptions,
 ): Promise<McpMaterializedTransport> {
-	const client = await buildMcpClient(options.elicitationUiProvider);
+	const client = await buildMcpClient(options.elicitationUiProvider, options.elicitationEnabled);
 	if (options.spec.kind === "stdio") return materializeStdio(options.spec, options, client);
 	return materializeHttp(options.spec, client);
 }
@@ -116,16 +113,19 @@ async function materializeHttp(spec: McpHttpTransportSpec, client: Client): Prom
 	};
 }
 
-async function buildMcpClient(elicitationUiProvider: McpElicitationUiProvider | undefined): Promise<Client> {
+async function buildMcpClient(
+	elicitationUiProvider: McpElicitationUiProvider | undefined,
+	elicitationEnabled = true,
+): Promise<Client> {
 	// Elicitation capability is declared EMPTY on purpose (form mode only;
 	// Spring-AI servers reject richer shapes) and the create-handler is wired
 	// before any connect so mid-call requests never race registration.
 	const { Client: McpClient } = await loadMcpSdkClient();
 	const client = new McpClient(
 		{ name: "senpi-mcp-client", version: "0.0.0" },
-		{ capabilities: MCP_CLIENT_ELICITATION_CAPABILITY },
+		{ capabilities: mcpClientCapabilities(elicitationEnabled) },
 	);
-	await configureMcpElicitation(client, elicitationUiProvider);
+	await configureMcpElicitation(client, elicitationUiProvider, undefined, elicitationEnabled);
 	return client;
 }
 

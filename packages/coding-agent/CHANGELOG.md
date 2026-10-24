@@ -12,6 +12,43 @@
 
 ### Removed
 
+## [2026.10.24-4] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+- `--spawned-by` accepts a JSON object with `parentSessionId`, `rootSessionId`, and `taskId` for fresh standalone child sessions. Malformed values fail before runtime creation; resumed sessions retain their ancestry.
+
+### Changed
+
+### Fixed
+
+- File paths in tool output are clickable links again in VS Code's integrated terminal when `TERM_PROGRAM` is not set there, for example a VS Code terminal connected to WSL. The terminal is now also recognised by `VSCODE_IPC_HOOK_CLI`, which VS Code sets in every integrated terminal. A terminal started from VS Code that sets its own `TERM_PROGRAM` (herdr, for example) is still detected as itself. Inside tmux the tmux check still decides, and `PI_HYPERLINKS=0` still turns links off ([#2826](https://github.com/code-yeongyu/senpi/issues/2826)).
+- Claude subscription sessions use their own project directory for SDK children and project settings instead of the shared engine directory, preventing unrelated project-memory injection and conflicting compaction owners. Thanks @jaeheungahn ([#4181](https://github.com/code-yeongyu/senpi/pull/4181)).
+- Headless MCP sessions answer elicitation with a JSON-RPC processing error without form content or UI calls. Print/json connections no longer advertise elicitation in legacy initialization or modern request metadata; TUI and RPC retain form support ([#4185](https://github.com/code-yeongyu/senpi/issues/4185)).
+- Boolean forms use a cancellable Yes/No selection: a dismissed or automatically cancelled dialog cancels the whole form without field values; an explicit No still accepts a boolean `false`.
+- Dismissing optional fields cancels instead of implicitly submitting an empty form. Forms with no field values require an explicit submission; invalid answers produce a processing error, not a user refusal.
+- Prevent duplicate cross-session delivery entries when a receiver restarts with queued delivery custody.
+- Prevent duplicate cross-session deliveries when a queue is cleared before restored delivery recovery; allow redelivery when custody is released without persistence.
+
+### Removed
+
+## [2026.10.24-3] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+- On macOS and Linux, a public RPC host endpoint (bare `--mode rpc --listen`, the host supervisor, and `senpi host ensure`) now publishes a fresh per-launch key record (`<keyRoot>/rpc/keys/<launch_id>`, a 0600 file in a 0700 directory) and proves it with an HMAC challenge-response carried in the caller's own first `get_protocol_info` frame; first-party clients verify the host's proof before sending any command and then prove the key themselves. This release serves an unauthenticated client with one deprecation line per connection; `SENPI_RPC_REQUIRE_TOKEN=1` refuses it with `auth_required`. The key root defaults to the agent directory and can be pointed elsewhere with `SENPI_RPC_KEY_ROOT` or `--rpc-key-root` without changing the client's profile; it and its `rpc/` directory must be owned by the user with no group or other write access (0755 is accepted) ([#3815](https://github.com/code-yeongyu/senpi/pull/3815))
+- Kimi K3.1 (`k3.1-pro`, `kimi-k3.1-pro` and their Highspeed ids) gets its own `kimi-k3-1` prompt preset, a separate copy of the K3 template; `promptPreset: "kimi-k3-1"` forces it ([#4184](https://github.com/code-yeongyu/senpi/pull/4184))
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.10.24-2] - 2026-10-24
 
 ### Breaking Changes

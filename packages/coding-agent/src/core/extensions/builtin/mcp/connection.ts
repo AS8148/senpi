@@ -39,6 +39,7 @@ export class ServerConnection {
 	readonly #config: ServerConnectionOptions["config"];
 	readonly #authProvider: McpOAuthProvider | undefined;
 	readonly #elicitationUiProvider: ServerConnectionOptions["elicitationUiProvider"];
+	readonly #elicitationEnabled: ServerConnectionOptions["elicitationEnabled"];
 	readonly #resolveConfig: ServerConnectionOptions["resolveConfig"];
 	readonly #projectPolicy: ServerConnectionOptions["projectPolicy"];
 	#policyAbort: AbortController | undefined;
@@ -60,6 +61,7 @@ export class ServerConnection {
 		this.#env = options.env;
 		this.#authProvider = options.authProvider;
 		this.#elicitationUiProvider = options.elicitationUiProvider;
+		this.#elicitationEnabled = options.elicitationEnabled;
 		this.#resolveConfig = options.resolveConfig;
 		this.#projectPolicy = options.projectPolicy;
 		this.#startedGrantNames = options.projectPolicy?.initial.grantedNames ?? [];
@@ -270,6 +272,7 @@ export class ServerConnection {
 							return current;
 						},
 			elicitationUiProvider: this.#elicitationUiProvider,
+			elicitationEnabled: this.#elicitationEnabled,
 			logger: this.#logger,
 			resolveConfig: this.#resolveConfig,
 			serverName: this.serverName,
