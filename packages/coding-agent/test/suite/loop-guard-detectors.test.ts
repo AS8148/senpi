@@ -194,7 +194,6 @@ describe("buildLoopGuardReminder", () => {
 	it("wraps every kind in system-reminder tags with the kind-specific headline", () => {
 		const identical = buildLoopGuardReminder({
 			kind: "identical",
-			windowed: false,
 			toolName: "read",
 			count: 3,
 			fingerprint: "fp",
