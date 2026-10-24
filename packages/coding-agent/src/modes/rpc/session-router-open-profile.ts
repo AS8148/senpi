@@ -1,3 +1,4 @@
+import { isSpawnedBy } from "../../core/session-spawned-by.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 
 import { hostInstanceId } from "./protocol-identity.ts";
@@ -25,18 +26,7 @@ import { error } from "./session-router-errors.ts";
 /** `open_session.spawnedBy` must name the parent, root and task when present; the open answers `invalid_spawned_by` otherwise. */
 export function invalidSpawnedBy(command: Extract<RpcCommand, { type: "open_session" }>): boolean {
 	const ancestry = command.spawnedBy;
-	return (
-		ancestry !== undefined &&
-		(typeof ancestry !== "object" ||
-			ancestry === null ||
-			Array.isArray(ancestry) ||
-			typeof ancestry.parentSessionId !== "string" ||
-			ancestry.parentSessionId.length === 0 ||
-			typeof ancestry.rootSessionId !== "string" ||
-			ancestry.rootSessionId.length === 0 ||
-			typeof ancestry.taskId !== "string" ||
-			ancestry.taskId.length === 0)
-	);
+	return ancestry !== undefined && !isSpawnedBy(ancestry);
 }
 
 export function validatedOpenProfile(
