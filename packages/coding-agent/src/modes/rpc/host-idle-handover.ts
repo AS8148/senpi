@@ -50,6 +50,8 @@ export interface IdleHandoverRequest {
 	/** The complete, already allowlisted daemon environment of the CLI that asked. */
 	readonly env: Readonly<Record<string, string>>;
 	readonly policy?: HostLifecyclePolicyInput;
+	/** The agent dir of the CLI that asked; absent from CLIs before #3560. Another dir than the host's is refused. */
+	readonly agentDir?: string;
 }
 
 export interface HandoverSuccessor {
