@@ -230,5 +230,61 @@ it("the ordering key never reaches the public shape", () => {
 	store.report("anthropic-subscription", "work", { error: "sign-in needed", reportedAt: new Date(at("05")) });
 
 	expect(store.mirrorSnapshot()[0]).toHaveProperty("updatedAt", at("05"));
-	for (const record of [...store.snapshot(), ...heard]) expect(record).not.toHaveProperty("updatedAt");
+	for (const record of [...store.snapshot(), ...heard]) {
+		expect(record).not.toHaveProperty("updatedAt");
+		expect(record).not.toHaveProperty("revision");
+	}
+});
+
+// senpi#3695 (fourth review): a same-instant local write must never make a real poll result look older.
+it("a poll result in the same millisecond as a turn's record still lands and reaches the mirror", () => {
+	const { host, worker, settle } = mirrorPair();
+	const instant = new Date(at("00"));
+	host.report("anthropic-subscription", "work", { windows: base.windows, reportedAt: instant });
+	host.record("anthropic-subscription", "work", [{ ...base.windows[0], usedPercent: 20 }], instant);
+	host.record("anthropic-subscription", "work", [{ ...base.windows[0], usedPercent: 21 }], instant);
+	host.report("anthropic-subscription", "work", { error: "sign-in needed", reportedAt: instant });
+
+	expect(settle()).toBeLessThan(100);
+	expect(host.snapshot()[0]?.error).toBe("sign-in needed");
+	expect(worker.mirrorSnapshot()).toEqual(host.mirrorSnapshot());
+});
+
+it("local writes on both stores while copies are in flight still converge", () => {
+	const writes: ((store: SubscriptionLimitStore) => void)[] = [
+		(store) =>
+			store.record("anthropic-subscription", "work", [{ ...base.windows[0], usedPercent: 30 }], new Date(at("00"))),
+		(store) =>
+			store.record("anthropic-subscription", "work", [{ ...base.windows[0], usedPercent: 31 }], new Date(at("00"))),
+		(store) =>
+			store.report("anthropic-subscription", "work", { error: "rate limited", reportedAt: new Date(at("00")) }),
+		(store) =>
+			store.report("anthropic-subscription", "work", { windows: base.windows, reportedAt: new Date(at("05")) }),
+	];
+	for (const hostWrite of writes) {
+		for (const workerWrite of writes) {
+			const { host, worker, settle } = mirrorPair();
+			host.report("anthropic-subscription", "work", { windows: base.windows, reportedAt: new Date(at("00")) });
+			settle();
+			hostWrite(host);
+			workerWrite(worker);
+
+			expect(settle()).toBeLessThan(100);
+			expect(worker.mirrorSnapshot()).toEqual(host.mirrorSnapshot());
+		}
+	}
+});
+
+it("a failing mirror listener is contained and the public broadcast still runs", () => {
+	const store = new SubscriptionLimitStore();
+	const heard: string[] = [];
+	store.subscribeMirror(() => {
+		throw new Error("closed port");
+	});
+	store.subscribe((limits) => heard.push(limits.account));
+
+	expect(() =>
+		store.report("anthropic-subscription", "work", { windows: base.windows, reportedAt: new Date(at("00")) }),
+	).not.toThrow();
+	expect(heard).toEqual(["work"]);
 });
