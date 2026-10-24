@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- A session on the worker session runtime now sees the same subscription limits as an in-process one: `pi.getSubscriptionLimits()` and `onSubscriptionLimits` read the host's polled records from the start, and limits a turn reports inside the worker reach the host's clients ([#3695](https://github.com/code-yeongyu/senpi/issues/3695)).
 - Concurrent prompts after a pause no longer duplicate held input or discard a newer update. A failed skill preparation no longer blocks later prompts, and a parent pause arriving during a skill read keeps commands and manual continues held until the parent resumes them ([#4047](https://github.com/code-yeongyu/senpi/pull/4047)).
 - Invoking a project skill no longer stalls the other sessions on a shared host while its file is read and checked; the link checks from #3796 are unchanged ([#3796](https://github.com/code-yeongyu/senpi/issues/3796)).
 - An MCP server over HTTP with no saved sign-in no longer freezes the whole process for up to 30 seconds. Each request's synchronous token lookup could spin on the legacy-credential migration lock while the background lookup in the same process held it, so the holder could never release it; tool calls then failed with "MCP metadata was not ready before the request timeout". The lookup now skips the lock when there is nothing to migrate, and the background claim never holds the lock across an await ([#3546](https://github.com/code-yeongyu/senpi/issues/3546)).
@@ -44,7 +45,6 @@
 
 ### Fixed
 
-- A session on the worker session runtime now sees the same subscription limits as an in-process one: `pi.getSubscriptionLimits()` and `onSubscriptionLimits` read the host's polled records from the start, and limits a turn reports inside the worker reach the host's clients ([#3695](https://github.com/code-yeongyu/senpi/issues/3695)).
 - A shared RPC host whose previous generation died is no longer left without an owner: `host status` gives the endpoint back to the one generation it can prove still serves the socket, so `host stop` and `host handoff` no longer refuse `unknown_owner` for a healthy host, and a host that registered while a status read was pruning keeps its registration. `host status --json` reports which generation the pointer names (`pointer.state`: `current`, `elected` or `missing` with the candidates it saw) ([#1911](https://github.com/code-yeongyu/senpi/issues/1911)).
 - On macOS Terminal.app the question hint now says `cmd+r` (toggle mouse reporting) to select text, since Terminal has no drag modifier that bypasses an app's mouse reporting ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
 - An accepted request to continue a session on another computer now tells the agent once if it is cancelled because the app disconnected, the user aborted, or the app withdrew its offer. After an abort, the notice is saved before the next prompt, even if the session closes immediately. The session stays on this computer, and the notice does not start another turn ([#4078](https://github.com/code-yeongyu/senpi/issues/4078)).
