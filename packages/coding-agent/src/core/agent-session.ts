@@ -7688,6 +7688,8 @@ export class AgentSession {
 	}
 
 	refreshLifecycle(): void {
+		// Work aborted by dispose() still unwinds afterwards; its edges must not write to the released session file.
+		if (this._disposed) return;
 		this._lifecycleBinding.controller.recompute();
 	}
 

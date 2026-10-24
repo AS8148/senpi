@@ -88,7 +88,7 @@ The session owns the release array, prompt admission and held-input settlement b
 ### Why
 
 - `packages/coding-agent/src/core/agent-session.ts`: the getter recomputed, so a `get_state` read while a fact had changed without an event (a running user shell command) appended and emitted a lifecycle record. Every fact now raises its own change edge, so a read is a read: the compaction, auto-compaction and branch-summary abort controllers are accessors whose set and clear recompute the lifecycle, so an edge fires after a compaction's `finally` releases it, not only at `compaction_end` (senpi#4120 review).
-- `packages/coding-agent/src/core/session-work-barrier.ts`: the barrier takes an `onActiveChange` callback, called when it starts holding work and when the last holder releases it; `AgentSession` passes `refreshLifecycle`, so work held by the barrier (compaction admission, reload, extension binding, a scheduled continuation) is a lifecycle edge when it begins and ends.
+- `packages/coding-agent/src/core/session-work-barrier.ts`: the barrier takes an `onActiveChange` callback, called when the last holder releases it (not when work starts: every holder that makes the session busy raises its own start edge, and a start edge recomputed during restore); `AgentSession` passes `refreshLifecycle`, so the end of work held by the barrier (compaction admission, reload, extension binding, a scheduled continuation) is a lifecycle edge. `refreshLifecycle` is a no-op after `dispose()`, so work that dispose aborted cannot write a lifecycle record when it unwinds.
 
 ### Why an extension could not handle it
 

@@ -1,5 +1,5 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { Harness } from "../harness.ts";
 import { createBoundLifecycleHarness as createHarness, runToAgentIdle } from "../lifecycle-test-harness.ts";
 
@@ -82,4 +82,36 @@ it("reads running while a branch summary is written and settles when it ends", a
 	releaseSummary();
 	await navigation;
 	expect(h.session.lifecycle.state).toBe("done");
+});
+
+it("writes no lifecycle record after dispose when an in-flight compaction unwinds", async () => {
+	// Given a settled session whose manual compaction is still writing its summary.
+	const h = await settledSession();
+	let releaseSummary!: () => void;
+	const summaryHeld = new Promise<void>((resolve) => {
+		releaseSummary = resolve;
+	});
+	let summaryStarted!: () => void;
+	const started = new Promise<void>((resolve) => {
+		summaryStarted = resolve;
+	});
+	h.setResponses([
+		async () => {
+			summaryStarted();
+			await summaryHeld;
+			return fauxAssistantMessage("Summary of the conversation.");
+		},
+		fauxAssistantMessage("Summary of the turn prefix."),
+	]);
+	const compaction = h.session.compact().catch(() => undefined);
+	await started;
+	const append = vi.spyOn(h.session.sessionManager, "appendCustomEntry");
+
+	// When the session is disposed and the compaction then unwinds.
+	h.session.dispose();
+	releaseSummary();
+	await compaction;
+
+	// Then nothing appended a lifecycle record to the released session file.
+	expect(append.mock.calls.filter(([type]) => type === "session-lifecycle")).toEqual([]);
 });
