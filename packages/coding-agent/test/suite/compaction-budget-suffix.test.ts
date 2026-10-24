@@ -109,14 +109,6 @@ describe("senpi#4161 budget-only compaction recovery", () => {
 						: [],
 				);
 				expect(Math.max(0, ...toolTextSizes)).toBeLessThan(100_000);
-				console.info(
-					"SUMMARY_INPUT",
-					JSON.stringify({
-						messages: summaryCall.context.messages.length,
-						maxToolTextChars: Math.max(0, ...toolTextSizes),
-						totalToolTextChars: toolTextSizes.reduce((total, size) => total + size, 0),
-					}),
-				);
 			}
 			if (execution.error) throw execution.error;
 			const result = execution.result;
@@ -135,16 +127,40 @@ describe("senpi#4161 budget-only compaction recovery", () => {
 		}
 	});
 
-	it("reports dominant rejection counts and first and best candidate sizes", () => {
+	it.each([false, true])("reports budget despite invalid-boundary noise (parallel calls: %s)", (parallel) => {
 		// Given a transcript with no fitting suffix, including a non-message oldest entry.
 		const manager = SessionManager.inMemory();
 		manager.appendModelChange("faux", "large");
 		const firstKeptEntryId = manager.appendMessage({
 			role: "user",
-			content: "log ".repeat(700_000),
+			content: parallel ? "Read the synthetic logs" : "log ".repeat(700_000),
 			timestamp: 1,
 		});
-		manager.appendMessage(fauxAssistantMessage("reply ".repeat(700_000), { timestamp: 2 }));
+		if (parallel) {
+			for (let step = 0; step < 40; step++) {
+				manager.appendMessage({
+					...fauxAssistantMessage("", { stopReason: "toolUse", timestamp: step * 4 + 2 }),
+					content: Array.from({ length: 3 }, (_, call) => ({
+						type: "toolCall" as const,
+						id: `parallel-${step}-${call}`,
+						name: "read",
+						arguments: { path: "fixture.log" },
+					})),
+				});
+				for (let call = 0; call < 3; call++) {
+					manager.appendMessage({
+						role: "toolResult",
+						toolCallId: `parallel-${step}-${call}`,
+						toolName: "read",
+						content: [{ type: "text", text: step === 39 ? "parallel result\n".repeat(100_000) : "done" }],
+						isError: false,
+						timestamp: step * 4 + call + 3,
+					});
+				}
+			}
+		} else {
+			manager.appendMessage(fauxAssistantMessage("reply ".repeat(700_000), { timestamp: 2 }));
+		}
 		const branch = manager.getBranch();
 		const preparation = prepareCompaction(branch, DEFAULT_COMPACTION_SETTINGS, true);
 		if (!preparation) throw new Error("Expected compactable fixture");
@@ -165,12 +181,46 @@ describe("senpi#4161 budget-only compaction recovery", () => {
 		const diagnostic = JSON.parse(formatted.split("\n")[1] ?? "{}");
 
 		// Then a metadata reconstruction failure cannot hide the dominant budget cause.
+		expect(diagnostics.rejectionReason).toBe("retained-token-budget-exceeded");
 		expect(diagnostic.rejectionReason).toBe("retained-token-budget-exceeded");
 		expect(diagnostic.rejectionCounts).toEqual({
-			"retained-token-budget-exceeded": 2,
+			"retained-token-budget-exceeded": parallel ? 41 : 2,
 			"context-reconstruction-failed": 1,
+			...(parallel ? { "atomic-tool-chain-cut": 120 } : {}),
 		});
 		expect(diagnostic.firstCandidate.estimatedTokens).toBeGreaterThan(diagnostic.budgetTokens);
 		expect(diagnostic.bestCandidate.estimatedTokens).toBeLessThan(diagnostic.firstCandidate.estimatedTokens);
+	});
+
+	it("counts each rejected boundary once across latest-user and later-suffix searches", () => {
+		// Given an oversized steering request after the prepared boundary and no fitting suffix.
+		const manager = SessionManager.inMemory();
+		const text = "oversized ".repeat(10_000);
+		const firstKeptEntryId = manager.appendMessage({ role: "user", content: text, timestamp: 0 });
+		manager.appendMessage(fauxAssistantMessage(text, { timestamp: 1 }));
+		manager.appendMessage({ role: "user", content: text, timestamp: 2 });
+		manager.appendMessage(fauxAssistantMessage(text, { timestamp: 3 }));
+		const branch = manager.getBranch();
+		const preparation = prepareCompaction(branch, DEFAULT_COMPACTION_SETTINGS, true);
+		if (!preparation) throw new Error("Expected compactable fixture");
+		const diagnostics: DeterministicFallbackDiagnostic = {};
+
+		// When both search passes visit the boundaries before the newest request.
+		expect(
+			createRequiredCompactionFallback(
+				{ ...preparation, firstKeptEntryId },
+				10_000,
+				"summarization-provider-failure",
+				{},
+				branch,
+				diagnostics,
+			),
+		).toBeUndefined();
+
+		// Then the diagnostic describes unique attempted suffixes, not loop iterations.
+		const rejectedIds = diagnostics.candidateRejections?.map((candidate) => candidate.firstKeptEntryId) ?? [];
+		expect(rejectedIds).toHaveLength(branch.length);
+		expect(new Set(rejectedIds).size).toBe(rejectedIds.length);
+		expect(diagnostics.candidatesChecked).toBe(branch.length);
 	});
 });

@@ -44,6 +44,16 @@ export type DeterministicFallbackRejectionReason =
 	| "atomic-tool-chain-cut"
 	| "context-reconstruction-failed";
 
+// A budget rejection reached a replay-safe, atomic candidate. Invalid cut points
+// must not outvote that actionable constraint just because a tool batch is wide.
+const REJECTION_REASON_PRIORITY = {
+	"missing-preparation-boundary": 0,
+	"context-reconstruction-failed": 1,
+	"atomic-tool-chain-cut": 2,
+	"unsafe-retained-content": 3,
+	"retained-token-budget-exceeded": 4,
+} satisfies Record<DeterministicFallbackRejectionReason, number>;
+
 interface DeterministicFallbackDetails {
 	schema: "senpi.compaction.deterministic-fallback.v1";
 	origin: "required-compaction-recovery";
@@ -90,7 +100,9 @@ export function formatRequiredCompactionFallbackRejection(
 		rejectionCounts.set(candidate.rejectionReason, (rejectionCounts.get(candidate.rejectionReason) ?? 0) + 1);
 	}
 	const reason =
-		[...rejectionCounts].sort((left, right) => right[1] - left[1])[0]?.[0] ??
+		[...rejectionCounts].sort(
+			(left, right) => REJECTION_REASON_PRIORITY[right[0]] - REJECTION_REASON_PRIORITY[left[0]],
+		)[0]?.[0] ??
 		diagnostics.rejectionReason ??
 		"context-reconstruction-failed";
 	const bestCandidate = candidates
@@ -294,7 +306,7 @@ export function createRequiredCompactionFallback(
 	let candidateCount = 0;
 	let sawUnsafeRetainedContent = false;
 	let sawRetainedBudgetExceeded = false;
-	const rejectionCounts = new Map<DeterministicFallbackRejectionReason, number>();
+	const checkedEntryIds = new Set<string>();
 
 	const syntheticCompaction: CompactionEntry = {
 		type: "compaction",
@@ -437,6 +449,8 @@ export function createRequiredCompactionFallback(
 		firstKeptEntryId: string,
 		retainedSuffix: NonNullable<DeterministicFallbackDetails["retainedSuffix"]>,
 	): CompactionResult<DeterministicFallbackDetails> | undefined => {
+		if (checkedEntryIds.has(firstKeptEntryId)) return undefined;
+		checkedEntryIds.add(firstKeptEntryId);
 		candidateCount++;
 		const details = { ...baseDetails, retainedSuffix };
 		const reject = (
@@ -447,9 +461,10 @@ export function createRequiredCompactionFallback(
 			> = {},
 		): undefined => {
 			if (diagnostics) {
-				const count = (rejectionCounts.get(rejectionReason) ?? 0) + 1;
-				rejectionCounts.set(rejectionReason, count);
-				if (!diagnostics.rejectionReason || count > (rejectionCounts.get(diagnostics.rejectionReason) ?? 0)) {
+				if (
+					!diagnostics.rejectionReason ||
+					REJECTION_REASON_PRIORITY[rejectionReason] > REJECTION_REASON_PRIORITY[diagnostics.rejectionReason]
+				) {
 					diagnostics.rejectionReason = rejectionReason;
 				}
 				diagnostics.contextWindow = contextWindow;
