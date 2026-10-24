@@ -170,7 +170,8 @@ it("writes nothing after dispose through any lifecycle write path, including a r
 	harnesses.push(reopened);
 
 	// When both sessions are disposed and every write path then runs: the deferred-turn idle, the agent_end turn end,
-	// a human input, a run start, a child report, a new obligation, and a restore that was already under way.
+	// a human input, a run start, the queued delivery being consumed, a child report, a new obligation, and a restore
+	// that was already under way.
 	const binding = bindingOf(h);
 	const restoring = bindingOf(reopened).restore();
 	h.session.dispose();
@@ -181,6 +182,14 @@ it("writes nothing after dispose through any lifecycle write path, including a r
 	await binding.turnEnded({ type: "agent_end", messages: [] });
 	binding.controller.humanInput(new Date().toISOString());
 	binding.controller.startRun("automatic");
+	binding.consume({
+		role: "custom",
+		customType: "omo-senpi:wake",
+		content: "Task finished",
+		display: false,
+		details: { ticketId: ticket },
+		timestamp: Date.now(),
+	});
 	h.session.reportChildLifecycle({
 		taskId: "task-1",
 		childSessionId: "child-1",
