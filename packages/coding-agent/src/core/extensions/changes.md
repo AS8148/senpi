@@ -73,24 +73,6 @@
 
 - `packages/coding-agent/src/core/extensions/types.ts`, `packages/coding-agent/src/core/extensions/runner.ts`: the `ExtensionContext`/`ExtensionContextActions` members and the event union; the context-action binding in the runner.
 
-## 2026-10-22 - Extensions cannot open engine custody keys (senpi#3986)
-
-### What changed
-
-- `packages/coding-agent/src/core/extensions/lifecycle-api.ts`: `pi.lifecycle.obligations.open` and a token's `transfer` refuse keys under `delivery:` or `wake-source:` with a typed `ReservedCustodyKey` error; the engine's own calls are unaffected.
-
-### Why
-
-- `packages/coding-agent/src/core/extensions/lifecycle-api.ts`: the engine identifies its delivery tickets and wake sources by those prefixes, so an extension ticket under them would be cancelled on a queue clear or retired as a stale wake source.
-
-### Why an extension could not handle it
-
-- `packages/coding-agent/src/core/extensions/lifecycle-api.ts`: the guard sits on the extension API itself; an extension cannot restrict what other extensions pass to `pi.lifecycle.obligations`.
-
-### Expected merge conflict zones
-
-- `packages/coding-agent/src/core/extensions/lifecycle-api.ts`: `createLifecycleApi` now wraps `obligations`; upstream changes to that factory need the wrapper kept.
-
 ## 2026-10-19 - session_move_export and session_move_import events (senpi#3676)
 
 ### What changed

@@ -198,25 +198,6 @@ Skill path collection and metadata in `package-manager.ts` and `resource-loader.
 
 - `agent-session.ts` (`stop`, `prompt`, `resumeSession`, the wake gate in `sendCustomMessage`, `_admitItemized`, the `message_end` persistence block), `engine-turn-hold-notices.ts` (`noteItems`, the `session-notice` replay, `messages`, `consume`), `engine-turn-hold.ts` (kinds, causes, `isHeld`, `addHold`/`release` event pairing, `releaseAll`), `engine-turn-limit.ts` (`isUserDirectedTurn`), extension `types.ts`/`runner.ts` (context actions).
 
-## 2026-10-22 - One home for the engine custody key prefixes (senpi#3986)
-
-### What changed
-
-- `packages/coding-agent/src/core/work-obligations.ts`: `ENGINE_DELIVERY_KEY_PREFIX`, `WAKE_SOURCE_KEY_PREFIX` and `ENGINE_CUSTODY_KEY_PREFIXES` are defined here and used by `syncSource`, the restored-source sweep and `agent-session.ts`.
-- `packages/coding-agent/src/core/agent-session.ts`: the clear/abort doc block sits on `_releaseQueuedDeliveries` again.
-
-### Why
-
-- `packages/coding-agent/src/core/work-obligations.ts`: the extension API guard needs the same prefixes the engine matches on.
-
-### Why an extension could not handle it
-
-- `packages/coding-agent/src/core/work-obligations.ts`: the prefixes are engine custody identity; only the core can define and match them.
-
-### Expected merge conflict zones
-
-- `packages/coding-agent/src/core/agent-session.ts`: the `ENGINE_DELIVERY_KEY_PREFIX` import and the `_isEngineDelivery` / `_releaseQueuedDeliveries` block order.
-
 ## 2026-10-19 - Extension state follows a moved session (senpi#3676)
 
 ### What changed

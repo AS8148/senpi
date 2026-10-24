@@ -1,21 +1,3 @@
-## 2026-10-22 - Export the reserved custody key error (senpi#3986)
-
-### What changed
-
-- `packages/coding-agent/src/index.ts`: exports `ReservedCustodyKey`, the error `pi.lifecycle.obligations` throws for a key under an engine prefix.
-
-### Why
-
-- `packages/coding-agent/src/index.ts`: extensions need the class to catch the refusal by type.
-
-### Why an extension could not handle it
-
-- `packages/coding-agent/src/index.ts`: an extension can only import what the package exports.
-
-### Expected merge conflict zones
-
-- `packages/coding-agent/src/index.ts`: the export line after the `session-lifecycle-types.ts` export block.
-
 ## 2026-10-22 - `--rebind` reads the session's recorded cwd asynchronously (senpi#3676)
 
 ### What changed
