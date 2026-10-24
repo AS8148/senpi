@@ -1,7 +1,8 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
 import type { LifecycleSessionBinding } from "../../../src/core/lifecycle-session-binding.ts";
-import type { Harness } from "../harness.ts";
+import { SessionManager } from "../../../src/core/session-manager.ts";
+import { createHarness as createUnboundHarness, type Harness } from "../harness.ts";
 import { createBoundLifecycleHarness as createHarness, runToAgentIdle } from "../lifecycle-test-harness.ts";
 
 // senpi#4120 review: the lifecycle is no longer recomputed on read, so every fact that clears must raise its own
@@ -117,10 +118,32 @@ it("writes no lifecycle record after dispose when an in-flight compaction unwind
 	expect(append.mock.calls.filter(([type]) => type === "session-lifecycle")).toEqual([]);
 });
 
-it("writes no lifecycle or custody record after dispose through the idle and turn-end paths", async () => {
-	// Given a session whose run is in flight, waiting on its model reply.
-	const h = await createHarness();
+function spyWrites(manager: SessionManager) {
+	return [
+		vi.spyOn(manager, "appendCustomEntry"),
+		vi.spyOn(manager, "appendMessage"),
+		vi.spyOn(manager, "appendCustomMessageEntry"),
+	];
+}
+
+function writeCount(spies: ReturnType<typeof spyWrites>): number {
+	return spies.reduce((sum, spy) => sum + spy.mock.calls.length, 0);
+}
+
+function bindingOf(h: Harness): LifecycleSessionBinding {
+	return (h.session as unknown as { _lifecycleBinding: LifecycleSessionBinding })._lifecycleBinding;
+}
+
+it("writes nothing after dispose through any lifecycle write path, including a restore that finishes after it", async () => {
+	// Given a live session whose run is in flight, and a persisted session with a queued delivery to restore.
+	const h = await createHarness({ persistSession: true });
 	harnesses.push(h);
+	const ticket = h.session.workObligations.open("result:queued", "children").ticket();
+	h.session.workObligations.queue(ticket, {
+		message: { customType: "omo-senpi:wake", content: "Task finished", display: false },
+		deliverAs: "followUp",
+	});
+	h.session.workObligations.endDelivery(ticket);
 	let releaseReply!: () => void;
 	const replyHeld = new Promise<void>((resolve) => {
 		releaseReply = resolve;
@@ -138,20 +161,36 @@ it("writes no lifecycle or custody record after dispose through the idle and tur
 	]);
 	void h.session.prompt("Request").catch(() => undefined);
 	await started;
-	const binding = (h.session as unknown as { _lifecycleBinding: LifecycleSessionBinding })._lifecycleBinding;
+	const file = h.sessionManager.getSessionFile();
+	if (!file) throw new Error("A persisted session file is required");
+	// Not bound yet: its restore starts below, and dispose() lands while it reads the goal facts.
+	const reopened = await createUnboundHarness({ siblingOf: h, sessionManager: SessionManager.open(file) });
+	harnesses.push(reopened);
 
-	// When the session is disposed and the run's end then reaches the two older write paths: the deferred-turn idle
-	// (controller.idle) and the extension agent_end (binding.turnEnded).
+	// When both sessions are disposed and every write path then runs: the deferred-turn idle, the agent_end turn end,
+	// a human input, a run start, a child report, a new obligation, and a restore that was already under way.
+	const binding = bindingOf(h);
+	const restoring = bindingOf(reopened).restore();
 	h.session.dispose();
-	const append = vi.spyOn(h.session.sessionManager, "appendCustomEntry");
+	reopened.session.dispose();
+	const liveWrites = spyWrites(h.session.sessionManager);
+	const restoreWrites = spyWrites(reopened.session.sessionManager);
 	binding.controller.idle();
 	await binding.turnEnded({ type: "agent_end", messages: [] });
+	binding.controller.humanInput(new Date().toISOString());
+	binding.controller.startRun("automatic");
+	h.session.reportChildLifecycle({
+		taskId: "task-1",
+		childSessionId: "child-1",
+		runEpoch: 1,
+		generation: 1,
+		state: "running",
+	});
+	h.session.workObligations.open("result:late", "children");
+	await restoring;
 	releaseReply();
 
-	// Then nothing appended a lifecycle, child or custody record to the released session file.
-	expect(
-		append.mock.calls.filter(
-			([type]) => type === "session-lifecycle" || type === "work-custody" || type === "child-lifecycle",
-		),
-	).toEqual([]);
+	// Then neither released session file received a single append.
+	expect(writeCount(liveWrites)).toBe(0);
+	expect(writeCount(restoreWrites)).toBe(0);
 });
