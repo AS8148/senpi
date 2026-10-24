@@ -96,6 +96,7 @@ export class LifecycleSessionBinding {
 
 	prepareRun(): void {
 		this.nextRunOrigin = this.controller.nextRunOrigin;
+		this.controller.noteRunAdmitted();
 	}
 
 	get isRestored(): boolean {
