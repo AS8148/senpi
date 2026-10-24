@@ -1,24 +1,3 @@
-## 2026-10-21 - Overflowed routing handles refuse reattachment and queue accounting stays linear (senpi#3913)
-
-### What changed
-
-- `session-event-writer.ts`, `session-record-accounting.ts`: linked-queue mutations keep running record and UTF-8 byte totals, including replacement, delta demotion/merge, unlink and in-flight draining. Capacity checks no longer walk or serialize the retained queue.
-- `session-router-open.ts`, `session-router-routing.ts`: an open that would reattach to a sealed handle releases only its new attachment and returns `session_output_overflow` with `errorCode` and `errorData { sessionId, sessionPath, action: "unload_and_reopen" }`. Commands on a still-open sealed handle return the same typed refusal through host control output. The existing `unload_session` path remains available, with its ordinary active-work/attachment protections, followed by a fresh `open_session` by path.
-- A close response admitted after a seal is still delivered, without repeating the terminal lifecycle record.
-
-### Why
-
-An unattached synchronous burst repeatedly serialized every retained record, blocking the shared loop quadratically. Overflow sealed only the writer, leaving the retained runtime routable but unable to deliver responses. Lost output cannot be reconstructed safely by clearing that seal; explicit unload/reopen preserves the transcript without silently claiming a complete event stream.
-
-### Why an extension could not handle it
-
-Queue capacity and routing admission belong to the RPC host, outside extension delivery.
-
-### Expected merge conflict zones
-
-- `session-event-writer.ts`: queue mutation calls and accounting getters.
-- `session-router-open.ts`, `session-router-routing.ts`: open admission and session command dispatch.
-
 ## 2026-10-23 - A pruned dead pointer leaves the live generation owned (senpi#1911)
 
 ### What changed
