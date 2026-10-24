@@ -58,30 +58,6 @@ The session owns the release array, prompt admission and held-input settlement b
 
 - LOW: `modelFromJson`'s signature and `cost` line, the `config.models` upsert call, and the `hideFree` filter in `provider-composer.ts`; the `combineUsage` return in `usage-totals.ts`.
 
-## 2026-10-24 - A cleared queued itemized message settles its sends (senpi#4106)
-
-### What changed
-
-- `packages/coding-agent/src/core/agent-session.ts`: `clearQueue` takes the persist watcher of every queued message it removes and fails it with `QueuedDeliveryCleared`. The watcher map holds the narrower `PersistWatcher`, and `_joinPersistWatcher` no longer builds a `droppedByAbort` branch nothing could call.
-- `packages/coding-agent/src/core/itemized-send.ts`: adds `PersistWatcher` and the `QueuedDeliveryCleared` error (with the batch's `itemIds`).
-
-- `packages/coding-agent/src/core/agent-session.ts` (senpi#4125 review): `_settleRemovedCarriers` fails the persist watchers of every removed queued message; `clearQueue` and `_retireLifecycleDelivery` (an abort during a re-send) both use it, so no send waits on a message that will never be written. `_deliverCustomMessage` never writes a re-send that found the ticket's carrier queued and lost it while it waited: if the running turn wrote the carrier, the re-send settles with that entry (`_writtenTicketEntries`, kept only while a re-send that joined the carrier is in flight, counted in `_carrierJoiners`, so it never grows past the live re-sends); if a clear or retire removed it, the re-send is not written either: an itemized one settles as `QueuedDeliveryCleared`, a plain one has no receipt.
-
-### Why
-
-- `packages/coding-agent/src/core/agent-session.ts`: a watcher settled only when its message was written or its write failed, so a queued itemized message removed by `clearQueue` left the send, and every re-send joined to it, waiting forever. Watchers in the map are only ever settled through `persisted` or `failed`, so the joined `droppedByAbort` was dead code.
-- `packages/coding-agent/src/core/itemized-send.ts`: the producer needs a distinct, typed outcome for "removed before written".
-
-### Why an extension could not handle it
-
-- `packages/coding-agent/src/core/agent-session.ts`: the queue and the persist watchers are session core state.
-- `packages/coding-agent/src/core/itemized-send.ts`: the error is part of the core itemized-send contract.
-
-### Expected merge conflict zones
-
-- `packages/coding-agent/src/core/agent-session.ts`: the itemized-send import, `_persistWatchers`, `_joinPersistWatcher`, `_takePersistWatcher`, and the queue drain in `clearQueue`.
-- `packages/coding-agent/src/core/itemized-send.ts`: the new exports above `itemNoticeMessage`.
-
 ## 2026-10-24 - A re-send of a queued ticket with other items is refused (senpi#4106)
 
 ### What changed

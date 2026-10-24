@@ -14,7 +14,6 @@
 
 ### Fixed
 
-- When `clearQueue` removes a queued itemized `sendMessage` before it is written, the send and any re-send joined to it now reject with `QueuedDeliveryCleared` instead of never settling ([#4106](https://github.com/code-yeongyu/senpi/issues/4106)).
 - An itemized `sendMessage` that re-sends a delivery ticket whose message is still queued, with different items, is now rejected with `DeliveryTicketRefused` (`reason: "different_items"`) instead of receiving receipts for items that were never written; the queued message keeps its first content ([#4106](https://github.com/code-yeongyu/senpi/issues/4106)).
 - A session move on a shared RPC host no longer blocks every other session while it copies, removes or scans the session: export, finish, import and the rebind an import commits through read the session, copy it and its resident blobs, and clean up bundles with asynchronous I/O, and the rebind reads only the header line where only the header is needed. A session path that is slow to resolve (for example on a stalled network mount) no longer delays moves of other sessions ([#3676](https://github.com/code-yeongyu/senpi/issues/3676)).
 - Concurrent prompts after a pause no longer duplicate held input or discard a newer update. A failed skill preparation no longer blocks later prompts, and a parent pause arriving during a skill read keeps commands and manual continues held until the parent resumes them ([#4047](https://github.com/code-yeongyu/senpi/pull/4047)).
