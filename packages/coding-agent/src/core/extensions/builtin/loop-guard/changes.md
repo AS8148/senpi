@@ -40,10 +40,11 @@
   (`policy.ts MUTATING_TOOL_NAMES`: edit/write/apply_patch/bash/bash_input/powershell/
   eval/generate_image/todo_write) runs in between, so a routine edit->test loop never
   arms (its identical test reruns are separated by edits) while the eval/todo loop from
-  senpi#3629 still escalates. `NoticeGate` entries are keyed by kind+fingerprint and
-  `detectLoop` keeps a windowed entry active while its fingerprint is anywhere over
-  threshold, so the 8 -> 16 doubling holds across filler records and two interleaved
-  loops throttle independently. Windowed episodes live per fingerprint in
+  senpi#3629 still escalates. NoticeGate keys split consecutive from windowed
+  (`kind:c` vs `kind:w`): a windowed entry survives filler records while its fingerprint
+  is anywhere over the windowed threshold (8 -> 16 doubling holds), while a consecutive
+  entry expires on any break exactly as before this PR, so a burst, edit, new-run still
+  notifies at 3 and blocks at 7 (round-5 pin test). Windowed episodes live per fingerprint in
   `escalation.ts` (a map), so two parallel identical-repeat loops each block instead of
   alternating one episode slot; age-out clears an episode when its mutation-aware count
   drops below the threshold and releases the recovery/hold state when none remain.
@@ -51,10 +52,10 @@
   period-2-alternation gate churn that emitted a notice on almost every call.
   The windowed reminder claims only what the counter guarantees: repeats with no
   state-changing call in between could not observe anything new.
-- Measured ladder (all suites 2026-10-23): windowed notices at the 8th and 16th repeat,
-  block on the next identical attempt, hard stop after three blocked attempts; the
-  cycle advisory doubles at 3/6/12/24 repetitions and saturates at 32; a 60-round
-  dual-identical stream produces 8 notices (was 115 pre-fix), 3+ blocks, one abort.
+- Measured ladder (74/74 across the nine loop-guard suites, 2026-10-24): windowed
+  notices at the 8th and 16th repeat, block on the next identical attempt, hard stop
+  after three blocked attempts; the consecutive ladder keeps base timing (burst, edit,
+  new run: notices at 3, blocks at 7); click→screenshot and edit→test loops never arm.
 - Expected merge conflict zones: MEDIUM in `detectors.ts` (detection union) and
   `escalation.ts` (episode shape); LOW in `policy.ts`, `index.ts`, `notice.ts`,
   `renderer.ts`, and the two test files; NONE in public extension APIs.

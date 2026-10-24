@@ -202,7 +202,12 @@ export class NoticeGate {
 	private entries = new Map<string, GateEntry>();
 
 	private static key(detection: LoopGuardDetection): string {
-		return `${detection.kind}\u0000${detection.fingerprint}`;
+		// Windowed and consecutive detections of one signature throttle separately:
+		// a windowed entry must survive filler calls (its count keeps growing), while
+		// a consecutive entry must expire on any break so a new run notifies at 3 again
+		// (senpi#3641 review round 5: sharing one key delayed the consecutive ladder).
+		const windowed = detection.kind === "identical" && detection.windowed;
+		return `${detection.kind}:${windowed ? "w" : "c"}\u0000${detection.fingerprint}`;
 	}
 
 	admit(detection: LoopGuardDetection): boolean {
@@ -247,20 +252,15 @@ export function detectLoop(records: readonly ToolCallRecord[], gate: NoticeGate)
 	];
 	const active = new Set<string>();
 	for (const detection of detections) {
-		if (detection !== undefined) active.add(`${detection.kind}\u0000${detection.fingerprint}`);
+		if (detection !== undefined) active.add(NoticeGate.key(detection));
 	}
-	// Gate entries must survive the filler calls between repeats, or a recurring
-	// short identical burst re-creates its entry every time and notices on every
-	// burst: a windowed entry stays active while its mutation-aware count is over
-	// the windowed threshold, and an identical entry while its raw in-window
-	// occurrence count is over the consecutive threshold.
-	const rawCounts = new Map<string, number>();
-	for (const record of records) rawCounts.set(record.signature, (rawCounts.get(record.signature) ?? 0) + 1);
+	// Only a WINDOWED entry survives the filler calls between repeats (its count keeps
+	// growing across them); a consecutive entry must expire on any break so a new run
+	// of the same call notifies at the consecutive threshold again, exactly as before
+	// this PR (review round 5: a raw-count retention for consecutive entries delayed
+	// the existing ladder's second notice from 3 to 6+).
 	for (const fingerprint of windowedOverThreshold(records)) {
-		active.add(`identical\u0000${fingerprint}`);
-	}
-	for (const [fingerprint, count] of rawCounts) {
-		if (count >= IDENTICAL_RUN_THRESHOLD) active.add(`identical\u0000${fingerprint}`);
+		active.add(`identical:w\u0000${fingerprint}`);
 	}
 	gate.prune(active);
 	for (const detection of detections) {

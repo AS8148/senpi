@@ -30,7 +30,7 @@ export const WINDOWED_REPEAT_THRESHOLD = 8;
 /** Tools that never change observable state, so repeats between them can only be re-reading the same answer.
  * The default is the opposite: any tool NOT on this list (computer, MCP/browser tools, task*, unknown extensions)
  * is treated as able to change something, so it resets the windowed count (senpi#3641 review round 4).
- * The todo tool is deliberately INCLUDED here as read-only: #3629's loop interleaved todo views with identical eval
+ * The todo tool is deliberately INCLUDED here as read-only (goal/continuation.ts treats todo as mutating for its own progress check — that asymmetry is intentional, loop-guard wants the #3629 interleave to count): #3629's loop interleaved todo views with identical eval
  * calls, and the eval call is the state-changer that counts; a todo view between two identical polls is not new state. */
 export const OBSERVING_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"read",
@@ -42,7 +42,6 @@ export const OBSERVING_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"webfetch",
 	"web_search",
 	"bash_output",
-	"task_output",
 	"lsp_diagnostics",
 	"lsp_symbols",
 	"lsp_goto_definition",

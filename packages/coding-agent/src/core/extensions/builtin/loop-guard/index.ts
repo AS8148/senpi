@@ -85,7 +85,7 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 		const record = tracker.record(event.toolName, event.args);
 		ageOutWindowedEpisodes();
 		const patternChanged = escalation.observeAttempt(event.toolCallId, record);
-		if (patternChanged) {
+		if (patternChanged && !escalation.hasActiveEpisodes()) {
 			pendingRecoveryToolName = undefined;
 			setRecoveryWakeSourceActive(false);
 			setContinuationHoldActive(false);

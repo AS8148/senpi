@@ -106,3 +106,28 @@ describe("buildLoopGuardReminder windowed identical", () => {
 		expect(reminder).not.toContain("in a row");
 	});
 });
+
+describe("consecutive ladder pin (main timing)", () => {
+	it("burst, edit, new consecutive run still notices at the consecutive threshold", () => {
+		const gate = new NoticeGate();
+		const readA = () => rec("read", { path: "a.ts" });
+		const edit = (i: number) => rec("edit", { path: "b.ts", n: i });
+		const stream: ToolCallRecord[] = [];
+		const admitted: number[] = [];
+		const drive = (record: ToolCallRecord): void => {
+			stream.push(record);
+			const detection = detectLoop(stream, gate);
+			if (detection?.kind === "identical" && !detection.windowed) admitted.push(detection.count);
+		};
+		// first burst: notify at run 3
+		for (let i = 0; i < 3; i++) drive(readA());
+		expect(admitted.length).toBe(1);
+		expect(admitted[0]).toBe(3);
+		// state-changing separator
+		drive(edit(1));
+		// new consecutive run of the same call: must notify at 3 again (base behavior)
+		for (let i = 0; i < 3; i++) drive(readA());
+		expect(admitted.length).toBe(2);
+		expect(admitted[1]).toBe(3);
+	});
+});
