@@ -85,7 +85,7 @@ const echoTool = {
 /** The exact composition model-runtime applies to every provider stream. */
 const residentStreamFn: StreamFn = (model, context, options) =>
 	wrapStreamWithModelRecovery(
-		streamAnthropicSubscription(model, context, options),
+		streamAnthropicSubscription(model, context, { cwd: process.cwd(), ...options }),
 		model,
 		getCurrentTools(context.messages),
 	);
