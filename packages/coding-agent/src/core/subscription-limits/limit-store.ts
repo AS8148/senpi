@@ -25,12 +25,17 @@ export interface AccountLimits {
 
 /**
  * A record as the stores of one process's isolates mirror it to each other (senpi#3695). `updatedAt` is when the
- * record last changed, set only when that differs from `reportedAt` (a failed poll adds an error beside the last
- * windows, which keep their time). It orders mirrored copies and never leaves the mirror: `snapshot()` and
- * `subscribe()` hand out the public shape.
+ * record last really changed, set only when that differs from `reportedAt` (a failed poll adds an error beside the
+ * last windows, which keep their time). With `revision` it orders mirrored copies; neither leaves the mirror:
+ * `snapshot()` and `subscribe()` hand out the public shape.
  */
 export interface MirroredLimits extends AccountLimits {
 	readonly updatedAt?: string;
+	/**
+	 * How many local writes landed at the same `updatedAt ?? reportedAt` instant before this one, so a same-instant
+	 * write still orders after the record it replaces. Absent means 0. The time stays the real change time.
+	 */
+	readonly revision?: number;
 }
 
 /** What one usage-endpoint poll learned about an account: its full window set, or why it could not ask. */
@@ -73,10 +78,19 @@ export class SubscriptionLimitStore {
 		const key = `${provider}\u0000${account}`;
 		const previous = this.#accounts.get(key);
 		const reportedAt = report.reportedAt.toISOString();
-		if (previous !== undefined && reportedAt < orderOf(previous)) return;
+		if (previous !== undefined && reportedAt < changedAtOf(previous)) return;
 		if ("error" in report) {
 			if (previous?.error === report.error) return;
-			const { updatedAt: _previousOrder, ...base } = previous ?? { provider, account, windows: [], reportedAt };
+			const {
+				updatedAt: _changedAt,
+				revision: _revision,
+				...base
+			} = previous ?? {
+				provider,
+				account,
+				windows: [],
+				reportedAt,
+			};
 			this.#write(key, previous, { ...base, error: report.error }, reportedAt);
 			return;
 		}
@@ -100,13 +114,9 @@ export class SubscriptionLimitStore {
 	}
 
 	/**
-	 * The mirror's rule (senpi#3695): a copy replaces the held record only when it is strictly later in the total
-	 * order (when it last changed, then its content), so two stores that see the same records keep the same one.
-	 */
-	/**
-	 * A write from this store's own turn or poll always lands: it is ordered strictly after the held record
-	 * (when `changedAt` does not already come later, by one millisecond past it), so a same-instant write is
-	 * never mistaken for an older one, and a mirrored store takes it by the same total order.
+	 * A write from this store's own turn or poll always lands: it orders strictly after the held record. A later
+	 * `changedAt` does that by time; at the same instant (or a clock that reads earlier) the time stays the held
+	 * record's real change time and `revision` counts up, so a mirrored store takes it by the same total order.
 	 */
 	#write(
 		key: string,
@@ -114,10 +124,21 @@ export class SubscriptionLimitStore {
 		limits: AccountLimits,
 		changedAt = limits.reportedAt,
 	): void {
-		const order = previous === undefined ? changedAt : strictlyAfter(changedAt, orderOf(previous));
-		this.#publish(key, order === limits.reportedAt ? limits : { ...limits, updatedAt: order });
+		const held = previous === undefined ? undefined : changedAtOf(previous);
+		const later = held === undefined || changedAt > held;
+		const time = later ? changedAt : held;
+		const revision = later ? 0 : (previous?.revision ?? 0) + 1;
+		this.#publish(key, {
+			...limits,
+			...(time === limits.reportedAt ? {} : { updatedAt: time }),
+			...(revision === 0 ? {} : { revision }),
+		});
 	}
 
+	/**
+	 * The mirror's rule (senpi#3695): a copy replaces the held record only when it is strictly later in the total
+	 * order (change time, then revision, then content), so two stores that see the same records keep the same one.
+	 */
 	#offer(key: string, limits: MirroredLimits): void {
 		const previous = this.#accounts.get(key);
 		if (previous !== undefined && compareRecords(limits, previous) <= 0) return;
@@ -126,13 +147,16 @@ export class SubscriptionLimitStore {
 
 	#publish(key: string, limits: MirroredLimits): void {
 		this.#accounts.set(key, limits);
-		for (const listener of this.#mirrorListeners) listener(limits);
+		// A listener (a client broadcast or the isolate mirror) failing must never reach the provider response this
+		// runs inside, so each failure is reported and contained here.
 		const shown = publicShape(limits);
-		// A listener is a broadcast to clients: its failure (a closed sink) must never reach the provider
-		// response this runs inside, so it is reported and contained here.
-		for (const listener of this.#listeners) {
+		const calls: (() => void)[] = [
+			...[...this.#mirrorListeners].map((listener) => () => listener(limits)),
+			...[...this.#listeners].map((listener) => () => listener(shown)),
+		];
+		for (const call of calls) {
 			try {
-				listener(shown);
+				call();
 			} catch (error) {
 				process.stderr.write(`senpi subscription limits: a listener failed: ${String(error)}\n`);
 			}
@@ -160,23 +184,22 @@ export class SubscriptionLimitStore {
 	}
 }
 
-function orderOf(limits: MirroredLimits): string {
+/** When the record last really changed: never bumped, so a poll compares against a real time. */
+function changedAtOf(limits: MirroredLimits): string {
 	return limits.updatedAt ?? limits.reportedAt;
 }
 
-/** The total order every store applies: when the record last changed, then its key-sorted content. */
+/** The total order every store applies: change time, then revision, then key-sorted content. */
 function compareRecords(a: MirroredLimits, b: MirroredLimits): number {
-	const [first, second] = [orderOf(a), orderOf(b)];
+	const [first, second] = [changedAtOf(a), changedAtOf(b)];
 	if (first !== second) return first < second ? -1 : 1;
+	const [firstRevision, secondRevision] = [a.revision ?? 0, b.revision ?? 0];
+	if (firstRevision !== secondRevision) return firstRevision < secondRevision ? -1 : 1;
 	const [left, right] = [canonical(a), canonical(b)];
 	return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function strictlyAfter(candidate: string, held: string): string {
-	return candidate > held ? candidate : new Date(Date.parse(held) + 1).toISOString();
-}
-
-function publicShape({ updatedAt: _order, ...limits }: MirroredLimits): AccountLimits {
+function publicShape({ updatedAt: _changedAt, revision: _revision, ...limits }: MirroredLimits): AccountLimits {
 	return limits;
 }
 
