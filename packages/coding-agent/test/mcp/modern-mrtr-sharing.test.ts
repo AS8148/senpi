@@ -1,10 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { normalizeServer } from "../../src/core/extensions/builtin/mcp/config.ts";
-import { HostMcpRegistry } from "../../src/core/extensions/builtin/mcp/host-registry.ts";
-import { createMcpLogger } from "../../src/core/extensions/builtin/mcp/log.ts";
 import { createMcpRequestOrigin, mcpRequestOptions } from "../../src/core/extensions/builtin/mcp/request-origin.ts";
 import { MrtrScript, inputResult, startMrtrServer } from "./fixtures/mrtr-2026-server.ts";
 import { mrtrTui } from "./fixtures/mrtr-presentation.ts";
@@ -14,39 +8,12 @@ import { capturingPi, registeredTool, testContext, textContent } from "./fixture
 import { makeRoot, setConfig } from "./fixtures/service-lifecycle.ts";
 import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 
+import { pooledMrtr } from "./fixtures/mrtr-pool.ts";
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
 	for (const stop of cleanup.splice(0).reverse()) await stop();
 });
-async function pooled(results: unknown[], elicitationEnabled = true) {
-	const script = new MrtrScript(results);
-	const server = await startMrtrServer(script);
-	cleanup.push(server.close);
-	const root = await mkdtemp(join(tmpdir(), "mrtr-pool-"));
-	cleanup.push(() => rm(root, { recursive: true, force: true }));
-	const registry = new HostMcpRegistry();
-	cleanup.push(() => registry.dispose());
-	const config = normalizeServer({ type: "http", url: server.url, auth: false });
-	const attach = () => {
-		const connection = registry.attachShared(
-			"same",
-			{},
-			{
-				serverName: "fixture",
-				config,
-				configHash: "same",
-				elicitationEnabled,
-				agentDir: root,
-				logger: createMcpLogger("fixture", { logDir: root }),
-			},
-		);
-		return connection;
-	};
-	const a = attach(),
-		b = attach();
-	await Promise.all([a.connect(), b.connect()]);
-	return { a, b, script, registry };
-}
+const pooled = (results: unknown[], enabled = true) => pooledMrtr(results, cleanup, enabled);
 
 describe("MRTR request ownership", () => {
 	it("keeps modern human capability request-local when legacy elicitation is disabled", async () => {
@@ -65,7 +32,7 @@ describe("MRTR request ownership", () => {
 			{ type: "text", text: "final tool" },
 		]);
 		await expect(b.client.callTool({ name: "fixture" })).rejects.toMatchObject({
-			code: "MCP_MRTR_UNSUPPORTED_INPUT",
+			code: "MCP_MRTR_PROCESSING_UNAVAILABLE",
 		});
 		const capabilities = ["_meta", "io.modelcontextprotocol/clientCapabilities"];
 		expect(script.requests[0]?.params).toHaveProperty(capabilities, { elicitation: {} });
@@ -226,7 +193,7 @@ describe("MRTR request ownership", () => {
 				undefined,
 				mcpRequestOptions(origin),
 			),
-		).rejects.toMatchObject({ code: "MCP_MRTR_UNSUPPORTED_INPUT" });
+		).rejects.toMatchObject({ code: "MCP_MRTR_PROCESSING_UNAVAILABLE" });
 		expect(script.requests).toHaveLength(1);
 		expect(script.requests[0]?.params).toHaveProperty(["_meta", "io.modelcontextprotocol/clientCapabilities"], {});
 	});

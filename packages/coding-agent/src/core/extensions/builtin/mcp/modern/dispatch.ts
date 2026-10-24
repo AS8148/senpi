@@ -7,7 +7,8 @@ import {
 } from "../transport-sdk.ts";
 import { type EraOutcome, probeHttpEra } from "./era.ts";
 import { modernCredentialSnapshot, modernHttpFetch } from "./http-fetch.ts";
-import { createMcpRequestClient, type ModernProtocolState } from "./request.ts";
+import { createMcpRequestClient } from "./client.ts";
+import type { ModernProtocolState } from "./request.ts";
 import { ModernSdkBridge } from "./sdk-bridge.ts";
 import { probeStdioTransport } from "./stdio-probe.ts";
 import { ModernHttpTransport } from "./transport.ts";

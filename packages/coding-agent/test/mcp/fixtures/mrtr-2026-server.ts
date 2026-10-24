@@ -30,6 +30,7 @@ export class MrtrScript {
 	tools?: Array<{ name: string; inputSchema: { type: "object" } }>;
 	onRequest?: (request: FixtureRequest) => Promise<void>;
 	disconnectAfterRound?: number;
+	continuationStatus?: 401 | 403;
 	readonly notifications: Array<Record<string, unknown>> = [];
 	readonly barriers = new Map<string, Array<(request: FixtureRequest) => void>>();
 	readonly results: unknown[];
@@ -119,6 +120,12 @@ export async function startMrtrServer(script: MrtrScript, sse = false) {
 			return;
 		}
 		const reply = script.reply(message);
+		if (script.continuationStatus && message.params?.requestState !== undefined) {
+			response
+				.writeHead(script.continuationStatus, { "WWW-Authenticate": 'Bearer error="insufficient_scope"' })
+				.end();
+			return;
+		}
 		if (script.disconnectAfterRound !== undefined && script.requests.length > script.disconnectAfterRound) {
 			response.destroy();
 			return;

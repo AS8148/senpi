@@ -3069,8 +3069,10 @@ export class InteractiveMode {
 		show: () => Promise<T>,
 		opts?: ExtensionUIDialogOptions,
 	): Promise<T> {
-		if (opts?.signal?.aborted) return undefined as T;
-		if (opts?.ephemeral) return await show();
+		if (opts?.ephemeral) {
+			if (opts.signal?.aborted) return undefined as T;
+			return await show();
+		}
 		this.session.emitExtensionEvent("herdr:blocked", { active: true, label, id });
 		try {
 			return await show();

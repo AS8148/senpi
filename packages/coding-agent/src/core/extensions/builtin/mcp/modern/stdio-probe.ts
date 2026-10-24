@@ -220,6 +220,10 @@ export function probeStdioTransport(
 				return;
 			}
 			if ("id" in message && message.id !== undefined && !live.delete(message.id)) return;
+			if ("method" in message && message.method === "notifications/progress") {
+				const token = message.params?.progressToken;
+				if ((typeof token !== "string" && typeof token !== "number") || !live.has(token)) return;
+			}
 			const safe = sanitizeModernMessage(message);
 			if (safe) deliver?.(normalizeModernResult(safe), extra);
 		};

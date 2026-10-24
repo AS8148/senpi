@@ -2,14 +2,14 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { AnySchema, SchemaOutput } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { Request } from "@modelcontextprotocol/sdk/types.js";
-import type { McpElicitationUiProvider } from "../elicitation.ts";
-import { configureMcpElicitation, mcpClientCapabilities } from "../elicitation.ts";
 import { type McpRequestOrigin, physicalMcpClient, takeMcpRequestOrigin } from "../request-origin.ts";
 import { AuthError } from "../errors.ts";
-import { loadMcpSdkClient, loadMcpSdkTypes, loadMcpSdkZodCompat } from "../sdk.lazy.ts";
+import { loadMcpSdkTypes, loadMcpSdkZodCompat } from "../sdk.lazy.ts";
 import { type McpClock, mcpElapsedClock } from "../wrap.ts";
-import { collectMrtrForm, isRecord, type MrtrInputResponse, validateMrtrForm } from "./elicitation.ts";
+import { collectMrtrForm, isRecord, type MrtrInputResponse } from "./elicitation.ts";
 import { McpMrtrError } from "./errors.ts";
+import { queuedForm } from "./consent-queue.ts";
+import { parseInputs } from "./inputs.ts";
 
 export const MAX_MCP_MRTR_ROUNDS = 8;
 const capableMethods = new Set(["tools/call", "resources/read", "prompts/get"]);
@@ -32,137 +32,6 @@ export function getModernDispatchGuard(params: unknown): ((credential?: string) 
 	return isRecord(params)
 		? (params as { [modernDispatchGuard]?: (credential?: string) => void })[modernDispatchGuard]
 		: undefined;
-}
-
-interface QueueJob {
-	readonly signal: AbortSignal;
-	readonly run: () => Promise<MrtrInputResponse>;
-	readonly resolve: (value: MrtrInputResponse) => void;
-	readonly reject: (error: unknown) => void;
-	abort: () => void;
-}
-const queues = new WeakMap<object, { busy: boolean; jobs: QueueJob[] }>();
-function queuedForm(binding: object, signal: AbortSignal, run: QueueJob["run"]): Promise<MrtrInputResponse> {
-	let queue = queues.get(binding);
-	if (!queue) {
-		queue = { busy: false, jobs: [] };
-		queues.set(binding, queue);
-	}
-	const current = queue;
-	const pump = () => {
-		if (current.busy) return;
-		const next = current.jobs.shift();
-		if (!next) {
-			queues.delete(binding);
-			return;
-		}
-		next.signal.removeEventListener("abort", next.abort);
-		if (next.signal.aborted) {
-			next.resolve({ action: "cancel" });
-			pump();
-			return;
-		}
-		current.busy = true;
-		void next
-			.run()
-			.then(next.resolve, next.reject)
-			.finally(() => {
-				current.busy = false;
-				pump();
-			});
-	};
-	return new Promise((resolve, reject) => {
-		const job: QueueJob = { signal, run, resolve, reject, abort: () => {} };
-		job.abort = () => {
-			const index = current.jobs.indexOf(job);
-			if (index >= 0) {
-				current.jobs.splice(index, 1);
-				resolve({ action: "cancel" });
-			}
-		};
-		current.jobs.push(job);
-		signal.addEventListener("abort", job.abort, { once: true });
-		if (signal.aborted) job.abort();
-		pump();
-	});
-}
-
-type Input = {
-	method: "elicitation/create";
-	params: { mode?: "form" | "url"; message: string; requestedSchema?: unknown };
-};
-function parseInputs(result: Record<string, unknown>): Map<string, Input> | undefined {
-	if (!own(result, "requestState") && !own(result, "inputRequests")) throw new McpMrtrError("MCP_MRTR_INVALID_INPUT");
-	if (own(result, "requestState") && typeof result.requestState !== "string")
-		throw new McpMrtrError("MCP_MRTR_INVALID_INPUT");
-	if (
-		byteSize(result) > 512 * 1024 ||
-		(typeof result.requestState === "string" && Buffer.byteLength(result.requestState) > 64 * 1024)
-	)
-		throw new McpMrtrError("MCP_MRTR_INPUT_LIMIT");
-	if (!own(result, "inputRequests")) return undefined;
-	if (!isRecord(result.inputRequests)) throw new McpMrtrError("MCP_MRTR_INVALID_INPUT");
-	const entries = Object.entries(result.inputRequests);
-	if (entries.length > 32) throw new McpMrtrError("MCP_MRTR_INPUT_LIMIT");
-	// Scan the complete batch before collecting anything, including unsupported capability requests.
-	for (const [, input] of entries)
-		if (isRecord(input) && ["roots/list", "sampling/createMessage"].includes(String(input.method)))
-			throw new McpMrtrError("MCP_MRTR_UNSUPPORTED_INPUT");
-	const inputs = new Map<string, Input>();
-	const checkStrings = (value: unknown): void => {
-		if (typeof value === "string" && Buffer.byteLength(value) > 16 * 1024)
-			throw new McpMrtrError("MCP_MRTR_INPUT_LIMIT");
-		if (Array.isArray(value)) for (const entry of value) checkStrings(entry);
-		else if (isRecord(value))
-			for (const [key, entry] of Object.entries(value)) {
-				checkStrings(key);
-				checkStrings(entry);
-			}
-	};
-	for (const [key, input] of entries) {
-		checkStrings(key);
-		if (
-			!isRecord(input) ||
-			input.method !== "elicitation/create" ||
-			!isRecord(input.params) ||
-			typeof input.params.message !== "string"
-		)
-			throw new McpMrtrError("MCP_MRTR_INVALID_INPUT");
-		const params = input.params;
-		checkStrings(params);
-		if (params.mode === "url") {
-			if (typeof params.url !== "string" || typeof params.elicitationId !== "string")
-				throw new McpMrtrError("MCP_MRTR_INVALID_INPUT");
-			throw new McpMrtrError("MCP_MRTR_UNSUPPORTED_INPUT");
-		} else {
-			if (params.mode !== undefined && params.mode !== "form") throw new McpMrtrError("MCP_MRTR_INVALID_INPUT");
-			if (
-				isRecord(params.requestedSchema) &&
-				isRecord(params.requestedSchema.properties) &&
-				Object.keys(params.requestedSchema.properties).length > 64
-			)
-				throw new McpMrtrError("MCP_MRTR_INPUT_LIMIT");
-			if (!validateMrtrForm(params.requestedSchema)) throw new McpMrtrError("MCP_MRTR_INVALID_INPUT");
-		}
-		inputs.set(key, input as unknown as Input);
-	}
-	return inputs;
-}
-
-export async function createMcpRequestClient(
-	protocol: ModernProtocolState,
-	uiProvider: McpElicitationUiProvider | undefined,
-	readCredential: () => string | undefined = () => undefined,
-	elicitationEnabled = true,
-): Promise<Client> {
-	const { Client } = await loadMcpSdkClient();
-	const client = new Client(
-		{ name: "senpi-mcp-client", version: "0.0.0" },
-		{ capabilities: mcpClientCapabilities(elicitationEnabled) },
-	);
-	await configureMcpElicitation(client, uiProvider, undefined, elicitationEnabled);
-	installModernRequestAdapter(client, protocol, mcpElapsedClock, readCredential);
-	return client;
 }
 
 /** One instance-local adapter. Captured SDK requests retain ID allocation and final output-schema validation. */
@@ -250,7 +119,6 @@ export function installModernRequestAdapter(
 			const { safeParse } = await interrupted(loadMcpSdkZodCompat(), operation.signal);
 			// Use the SDK's own Zod identity, including when npm installs another copy for this package.
 			const { ResultSchema } = await interrupted(loadMcpSdkTypes(), operation.signal);
-			await resolveAuthority();
 			for (let round = 0; ; round++) {
 				await resolveAuthority();
 				const remaining = deadline - clock.now();
@@ -315,11 +183,11 @@ export function installModernRequestAdapter(
 						await resolveAuthority();
 						if (input.params.mode === "url") {
 							throw new McpMrtrError("MCP_MRTR_UNSUPPORTED_INPUT");
-						} else if (cancelled || consentSpent >= 300_000) {
+						} else if (cancelled) {
 							// No fabricated results for inputs that were never presented.
 							throw new McpMrtrError("MCP_MRTR_CANCELLED");
-						} else if (presentationLost || !origin?.presentation) {
-							throw new McpMrtrError("MCP_MRTR_UNSUPPORTED_INPUT");
+						} else if (consentSpent >= 300_000 || presentationLost || !origin?.presentation) {
+							throw new McpMrtrError("MCP_MRTR_PROCESSING_UNAVAILABLE");
 						} else {
 							const consent = new AbortController();
 							const began = clock.now();
@@ -340,7 +208,7 @@ export function installModernRequestAdapter(
 									operation.signal,
 								);
 								check();
-								if (!presented) throw new McpMrtrError("MCP_MRTR_CANCELLED");
+								if (!presented) throw new McpMrtrError("MCP_MRTR_PROCESSING_UNAVAILABLE");
 								responses[key] = answer;
 								cancelled = answer.action !== "accept";
 							} finally {

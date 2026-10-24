@@ -73,6 +73,17 @@ describe("ephemeral TUI wrappers", () => {
 		expect(select).not.toHaveBeenCalled();
 		expect(f.events).toEqual([]);
 	});
+	it("ordinary aborted dialogs still delegate and publish their normal blocked lifecycle", async () => {
+		const select = vi.fn().mockResolvedValue("ordinary result");
+		const f = mrtrTui(select);
+		const signal = AbortSignal.abort();
+		expect(await f.ui.select("ordinary", ["choice"], { signal })).toBe("ordinary result");
+		expect(select).toHaveBeenCalledOnce();
+		expect(f.events).toEqual([
+			expect.objectContaining({ active: true, label: "ordinary" }),
+			expect.objectContaining({ active: false }),
+		]);
+	});
 	it("renderer failure emits no private events and ordinary dialogs keep their label", async () => {
 		const f = mrtrTui(async () => {
 			throw new Error("renderer");
