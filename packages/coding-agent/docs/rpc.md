@@ -102,7 +102,7 @@ Other context keys remain opaque.
 Automatic turn admission is also bounded independently of the hold. On unattended resume,
 `engineTurns.maxPerResumeWindow` defaults to 8, counting engine starts in loaded
 history since the last real input. A real input ends that resume window. The
-normal `engineTurns.maxPerUserInput` default stays 150. Only admitted new engine
+normal `engineTurns.maxPerUserInput` defaults to 0 (off). Only admitted new engine
 turns count, not wakes steered into running work or pending compaction; a limit emits the existing engine-paused
 notice and record. Setting either cap to 0 disables that particular cap.
 
