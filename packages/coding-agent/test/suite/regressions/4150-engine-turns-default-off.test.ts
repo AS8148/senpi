@@ -21,7 +21,10 @@ function workingContinuation(attempts: number) {
 		pi.on("agent_settled", () => {
 			if (sent >= attempts) return;
 			sent += 1;
-			pi.sendMessage({ customType: "goal-continuation", content: "continue", display: false }, { triggerTurn: true });
+			pi.sendMessage(
+				{ customType: "goal-continuation", content: "continue", display: false },
+				{ triggerTurn: true },
+			);
 		});
 	};
 }
