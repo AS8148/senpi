@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- An itemized `sendMessage` that re-sends a delivery ticket whose message is still queued, with different items, is now rejected with `DeliveryTicketRefused` (`reason: "different_items"`) instead of receiving receipts for items that were never written; the queued message keeps its first content ([#4106](https://github.com/code-yeongyu/senpi/issues/4106)).
+
 ### Removed
 
 ## [2026.10.24-1] - 2026-10-24
