@@ -67,29 +67,6 @@ The spawn point is inside the terminal extension's own tool bodies, which the to
 - `packages/coding-agent/src/core/extensions/builtin/terminal/tools/context.ts`: the end of `TerminalToolContext` and the new `TerminalLaunchBarrier`.
 - `packages/coding-agent/src/core/extensions/builtin/terminal/tools/spawn.ts`: the `manager.create` call and the lines after it.
 
-## 2026-10-18 - Monitor deadline docs, accurate & / nohup guidance, and a killed-at-deadline summary (senpi#3611)
-
-### What changed
-
-- `tools/bash.ts` (`run_in_background` description), `prompt.ts`, and the bun-1-4 skill: state what the code does — a plain `&` job dies with the call's PTY hangup (native backend; the pipe fallback never hangups); `nohup` racily escapes that hangup (a child can still die when the call returns before nohup takes effect) and survives as an untracked orphan (no `bash_id`, no captured log) that the call's timeout group-kill still removes, while `setsid` leaves the process group entirely and survives even that kill (reviewer probe: after `kill(-pgid, SIGKILL)` the setsid child stayed alive, the nohup child died); a non-persistent command watch's `timeout_ms` kills the watched command on both backends (native `session_threads.rs` group kill, pipe `terminateChildTree`).
-- `command-monitor-source.ts` `#settle`: a timed-out command watch now summarizes as `watcher killed at deadline (timed_out)`.
-- `rpc-monitor-source.ts`: the deadline summary stays `watcher timed_out` (an RPC watch kills nothing) and both its sites share `RPC_WATCHER_TIMED_OUT_SUMMARY`, so the ended-reason classifier can never drift from the settle string.
-- `tools/monitor.ts`: the guidelines list gains the watcher-with-a-deadline line — `timeout_ms` KILLS the watched command of a non-persistent watch, so long jobs belong in `run_in_background` and are only watched from there.
-- `test/suite/terminal-monitor.test.ts`: the timed-watch test asserts the machine-read ended reason `timeout` through `MonitorRegistry`'s `onEnded` instead of pinning summary prose.
-- `test/suite/terminal-bash-foreground-exit.test.ts` (new): proves the other side of the contract — a `nohup` background job SURVIVES a normal foreground return (probed alive by a later call), because only the deadline path ever signals the group.
-
-### Why
-
-Both behaviors strand or destroy long jobs agents believed they had started, and the old `watcher timed_out` read as an observation rather than the kill it is on the command branch (senpi#3611, reported via KakaoTalk). Verified by real runs under the bash tool: with the child ready before the shell exits, a `nohup sleep` survives a normal foreground return (reparented to init) while the plain `&` sleep dies at PTY hangup — though an IMMEDIATE return can kill the nohup child too, the hangup racing nohup's SIGHUP-ignore (5/5 dead in the reviewer's probe); inside a call that hits its timeout the nohup job dies with the group kill on both backends.
-
-### Why an extension could not handle it
-
-- The tool descriptions, the prompt section, the monitor summaries and the ended-reason classifier are this builtin's own registered contract; an external extension cannot re-describe another extension's tools or re-word its emitted summaries.
-
-### Expected merge conflict zones
-
-- LOW: this tracker's top, the `tools/monitor.ts` guidelines list, the first bullet of the prompt section, and `rpc-monitor-source.ts` around the deadline settle.
-
 ## 2026-10-17 - Human-input command monitors (oh-my-openagent#10280)
 
 ### What changed
