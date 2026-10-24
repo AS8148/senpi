@@ -113,3 +113,25 @@ describe("release step TypeScript heap", () => {
 		assert.equal(release.match(/NODE_OPTIONS: (--max-old-space-size=\d+)/)?.[1], ciHeap);
 	});
 });
+
+describe("publish-only builds the tagged commit", () => {
+	const checkout = workflow.match(/- name: Checkout\n[\s\S]*?(?=\n      - name: )/)?.[0];
+	const guard = workflow.match(/- name: Refuse to publish anything but the tagged commit\n[\s\S]*?(?=\n      - name: )/)?.[0];
+
+	it("checks out refs/tags/v<version> in publish-only mode", () => {
+		assert.ok(checkout, "expected the Checkout step");
+		assert.match(checkout, /ref: \$\{\{ inputs\.publish-only && format\('refs\/tags\/v\{0\}', inputs\.version\) \|\| '' \}\}/);
+	});
+
+	it("refuses to publish when HEAD is not the tag's commit, before anything is installed or built", () => {
+		assert.ok(guard, "expected the tagged-commit guard step");
+		assert.match(guard, /if: inputs\.publish-only == true/);
+		assert.match(guard, /git rev-parse --verify "refs\/tags\/v\$\{EXPECTED_VERSION\}\^\{commit\}"/);
+		assert.match(guard, /test "\$head_commit" = "\$tag_commit" \|\|/);
+		assert.ok(
+			workflow.indexOf("- name: Refuse to publish anything but the tagged commit") <
+				workflow.indexOf("- name: Install dependencies"),
+			"the guard runs before dependencies are installed",
+		);
+	});
+});

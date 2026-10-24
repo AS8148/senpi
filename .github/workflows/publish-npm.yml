@@ -61,6 +61,22 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          # publish-only publishes the version a release run already tagged, so it must build that tag's tree. Without a
+          # ref it built main's tip, and npm shipped commits merged after the tag (senpi 2026.10.23-1).
+          ref: ${{ inputs.publish-only && format('refs/tags/v{0}', inputs.version) || '' }}
+
+      - name: Refuse to publish anything but the tagged commit
+        if: inputs.publish-only == true
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          tag_commit="$(git rev-parse --verify "refs/tags/v${EXPECTED_VERSION}^{commit}")"
+          head_commit="$(git rev-parse HEAD)"
+          test "$head_commit" = "$tag_commit" || {
+            echo "::error::publish-only must build tag v${EXPECTED_VERSION} (${tag_commit}) but HEAD is ${head_commit}" >&2
+            exit 1
+          }
+          echo "Publishing v${EXPECTED_VERSION} from its tagged commit ${tag_commit}"
 
       - name: Configure git identity
         run: |
