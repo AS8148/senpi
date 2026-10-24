@@ -2260,7 +2260,10 @@ export interface MessageEndEventResult {
 }
 
 export interface BeforeAgentStartEventResult {
-	message?: Pick<CustomMessage, "customType" | "content" | "display" | "details">;
+	message?: Pick<CustomMessage, "customType" | "content" | "display" | "details"> & {
+		/** Insert before this turn's triggering prompt instead of appending after it. */
+		placement?: "before-prompt";
+	};
 	/** Replace the complete system prompt for this turn. Later handlers observe this exact override. */
 	systemPrompt?: string;
 	/** Exact render parts of a complete replacement, used only by preview accounting. */
