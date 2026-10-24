@@ -3,8 +3,10 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getAgentDir } from "../../../../config.ts";
+import { redactResolvedReferenceData } from "../../../config-reference-redaction.ts";
 import { lockWithLossHandling } from "../../../file-lock.ts";
-import type { McpServerConfig } from "./config-schema.ts";
+import { isEphemeralIdentity } from "./config-identity-key.ts";
+import type { McpServerDeclaredConfig } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
 import { collectAllPages } from "./expose/pagination.ts";
 
@@ -69,18 +71,24 @@ export function cachedCatalogNeedsRefresh(cached: McpCachedServerCatalog, now = 
 
 export async function collectServerCatalogForCache(
 	connection: ServerConnection,
-	config: McpServerConfig,
+	config: Pick<McpServerDeclaredConfig, "requestTimeoutMs">,
 	configHash: string,
 	credentialIdentity?: string,
 ): Promise<McpCachedServerCatalog> {
 	const tools = await collectAllPages<ListedTool>((cursor) =>
-		connection.client.listTools(cursor === undefined ? {} : { cursor }, { timeout: config.requestTimeoutMs }),
+		connection.client.listTools(cursor === undefined ? {} : { cursor }, {
+			timeout: config.requestTimeoutMs,
+		}),
 	);
 	const resources = await collectOptionalPages<ListedResource>((cursor) =>
-		connection.client.listResources(cursor === undefined ? {} : { cursor }, { timeout: config.requestTimeoutMs }),
+		connection.client.listResources(cursor === undefined ? {} : { cursor }, {
+			timeout: config.requestTimeoutMs,
+		}),
 	);
 	const prompts = await collectOptionalPages<ListedPrompt>((cursor) =>
-		connection.client.listPrompts(cursor === undefined ? {} : { cursor }, { timeout: config.requestTimeoutMs }),
+		connection.client.listPrompts(cursor === undefined ? {} : { cursor }, {
+			timeout: config.requestTimeoutMs,
+		}),
 	);
 	const resourceTemplates = await collectOptionalPages<ListedResourceTemplate>((cursor) =>
 		connection.client.listResourceTemplates(cursor === undefined ? {} : { cursor }, {
@@ -105,6 +113,8 @@ export async function writeMcpCachedServer(
 	server: McpCachedServerCatalog,
 	isCurrent?: () => boolean,
 ): Promise<void> {
+	// Without a valid installation key nothing keyed is persisted (senpi#3858).
+	if (isEphemeralIdentity(server.configHash) || isEphemeralIdentity(server.credentialIdentity)) return;
 	if (isCurrent?.() === false) return;
 	const path = getMcpCatalogCachePath(agentDir);
 	await mkdir(dirname(path), { recursive: true });
@@ -118,7 +128,11 @@ export async function writeMcpCachedServer(
 		if (isCurrent?.() === false) return;
 		const cache = await readMcpCatalogCache(agentDir);
 		if (isCurrent?.() === false) return;
-		const next: McpCatalogCacheFile = { version: 1, servers: { ...cache.servers, [serverName]: server } };
+		const persisted = redactResolvedReferenceData(server);
+		const next: McpCatalogCacheFile = {
+			version: 1,
+			servers: { ...cache.servers, [serverName]: persisted },
+		};
 		await atomicWriteJson(path, next, isCurrent, lock.assertHeld);
 	} finally {
 		await lock.release();

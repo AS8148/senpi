@@ -3,6 +3,7 @@ import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import type { Progress } from "@modelcontextprotocol/sdk/types.js";
 import type { TSchema } from "typebox";
+import { redactResolvedReferenceData, redactResolvedReferenceValues } from "../../../../config-reference-redaction.ts";
 import type { ToolDefinition } from "../../../types.ts";
 import { forgetDispatchApproval } from "../../permission-system/dispatch.ts";
 import { registerDispatchIdentity } from "../../permission-system/dispatch-metadata.ts";
@@ -115,13 +116,21 @@ export async function executeMcpCatalogEntry(
 			});
 			return {
 				content: toAgentContent(guarded),
-				details: { error: outcome.error, preview: outcome.error.kind, server: entry.server, tool: entry.tool },
+				details: redactResolvedReferenceData({
+					error: outcome.error,
+					preview: outcome.error.kind,
+					server: entry.server,
+					tool: entry.tool,
+				}),
 			};
 		}
 		const current = outcome.entry;
 		const mapped = mapMcpToolResult(normalizeCallToolResult(outcome.result));
 		if (!mapped.ok) {
-			throw new ToolExecError(mapped.error.message, { phase: "call", serverName: entry.server });
+			throw new ToolExecError(redactResolvedReferenceValues(mapped.error.message), {
+				phase: "call",
+				serverName: entry.server,
+			});
 		}
 		const guarded = await applyMcpOutputGuard(mapped.content, {
 			agentDir: current.agentDir,
@@ -130,7 +139,14 @@ export async function executeMcpCatalogEntry(
 			server: current.server,
 		});
 		const content = toAgentContent(guarded);
-		return { content, details: { preview: previewContent(content), server: entry.server, tool: entry.tool } };
+		return {
+			content,
+			details: redactResolvedReferenceData({
+				preview: previewContent(content),
+				server: entry.server,
+				tool: entry.tool,
+			}),
+		};
 	} finally {
 		if (invocation !== undefined) forgetDispatchApproval(invocation.input);
 	}
