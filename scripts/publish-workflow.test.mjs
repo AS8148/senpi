@@ -2,7 +2,9 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
@@ -171,12 +173,15 @@ describe("publish-only native addons and inputs", () => {
 			const script = step
 				.replace(/^ {10}/gm, "")
 				.replaceAll("${{ inputs.publish-only }}", String(publishOnly))
-				.replaceAll("${{ inputs.sha || github.sha }}", "DISPATCHSHA")
-				.replace(/\$\{\{[^}]*\}\}/g, "x")
-				.replaceAll('"$GITHUB_STEP_SUMMARY"', "/dev/stdout");
-			const result = spawnSync("bash", ["-c", script], { encoding: "utf8" });
+				.replace(/commit="\$\{\{[^}]*\}\}"/, 'commit="DISPATCHSHA"')
+				.replace(/\$\{\{[^}]*\}\}/g, "x");
+			const summary = join(mkdtempSync(join(tmpdir(), "publish-summary-")), "summary.md");
+			const result = spawnSync("bash", ["-c", script], {
+				encoding: "utf8",
+				env: { PATH: process.env.PATH, GITHUB_STEP_SUMMARY: summary },
+			});
 			assert.equal(result.status, 0, result.stderr);
-			return result.stdout.match(/\| Commit \| (.*) \|/)?.[1];
+			return readFileSync(summary, "utf8").match(/\| Commit \| (.*) \|/)?.[1];
 		};
 		assert.equal(render(true), head);
 		assert.equal(render(false), "DISPATCHSHA");
