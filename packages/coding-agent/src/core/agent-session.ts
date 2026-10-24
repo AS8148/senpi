@@ -1361,8 +1361,14 @@ export class AgentSession {
 	private _lifecycleBinding: LifecycleSessionBinding;
 	/** Itemized batches waiting for the entry their one message is written to (senpi#3811). */
 	private readonly _persistWatchers = new WeakMap<object, PersistWatcher>();
-	/** The entry each ticket's queued message was last written as, so a re-send that lost the race still gets its receipt. */
+	/**
+	 * The entry a ticket's queued message was written as, kept only while a re-send that joined that queued message is
+	 * still in flight, so a re-send that lost the race still gets its receipt. The last such re-send removes it, so the
+	 * map holds at most one entry per in-flight re-send (senpi#4125 review).
+	 */
 	private readonly _writtenTicketEntries = new Map<string, string>();
+	/** How many sends that joined each ticket's queued message are still in flight. */
+	private readonly _carrierJoiners = new Map<string, number>();
 	private _resumeSettlement: Promise<void> = Promise.resolve();
 	private readonly _engineTurnRelease = new EngineTurnRelease();
 	private readonly _engineTurnInput: EngineTurnInput;
@@ -6850,7 +6856,7 @@ export class AgentSession {
 
 	private _recordWrittenTicket(message: AgentMessage, entryId: string): void {
 		const ticket = message.role === "custom" ? messageTicket(message) : undefined;
-		if (ticket !== undefined) this._writtenTicketEntries.set(ticket, entryId);
+		if (ticket !== undefined && this._carrierJoiners.has(ticket)) this._writtenTicketEntries.set(ticket, entryId);
 	}
 
 	private _takePersistWatcher(message: AgentMessage): PersistWatcher | undefined {
@@ -6928,6 +6934,8 @@ export class AgentSession {
 			return;
 		}
 		if (ticket && queuedCarrier === undefined) this._writtenTicketEntries.delete(ticket);
+		const joinsCarrier = ticket !== undefined && queuedCarrier !== undefined;
+		if (joinsCarrier) this._carrierJoiners.set(ticket, (this._carrierJoiners.get(ticket) ?? 0) + 1);
 		if (ticket && queuedCarrier === undefined)
 			obligations.queue(ticket, {
 				message: deliveryMessage,
@@ -6981,8 +6989,19 @@ export class AgentSession {
 			throw error;
 		} finally {
 			if (ticket) obligations.endDelivery(ticket);
+			if (joinsCarrier) this._leaveCarrier(ticket);
 			if (readmit) itemized?.droppedByAbort();
 		}
+	}
+
+	private _leaveCarrier(ticket: string): void {
+		const joiners = (this._carrierJoiners.get(ticket) ?? 1) - 1;
+		if (joiners > 0) {
+			this._carrierJoiners.set(ticket, joiners);
+			return;
+		}
+		this._carrierJoiners.delete(ticket);
+		this._writtenTicketEntries.delete(ticket);
 	}
 
 	private _queuedDeliveryTickets(): string[] {
@@ -7061,9 +7080,10 @@ export class AgentSession {
 			deferredTurnClaim?.resolve("delegated");
 			return;
 		}
-		// A re-send that found the ticket's carrier queued and lost it while it waited is never written a second time.
-		// If the running turn wrote the carrier, the re-send settles with that entry (its items matched the carrier's);
-		// if a clear or a retire removed it, an itemized re-send settles as cleared, like the send it joined.
+		// A re-send that found the ticket's carrier queued and lost it while it waited is never written: if the running
+		// turn wrote the carrier, the re-send settles with that entry (its items matched the carrier's); if a clear or a
+		// retire removed it, writing it would deliver a cleared message under a retired ticket, so it settles as cleared
+		// (an itemized send's receipts fail with QueuedDeliveryCleared; a plain send has none).
 		if (options?.joinsQueuedCarrier === true && options.ticket !== undefined) {
 			const writtenEntry = this._writtenTicketEntries.get(options.ticket);
 			if (writtenEntry !== undefined) {
@@ -7071,11 +7091,9 @@ export class AgentSession {
 				deferredTurnClaim?.resolve("delegated");
 				return;
 			}
-			if (itemized !== undefined) {
-				deferredTurnClaim?.resolve("finished-without-start");
-				itemized.failed(new QueuedDeliveryCleared(itemized.itemIds));
-				return;
-			}
+			deferredTurnClaim?.resolve("finished-without-start");
+			itemized?.failed(new QueuedDeliveryCleared(itemized.itemIds));
+			return;
 		}
 		const appMessage = {
 			role: "custom" as const,

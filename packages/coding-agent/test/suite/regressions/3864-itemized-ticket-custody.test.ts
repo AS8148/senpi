@@ -26,6 +26,11 @@ function sendWithTicket(fixture: ResumeFixture, ticket: string, batch: readonly 
 		);
 }
 
+/** How many written-carrier entries the session still keeps for in-flight re-sends. */
+function writtenEntries(fixture: ResumeFixture): number {
+	return (fixture.h.session as unknown as { _writtenTicketEntries: Map<string, string> })._writtenTicketEntries.size;
+}
+
 function openTicket(fixture: ResumeFixture, key: string): string {
 	return fixture.api().lifecycle.obligations.open(key, "children").ticket();
 }
@@ -473,10 +478,82 @@ describe("itemized sendMessage with a delivery ticket", () => {
 
 		// Then both sends get the written entry's receipts and the message is written once
 		expect(againOutcome).not.toBeInstanceOf(Error);
-		expect((againOutcome as readonly SendMessageReceipt[]).map((receipt) => receipt.itemId)).toEqual(["a", "b"]);
-		expect((firstOutcome as readonly SendMessageReceipt[]).map((receipt) => receipt.itemId)).toEqual(["a", "b"]);
+		const firstReceipts = firstOutcome as readonly SendMessageReceipt[];
+		const againReceipts = againOutcome as readonly SendMessageReceipt[];
+		expect(againReceipts.map((receipt) => receipt.itemId)).toEqual(["a", "b"]);
+		expect(firstReceipts.map((receipt) => receipt.itemId)).toEqual(["a", "b"]);
+		const writtenEntryId = firstReceipts[0]?.entryId;
+		expect(writtenEntryId).toBeDefined();
+		expect(againReceipts.map((receipt) => receipt.entryId)).toEqual([writtenEntryId, writtenEntryId]);
+		expect(writtenEntries(fixture)).toBe(0);
 		expect(
 			fixture.h.session.messages.filter((message) => message.role === "custom" && message.customType === WAKE),
 		).toHaveLength(1);
+	});
+
+	it("does not write a plain re-send whose queued carrier a clear removed while it waited", async () => {
+		// Given a running turn, a plain ticketed message queued behind it, and a plain re-send held while its header is
+		// persisted
+		const fixture = await resumeFixture();
+		fixtures.push(fixture);
+		const ticket = openTicket(fixture, "result:plain-clear-race");
+		const toolStarted = fixture.toolStarted();
+		const running = fixture.h.session.prompt("start");
+		await toolStarted;
+		const ended = deliveryEnded(fixture, ticket);
+		const sendPlain = () =>
+			fixture
+				.api()
+				.sendMessage(
+					{ customType: WAKE, content: "Task A finished", display: false },
+					{ triggerTurn: true, deliverAs: "followUp", ticket },
+				);
+		const first = Promise.resolve(sendPlain()).catch(() => undefined);
+		await ended;
+		const manager = fixture.h.session.sessionManager;
+		const persistHeaderNow = manager.persistHeaderNow.bind(manager);
+		const headerHeld = Promise.withResolvers<void>();
+		const headerReached = Promise.withResolvers<void>();
+		vi.spyOn(manager, "persistHeaderNow").mockImplementationOnce(async () => {
+			headerReached.resolve();
+			await headerHeld.promise;
+			return persistHeaderNow();
+		});
+		const again = Promise.resolve(sendPlain()).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		await headerReached.promise;
+
+		// When the queue is cleared while the re-send waits
+		fixture.h.session.clearQueue();
+		headerHeld.resolve();
+		fixture.releaseTool();
+		await running;
+		await settle(fixture);
+		await first;
+		await settlesWithin(again, "plain re-send after the clear");
+
+		// Then nothing is written with the retired ticket
+		expect(
+			fixture.h.session.messages.some((message) => message.role === "custom" && message.customType === WAKE),
+		).toBe(false);
+	});
+
+	it("keeps no written-carrier entry once each ticketed delivery has been written", async () => {
+		// Given an idle session
+		const fixture = await resumeFixture();
+		fixtures.push(fixture);
+		fixture.h.setResponses(Array.from({ length: 6 }, (_, index) => fauxAssistantMessage(`reply ${index}`)));
+
+		// When three ticketed batches are each delivered, written and their tickets retire
+		for (const key of ["result:retire-1", "result:retire-2", "result:retire-3"]) {
+			const receipts = await sendWithTicket(fixture, openTicket(fixture, key));
+			expect(receipts?.map((receipt) => receipt.disposition)).toEqual(["message_persisted", "message_persisted"]);
+			await settle(fixture);
+		}
+
+		// Then the session keeps no written-carrier entry for any of them
+		expect(writtenEntries(fixture)).toBe(0);
 	});
 });
