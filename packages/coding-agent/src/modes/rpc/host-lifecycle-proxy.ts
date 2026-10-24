@@ -11,6 +11,8 @@ import { proxyWithAdmission } from "./host-admission-proxy.ts";
 import type { ClientOccupancy } from "./host-client-occupancy.ts";
 import { connectInternalConnection } from "./internal-channel.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
+import { PublicRpcConnection } from "./rpc-public-auth.ts";
+import type { RpcPublicEndpoint } from "./rpc-public-key.ts";
 import {
 	type ListenerState,
 	MAX_SOCKET_PATH_BYTES,
@@ -31,6 +33,7 @@ export interface PublicProxyOptions {
 	readonly internalSecret?: Buffer;
 	readonly internalKey?: Buffer;
 	readonly publicSecret?: Buffer;
+	readonly publicEndpoint?: RpcPublicEndpoint;
 	readonly clients: ClientOccupancy;
 	/** Shared authority for stopping, protocol replies and new-session admission. */
 	readonly admission: HostAdmission;
@@ -43,6 +46,7 @@ export interface PublicProxyOptions {
 export function createPublicProxy(options: PublicProxyOptions): Server {
 	const { internalSocket, internalSecret, publicSecret, clients } = options;
 	return createServer((client) => {
+		const auth = options.publicEndpoint ? new PublicRpcConnection(client, options.publicEndpoint) : undefined;
 		const accept = async (): Promise<void> => {
 			// Teardown is terminal even for an accept that raced socket shielding/server.close.
 			if (!clients.admit(client)) return;
@@ -74,8 +78,9 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 					hop?.destroy();
 					return;
 				}
-				proxyWithAdmission(client, hop, options.admission);
-				client.resume();
+				proxyWithAdmission(client, hop, options.admission, auth);
+				// An authenticated endpoint resumes the client itself once its key record is published.
+				if (!auth) client.resume();
 			} catch {
 				detach();
 			}

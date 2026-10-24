@@ -38,6 +38,8 @@ import { armHostWatchdog, readHostWatchdogConfigFromBrandEnv } from "./host-watc
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { hostGeneration, hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import { rpcCommandShapeError } from "./rpc-input-validation.ts";
+import { PublicRpcConnection } from "./rpc-public-auth.ts";
+import { RpcPublicEndpoint } from "./rpc-public-key.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import { computeRuntimeBuildId, RUNTIME_IDENTITY_HANDOVER_CAPABILITY } from "./runtime-build-id.ts";
 import { type RpcBindingFactory, SessionCommandRouter } from "./session-command-router.ts";
@@ -368,6 +370,10 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			? await ensureSocketSecret(process.env[SOCKET_SECRET_FILE_ENV] ?? socketSecretPath(socketPath))
 			: undefined;
 	const { watchdogConfig, admit } = internalHostTransport(readHostWatchdogConfigFromBrandEnv(), secret);
+	const publicEndpoint =
+		process.platform !== "win32" && watchdogConfig === undefined
+			? new RpcPublicEndpoint(options.agentDir, socketPath)
+			: undefined;
 	// This host's OWN copy of the crash-path cleanup list. A drain empties it: once a successor
 	// generation is registered, the daemon state files under those paths describe the successor,
 	// and a crash of this (already replaced) host must not take them with it.
@@ -441,7 +447,9 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			socket.once("close", detach);
 			socket.once("error", () => detach());
 		};
-		admit(rawSocket, accept);
+		// A bare POSIX host is its own public endpoint: the challenge filter sits in front of the router.
+		if (publicEndpoint) accept(new PublicRpcConnection(rawSocket, publicEndpoint).stream);
+		else admit(rawSocket, accept);
 	});
 	server.on("error", (cause) => {
 		if (!shuttingDown) process.stderr.write(`senpi rpc socket listener failed: ${errorMessage(cause)}\n`);
@@ -491,6 +499,9 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			}
 			if (watchdogCleanup) await watchdogCleanup;
 		} finally {
+			await publicEndpoint
+				?.dispose()
+				.catch((cause: unknown) => hostLog(`endpoint key cleanup failed: ${errorMessage(cause)}`));
 			// Explicitly terminate after every shutdown trigger. Windows named-pipe
 			// handles are not fully controllable from JS, and an unresolved cleanup
 			// must not leave this daemon or its public endpoint alive.
@@ -560,6 +571,11 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		setImmediate(killTrackedDetachedChildren);
 	});
 	boundIdentity = await listen(server, socketPath, secret);
+	// A key record that cannot be published safely ends this host: held connections are refused, never served keyless.
+	await publicEndpoint?.publish().catch(async (cause: unknown) => {
+		hostLog(errorMessage(cause));
+		await shutdown(1);
+	});
 	if (supervisorPublicOwnerFile) {
 		// The supervisor publishes its public-socket token after this internal
 		// listener is ready, so a short bounded wait keeps the lifecycles in step
