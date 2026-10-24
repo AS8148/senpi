@@ -81,6 +81,7 @@ export async function retainHost(options: { idleEvictionMs?: number; onRecord?: 
 				break;
 			case "cancel_ui":
 			case "cancel_grant":
+			case "subscription_limits":
 				break;
 			default: {
 				const exhaustive: never = message;

@@ -18,6 +18,7 @@ import type {
 	SessionWriteGrant,
 	WorkerSnapshot,
 } from "./session-worker-protocol.ts";
+import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker-requests.ts";
 import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
 
@@ -69,6 +70,7 @@ export class SessionWorkerClient {
 	private readonly listeners = new Set<() => void>();
 	private cancelUiPending = false;
 	private terminalFailure?: string;
+	private stopLimitMirror: () => void = () => {};
 
 	private readonly callbacks: SessionWorkerCallbacks;
 
@@ -81,6 +83,7 @@ export class SessionWorkerClient {
 				if (this.closeTimer) clearTimeout(this.closeTimer);
 				this.requests.close(new Error("session_worker_exited"));
 				void this.webviewBroker?.dispose();
+				this.stopLimitMirror();
 				this.listeners.clear();
 				const released = callbacks.exit();
 				if (released)
@@ -99,7 +102,19 @@ export class SessionWorkerClient {
 	}
 
 	async prepare(configuration: CliRuntimeConfiguration, profile: RpcSessionLaunchProfile): Promise<string> {
-		const result = await this.request({ type: "prepare", configuration, profile });
+		// The host's poller feeds only the host's store and the isolate reads its own copy, so the isolate starts
+		// from the host's records and then receives each change (senpi#3695). Subscribing before the request is
+		// posted keeps a change that lands in between ordered after the snapshot.
+		this.stopLimitMirror();
+		this.stopLimitMirror = subscriptionLimits.subscribeMirror((limits) =>
+			this.post({ type: "subscription_limits", accounts: [limits] }),
+		);
+		const result = await this.request({
+			type: "prepare",
+			configuration,
+			profile,
+			subscriptionLimits: subscriptionLimits.mirrorSnapshot(),
+		});
 		if (result.type !== "prepared") throw new Error("Invalid worker prepare response");
 		return result.sessionPath;
 	}
@@ -360,6 +375,9 @@ export class SessionWorkerClient {
 			}
 			case "request_close":
 				this.requestClose?.();
+				return;
+			case "subscription_limits":
+				subscriptionLimits.adopt(message.limits);
 				return;
 			case "failure":
 				this.fail(message.error);
