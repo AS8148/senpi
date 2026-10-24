@@ -4,7 +4,7 @@ import {
 	CYCLE_REPETITION_THRESHOLD,
 	ESCALATION_FACTOR,
 	IDENTICAL_RUN_THRESHOLD,
-	MUTATING_TOOL_NAMES,
+	OBSERVING_TOOL_NAMES,
 	SIMILAR_RUN_THRESHOLD,
 	SIMILARITY_THRESHOLD,
 	TRACK_WINDOW,
@@ -102,17 +102,18 @@ export function detectWindowedRepeat(records: readonly ToolCallRecord[]): LoopGu
 }
 
 /**
- * Occurrences of `signature` since the most recent state-changing call of a DIFFERENT
- * signature (whole window when none ran). The signature's own occurrences always count —
- * a call repeating identically is itself the pathology — while a different tool changing
- * state between repeats makes those repeats new observations, not a loop.
+ * Occurrences of `signature` since the most recent call from any tool that is not
+ * known-observing (whole window when every call is known-observing). Unknown tools —
+ * computer, MCP/browser tools, task*, any extension tool — reset the count, because
+ * the detector cannot prove they leave state unchanged; the signature's own occurrences
+ * always count, since a call repeating identically is itself the pathology.
  */
 export function windowedRepeatCount(records: readonly ToolCallRecord[], signature: string): number {
 	let occurrences = 0;
 	for (const record of records) {
 		if (record.signature === signature) {
 			occurrences++;
-		} else if (MUTATING_TOOL_NAMES.has(record.toolName)) {
+		} else if (!OBSERVING_TOOL_NAMES.has(record.toolName)) {
 			occurrences = 0;
 		}
 	}

@@ -71,6 +71,17 @@ describe("issue 3629: interleaved identical repeats escalate to a hard stop", ()
 		expect(harness.actions).toContain("abort:system");
 	});
 
+	it("never blocks a click-then-screenshot computer-use loop", async () => {
+		const harness = createLoopGuardHarness();
+		for (let round = 1; round <= 30; round++) {
+			await attempt(harness, `click-${round}`, "computer", { action: "left_click", coordinate: [round, round] });
+			await attempt(harness, `shot-${round}`, "computer", { action: "screenshot" });
+		}
+		const escalations = harness.customMessages.filter((message) => message.customType === "loop-guard:escalation");
+		expect(harness.actions).not.toContain("abort:system");
+		expect(escalations).toHaveLength(0);
+	});
+
 	it("never blocks a routine edit-then-test loop", async () => {
 		const harness = createLoopGuardHarness();
 		for (let round = 1; round <= 24; round++) {

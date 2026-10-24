@@ -27,16 +27,27 @@ export const IDENTICAL_RUN_THRESHOLD = 3;
 /** Occurrences of one byte-identical signature in the windowed count before the windowed reminder fires. */
 export const WINDOWED_REPEAT_THRESHOLD = 8;
 
-/** Tools that change repository, process, or session state. A windowed repeat count only spans the stretch after the most recent of these. The todo tool (read or write) is deliberately NOT here: #3629's loop interleaved todo views, so a todo between repeats must not reset the count. */
-export const MUTATING_TOOL_NAMES: ReadonlySet<string> = new Set([
-	"edit",
-	"write",
-	"apply_patch",
-	"bash",
-	"bash_input",
-	"powershell",
-	"eval",
-	"generate_image",
+/** Tools that never change observable state, so repeats between them can only be re-reading the same answer.
+ * The default is the opposite: any tool NOT on this list (computer, MCP/browser tools, task*, unknown extensions)
+ * is treated as able to change something, so it resets the windowed count (senpi#3641 review round 4).
+ * The todo tool is deliberately INCLUDED here as read-only: #3629's loop interleaved todo views with identical eval
+ * calls, and the eval call is the state-changer that counts; a todo view between two identical polls is not new state. */
+export const OBSERVING_TOOL_NAMES: ReadonlySet<string> = new Set([
+	"read",
+	"ls",
+	"glob",
+	"grep",
+	"todo",
+	"todo_view",
+	"webfetch",
+	"web_search",
+	"bash_output",
+	"task_output",
+	"lsp_diagnostics",
+	"lsp_symbols",
+	"lsp_goto_definition",
+	"lsp_find_references",
+	"task_output",
 ]);
 
 /** Admitted identical-loop reminders ignored before the next same call is blocked. */
