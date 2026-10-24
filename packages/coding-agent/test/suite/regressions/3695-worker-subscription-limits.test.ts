@@ -310,3 +310,34 @@ it("concurrent same-stamp writes on host and worker keep both updates and conver
 	expect(held?.error).toBe("rate limited");
 	expect(held?.windows.map((window) => window.id).sort()).toEqual(["claude:5h", "claude:7d"]);
 });
+
+// senpi#3695 (sixth review, MEDIUM 1): at the same change stamp, a poll that reset usage and dropped a window races an
+// error from the other isolate whose record still holds the older windows. The poll's windows were reported later
+// (its reportedAt), so they must win on both stores: no stale usage shown under a fresh timestamp, no dropped window
+// brought back. The error is kept (a same-stamp success does not clear the other side's error; the next poll does).
+it("a same-stamp poll beats the other side's older windows and both stores show the poll", () => {
+	for (const pollOnHost of [true, false]) {
+		const { host, worker, settle } = mirrorPair();
+		const [polling, failing] = pollOnHost ? [host, worker] : [worker, host];
+		host.report("anthropic-subscription", "work", {
+			windows: [
+				{ id: "claude:5h", label: "5h", windowMinutes: 300, usedPercent: 40 },
+				{ id: "claude:7d", label: "7d", windowMinutes: 10080, usedPercent: 10 },
+			],
+			reportedAt: new Date(at("00")),
+		});
+		settle();
+		polling.report("anthropic-subscription", "work", {
+			windows: [{ id: "claude:5h", label: "5h", windowMinutes: 300, usedPercent: 3 }],
+			reportedAt: new Date(at("05")),
+		});
+		failing.report("anthropic-subscription", "work", { error: "rate limited", reportedAt: new Date(at("05")) });
+
+		expect(settle()).toBeLessThan(100);
+		expect(worker.mirrorSnapshot()).toEqual(host.mirrorSnapshot());
+		const [held] = host.snapshot();
+		expect(held?.windows).toEqual([{ id: "claude:5h", label: "5h", windowMinutes: 300, usedPercent: 3 }]);
+		expect(held?.reportedAt).toBe(at("05"));
+		expect(held?.error).toBe("rate limited");
+	}
+});
