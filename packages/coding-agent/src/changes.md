@@ -108,6 +108,42 @@
 
 - LOW: `packages/coding-agent/src/experimental/micro/runtime.ts`, `contextTokenCount`.
 
+## 2026-10-22 - Export the session lifecycle contract (senpi#3864)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports lifecycle snapshots, events, child reports, `SpawnedBy`, self-settle results and obligation/ticket interfaces.
+
+### Why
+
+- `packages/coding-agent/src/index.ts`: RPC clients and the desktop type against them.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/index.ts`: the package entry point is core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/index.ts`: type export list.
+
+## 2026-10-21 - Export the shared session lifecycle contract (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/index.ts` exports lifecycle snapshots, events, child reports, spawned-session identity, self-settle results and obligation/ticket interfaces.
+
+### Why
+
+`packages/coding-agent/src/index.ts`: RPC clients and extension producers need the engine's named contract rather than separate copies.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/index.ts`: the package's public entry point and its declarations belong to the engine.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/index.ts`: core session type exports.
+
 ## 2026-10-18 - A session is found by the id its file name carries (oh-my-openagent#7471)
 
 ### What changed
@@ -422,6 +458,44 @@ Cache enablement happens in the CLI bootstrap before extension loading and befor
 ### Expected merge conflict zones
 
 - LOW: the shared startup compile-cache helper and its two entry-point calls. Preserve the pre-import ordering for sessions and await the command decision.
+
+## 2026-10-12 - Remove the /llama llama.cpp integration (senpi#3202)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/llama/index.ts`: deleted. This was the built-in `/llama` extension entry point.
+- `packages/coding-agent/src/extensions/llama/client.ts`: deleted. The llama-server client.
+- `packages/coding-agent/src/extensions/llama/provider.ts`: deleted. The llama.cpp provider and slash command wiring.
+- `packages/coding-agent/src/extensions/llama/ui.ts`: deleted. The `/llama` model-management UI.
+- `packages/coding-agent/src/extensions/llama/huggingface.ts`: deleted. The Hugging Face download helper used only by `/llama`.
+- `packages/coding-agent/src/extensions/index.ts`: `builtInExtensions` becomes an empty array; the llama.cpp extension was its only entry.
+
+### Why
+
+- `packages/coding-agent/src/extensions/llama/index.ts`: Q ordered removal of the `/llama` entry point.
+- `packages/coding-agent/src/extensions/llama/client.ts`: the removed integration was this client's only consumer.
+- `packages/coding-agent/src/extensions/llama/provider.ts`: the removed integration owned this provider.
+- `packages/coding-agent/src/extensions/llama/ui.ts`: the removed command owned this management UI.
+- `packages/coding-agent/src/extensions/llama/huggingface.ts`: the removed command owned this download helper.
+- `packages/coding-agent/src/extensions/index.ts`: the host must no longer register the deleted extension.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/extensions/llama/index.ts`: an extension cannot delete a shipped entry point.
+- `packages/coding-agent/src/extensions/llama/client.ts`: an extension cannot delete the shipped client.
+- `packages/coding-agent/src/extensions/llama/provider.ts`: an extension cannot delete the shipped provider.
+- `packages/coding-agent/src/extensions/llama/ui.ts`: an extension cannot delete the shipped management UI.
+- `packages/coding-agent/src/extensions/llama/huggingface.ts`: an extension cannot delete the shipped download helper.
+- `packages/coding-agent/src/extensions/index.ts`: only the host can remove its built-in registration.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/extensions/llama/index.ts`: deleted; upstream edits will conflict.
+- `packages/coding-agent/src/extensions/llama/client.ts`: deleted; upstream edits will conflict.
+- `packages/coding-agent/src/extensions/llama/provider.ts`: deleted; upstream edits will conflict.
+- `packages/coding-agent/src/extensions/llama/ui.ts`: deleted; upstream edits will conflict.
+- `packages/coding-agent/src/extensions/llama/huggingface.ts`: deleted; upstream edits will conflict.
+- `packages/coding-agent/src/extensions/index.ts`: the `builtInExtensions` list.
 
 ## 2026-10-11 - Export eval cell RPC contracts (senpi#3072)
 
@@ -5316,6 +5390,23 @@ The package barrel is the only public entry point; an extension cannot add expor
 ### Expected merge conflict zones
 
 - LOW: the `core/skills.ts` export block in `packages/coding-agent/src/index.ts`.
+## 2026-10-16 - Offline prompt size CLI route (senpi#3483)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `--print-prompt-sizes` forces offline print startup, opens the normal runtime and exits through the diagnostic before stdin, model streaming or catalog refresh.
+
+### Why
+
+The size breakdown must describe the loaded current project, including extensions, while making no provider request.
+
+### Why an extension could not handle it
+
+The flag changes core startup and dispatch before extensions can handle a turn.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: offline selection, app mode selection and the post-runtime-creation diagnostic branch.
 
 ## 2026-10-16 - Auth notices reach the TUI at startup, once per change (#3448)
 
