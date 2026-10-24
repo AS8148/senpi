@@ -1,3 +1,21 @@
+## 2026-10-18 - Skip MCP attach during size inspection (senpi#3483)
+
+### What changed
+
+- `index.ts`: `session_start.sizesOnly` returns before starting either HTTP or stdio attachment. Normal startup and preview composition retain their existing attach promise.
+
+### Why
+
+Size inspection must not connect to configured MCP servers. The report inventories configured names/count without sizes and explicitly excludes their tools. A real HTTP recording fixture asserts zero connections for diagnostic startup and successful attachment for normal startup.
+
+### Why an extension could not handle it
+
+The built-in starts the attach; another extension cannot undo its network work.
+
+### Expected merge conflict zones
+
+- `index.ts`: `session_start` immediately before `onSessionStart`.
+
 ## 2026-10-20 - Retain same-session skill servers during MCP administrative reattach (senpi#3796)
 
 ### What changed
@@ -1274,3 +1292,22 @@ The token store and refresh manager are this builtin's credential layer.
 ### Expected merge conflict zones
 
 - `service.ts` `whenAttachSettled` and its doc comment; the `./startup-race.ts` import list (`waitForMcpStartupRace`).
+
+## 2026-10-17 - Never hold the legacy migration lock across an await (senpi#3546)
+
+### What changed
+
+- `auth/legacy-lock.ts`: `withLegacyLock(path, stale, critical)` replaces `acquireLegacyLock`. Waiting for another holder stays asynchronous, but taking the lock, running the claim and releasing it now happen in one synchronous step.
+- `auth/legacy-migration.ts`: `readRecordAsync` and the synchronous `adoptLegacyRecord` return "no grant" without taking the lock when there is no legacy URL-keyed grant to claim. A lock-acquisition failure still surfaces as `LockAcquireError`; an error from the claim itself propagates unchanged.
+
+### Why
+
+Every MCP HTTP request looks up its token synchronously (`tokens()` in `modern/http-fetch.ts` and `transport-sdk.ts`). For a server with no saved grant that lookup took the migration lock with the event loop blocked. When the holder was the asynchronous lookup of the same process (OAuth preparation before each catalog refresh), the holder could never run its release, so the whole process froze until the lock went stale (30 s). Tool calls then failed with "MCP metadata was not ready before the request timeout", which is the intermittent failure in `test/mcp/session-expiry-full-reconnect.test.ts`.
+
+### Why an extension could not handle it
+
+The token store and its legacy migration are this builtin's credential layer.
+
+### Expected merge conflict zones
+
+`auth/legacy-migration.ts` `readRecordAsync` and `adoptLegacyRecord` at the next upstream or SDK sync.
