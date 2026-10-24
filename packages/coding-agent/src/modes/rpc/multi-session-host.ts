@@ -326,6 +326,10 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			shouldReopenParked: () => !draining,
 			...(runtimeBuildId !== undefined && { runtimeBuildId }),
 			...(canHandOver && {
+				endpoint: {
+					agentDir: options.agentDir,
+					socket: readHostWatchdogConfigFromBrandEnv()?.publicSocket ?? socketPath,
+				},
 				handover: {
 					identity: () => ({
 						instanceId: hostInstanceId(),

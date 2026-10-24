@@ -11,6 +11,8 @@ export interface ItemizedAdmission {
 	readonly persisted: (entryId: string) => void;
 	readonly failed: (error: unknown) => void;
 	readonly droppedByAbort: () => void;
+	/** The batch's item ids, so a re-send of a queued ticket can be checked against what will be written (senpi#4106). */
+	readonly itemIds?: readonly string[];
 }
 
 /** The notice an item is stored as when its batch is held: its own payload and details, never the whole batch's. */
