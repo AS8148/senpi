@@ -906,8 +906,17 @@
   "packages/coding-agent/src/modes/rpc/rpc-client.ts": {
     "typescript/no-non-null-assertion": 2
   },
-  "packages/coding-agent/src/modes/rpc/rpc-types.ts": {
-    "typescript/no-explicit-any": 6
+  "packages/coding-agent/src/modes/rpc/rpc-mutation-response-types.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/coding-agent/src/modes/rpc/rpc-read-response-types.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/src/modes/rpc/rpc-session-event-types.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/src/modes/rpc/rpc-session-state-types.ts": {
+    "typescript/no-explicit-any": 2
   },
   "packages/coding-agent/src/modes/rpc/session-event-writer.ts": {
     "typescript/no-non-null-assertion": 1
