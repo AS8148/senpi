@@ -43,6 +43,12 @@ export interface RpcProtocolIdentity {
 }
 
 export interface RpcProtocolInfo extends RpcProtocolIdentity {
+	/** Present only on a public POSIX endpoint's answer to a challenge (wire contract v1.1). */
+	readonly auth?: {
+		readonly launch_id: string;
+		readonly server_nonce: string;
+		readonly server_proof: string;
+	};
 	/** Supervised socket hosts expose admission state independently of child responsiveness. */
 	readonly lifecycle?: "ready" | "stopping";
 	readonly protocolVersion: 1;

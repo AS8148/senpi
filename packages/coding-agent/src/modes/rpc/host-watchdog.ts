@@ -16,7 +16,7 @@
 import { rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { Socket } from "node:net";
-import { envValue } from "../../core/brand.ts";
+import { brandEnvNames, envValue } from "../../core/brand.ts";
 import { recordHostCrash } from "./host-crash-record.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
@@ -110,24 +110,52 @@ export function readHostWatchdogConfig(
 }
 
 /** Same configuration, resolved through the brand-aware env prefixes. */
-export function readHostWatchdogConfigFromBrandEnv(): HostWatchdogConfig | undefined {
+export function readHostWatchdogConfigFromBrandEnv(
+	env: NodeJS.ProcessEnv = process.env,
+): HostWatchdogConfig | undefined {
 	// The lifecycle supervisor intentionally uses the canonical SENPI_RPC_HOST_*
 	// names when spawning a child. envValue() resolves branded aliases for normal
 	// launches, but must not hide the canonical variables from the supervisor
 	// handoff or the lifetime binding is silently disabled.
 	return readHostWatchdogConfig({
-		[HOST_WATCH_FD_ENV]: process.env[HOST_WATCH_FD_ENV] ?? envValue("RPC_HOST_WATCH_FD"),
-		[HOST_WATCH_PPID_ENV]: process.env[HOST_WATCH_PPID_ENV] ?? envValue("RPC_HOST_WATCH_PPID"),
-		[HOST_WATCH_PSTART_ENV]: process.env[HOST_WATCH_PSTART_ENV] ?? envValue("RPC_HOST_WATCH_PSTART"),
-		[HOST_WATCH_PSTART_TICKS_ENV]:
-			process.env[HOST_WATCH_PSTART_TICKS_ENV] ?? envValue("RPC_HOST_WATCH_PSTART_TICKS"),
-		[HOST_WATCH_LIFETIME_FIFO_ENV]: process.env[HOST_WATCH_LIFETIME_FIFO_ENV] ?? envValue("RPC_HOST_LIFETIME_FIFO"),
-		[HOST_SCRATCH_DIR_ENV]: process.env[HOST_SCRATCH_DIR_ENV] ?? envValue("RPC_HOST_SCRATCH_DIR"),
-		[HOST_PUBLIC_SOCKET_ENV]: process.env[HOST_PUBLIC_SOCKET_ENV] ?? envValue("RPC_HOST_PUBLIC_SOCKET"),
-		[HOST_CLEANUP_PATHS_ENV]: process.env[HOST_CLEANUP_PATHS_ENV] ?? envValue("RPC_HOST_CLEANUP_PATHS"),
-		[HOST_DAEMON_DIR_ENV]: process.env[HOST_DAEMON_DIR_ENV],
-		[HOST_INSTANCE_ID_ENV]: process.env[HOST_INSTANCE_ID_ENV],
+		[HOST_WATCH_FD_ENV]: env[HOST_WATCH_FD_ENV] ?? envValue("RPC_HOST_WATCH_FD", env),
+		[HOST_WATCH_PPID_ENV]: env[HOST_WATCH_PPID_ENV] ?? envValue("RPC_HOST_WATCH_PPID", env),
+		[HOST_WATCH_PSTART_ENV]: env[HOST_WATCH_PSTART_ENV] ?? envValue("RPC_HOST_WATCH_PSTART", env),
+		[HOST_WATCH_PSTART_TICKS_ENV]: env[HOST_WATCH_PSTART_TICKS_ENV] ?? envValue("RPC_HOST_WATCH_PSTART_TICKS", env),
+		[HOST_WATCH_LIFETIME_FIFO_ENV]: env[HOST_WATCH_LIFETIME_FIFO_ENV] ?? envValue("RPC_HOST_LIFETIME_FIFO", env),
+		[HOST_SCRATCH_DIR_ENV]: env[HOST_SCRATCH_DIR_ENV] ?? envValue("RPC_HOST_SCRATCH_DIR", env),
+		[HOST_PUBLIC_SOCKET_ENV]: env[HOST_PUBLIC_SOCKET_ENV] ?? envValue("RPC_HOST_PUBLIC_SOCKET", env),
+		[HOST_CLEANUP_PATHS_ENV]: env[HOST_CLEANUP_PATHS_ENV] ?? envValue("RPC_HOST_CLEANUP_PATHS", env),
+		[HOST_DAEMON_DIR_ENV]: env[HOST_DAEMON_DIR_ENV],
+		[HOST_INSTANCE_ID_ENV]: env[HOST_INSTANCE_ID_ENV],
 	});
+}
+
+const WATCH_ENV_SUFFIXES = [
+	"RPC_HOST_WATCH_FD",
+	"RPC_HOST_WATCH_PPID",
+	"RPC_HOST_WATCH_PSTART",
+	"RPC_HOST_WATCH_PSTART_TICKS",
+	"RPC_HOST_LIFETIME_FIFO",
+	"RPC_HOST_SCRATCH_DIR",
+	"RPC_HOST_PUBLIC_SOCKET",
+	"RPC_HOST_CLEANUP_PATHS",
+] as const;
+
+/**
+ * Reads the supervisor binding once and removes it from `env` (senpi#3815 review L4), so no tool, shell or nested host
+ * this host starts inherits a binding to a supervisor that is not its own. The generation identity (instance id,
+ * daemon dir) stays: sessions use it to name the host they run in.
+ */
+export function consumeHostWatchdogEnv(env: NodeJS.ProcessEnv = process.env): HostWatchdogConfig | undefined {
+	const config = readHostWatchdogConfigFromBrandEnv(env);
+	scrubHostWatchdogEnv(env);
+	return config;
+}
+
+export function scrubHostWatchdogEnv(env: NodeJS.ProcessEnv = process.env): void {
+	for (const suffix of WATCH_ENV_SUFFIXES)
+		for (const name of [`SENPI_${suffix}`, ...brandEnvNames(suffix)]) delete env[name];
 }
 
 /**

@@ -79,6 +79,17 @@ const INTERNAL_HOP_LEAVES = new Set(
 		.concat("packages/coding-agent/dist/utils/process-start-identity.js"),
 );
 
+// senpi#3815: the public endpoint's challenge-response (wire contract v1.1) adds exactly these three leaves, each
+// importing only Node builtins and modules already in the graph (jsonl, socket-transport, process-identity). Measured
+// at 66 modules (8 hop leaves): rpc-auth-proof 1,406 source / 1,079 built bytes, 35 code lines (the one HMAC and
+// constant-time comparison, shared with the hop); rpc-public-auth 8,054 / 9,064, 214 (the pre-admission filter);
+// rpc-public-key 7,349 / 8,190, 185 (the per-launch key record). Nothing else entered the graph.
+const PUBLIC_AUTH_LEAVES = new Set(
+	["rpc-auth-proof", "rpc-public-auth", "rpc-public-key"].map(
+		(name) => `packages/coding-agent/dist/modes/rpc/${name}.js`,
+	),
+);
+
 function loadedModules(entries: readonly { phase: string; url: string }[]): string[] {
 	const repo = `file://${repoRoot}`;
 	return [
@@ -94,8 +105,9 @@ describe("RPC host supervisor import graph", () => {
 			probeImportGraph(repoRoot, `${repoRoot}/packages/coding-agent/dist/modes/rpc/host-lifecycle.js`).entries,
 		);
 		const internalHopLeaves = modules.filter((url) => INTERNAL_HOP_LEAVES.has(url)).length;
+		const publicAuthLeaves = modules.filter((url) => PUBLIC_AUTH_LEAVES.has(url)).length;
 		console.info(
-			`supervisor graph: ${modules.length} modules (base ceiling ${SUPERVISOR_MODULE_CEILING}, internal hop ${internalHopLeaves})`,
+			`supervisor graph: ${modules.length} modules (base ceiling ${SUPERVISOR_MODULE_CEILING}, internal hop ${internalHopLeaves}, public auth ${publicAuthLeaves})`,
 		);
 
 		const core = modules.filter((url) => url.startsWith("packages/coding-agent/dist/core/"));
@@ -104,7 +116,7 @@ describe("RPC host supervisor import graph", () => {
 		).toEqual([]);
 		expect(modules.filter((url) => url.startsWith("packages/coding-agent/dist/modes/interactive/"))).toEqual([]);
 		expect(modules.filter((url) => url.startsWith("packages/coding-agent/dist/modes/app-server/"))).toEqual([]);
-		expect(modules.length - internalHopLeaves).toBeLessThanOrEqual(SUPERVISOR_MODULE_CEILING);
+		expect(modules.length - internalHopLeaves - publicAuthLeaves).toBeLessThanOrEqual(SUPERVISOR_MODULE_CEILING);
 	});
 
 	// senpi#3743: a bundled install starts its supervisor through `dist/bundle/host-supervisor.js`. Before it

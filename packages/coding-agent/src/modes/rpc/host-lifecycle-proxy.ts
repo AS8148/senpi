@@ -3,7 +3,7 @@
  * adoption of the public name, and the readiness probes of the private hop. Split out of
  * `host-lifecycle.ts`, which keeps the supervisor's orchestration (senpi#2566).
  */
-import { chmod, mkdir, rename, stat, unlink } from "node:fs/promises";
+import { chmod, mkdir, stat, unlink } from "node:fs/promises";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import type { HostAdmission } from "./host-admission.ts";
@@ -11,13 +11,11 @@ import { proxyWithAdmission } from "./host-admission-proxy.ts";
 import type { ClientOccupancy } from "./host-client-occupancy.ts";
 import { connectInternalConnection } from "./internal-channel.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
-import {
-	type ListenerState,
-	MAX_SOCKET_PATH_BYTES,
-	type SocketFileIdentity,
-	socketEntryListenerState,
-	statSocketIdentity,
-} from "./socket-ownership.ts";
+import { PublicRpcConnection } from "./rpc-public-auth.ts";
+import type { RpcPublicEndpoint } from "./rpc-public-key.ts";
+import { type ListenerState, MAX_SOCKET_PATH_BYTES, socketEntryListenerState } from "./socket-ownership.ts";
+
+export { adoptPublicSocket } from "./socket-ownership.ts";
 import {
 	authenticateSocket,
 	ensureSocketSecret,
@@ -31,6 +29,7 @@ export interface PublicProxyOptions {
 	readonly internalSecret?: Buffer;
 	readonly internalKey?: Buffer;
 	readonly publicSecret?: Buffer;
+	readonly publicEndpoint?: RpcPublicEndpoint;
 	readonly clients: ClientOccupancy;
 	/** Shared authority for stopping, protocol replies and new-session admission. */
 	readonly admission: HostAdmission;
@@ -43,6 +42,7 @@ export interface PublicProxyOptions {
 export function createPublicProxy(options: PublicProxyOptions): Server {
 	const { internalSocket, internalSecret, publicSecret, clients } = options;
 	return createServer((client) => {
+		const auth = options.publicEndpoint ? new PublicRpcConnection(client, options.publicEndpoint) : undefined;
 		const accept = async (): Promise<void> => {
 			// Teardown is terminal even for an accept that raced socket shielding/server.close.
 			if (!clients.admit(client)) return;
@@ -74,8 +74,9 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 					hop?.destroy();
 					return;
 				}
-				proxyWithAdmission(client, hop, options.admission);
-				client.resume();
+				proxyWithAdmission(client, hop, options.admission, auth);
+				// An authenticated endpoint resumes the client itself once its key record is published.
+				if (!auth) client.resume();
 			} catch {
 				detach();
 			}
@@ -83,27 +84,6 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 		if (publicSecret) authenticateSocket(client, publicSecret, () => void accept());
 		else void accept();
 	});
-}
-
-/**
- * Takes the public name over with a rename, once - and only while - that name still refers to the
- * entry this handoff was decided against. A socket that changed underneath belongs to another
- * process now: replacing it would unlink an endpoint this generation cannot prove it owns, so the
- * successor aborts instead and leaves both the intruder's socket and its own bind entry alone.
- */
-export async function adoptPublicSocket(
-	bindSocket: string,
-	publicSocket: string,
-	expected: SocketFileIdentity | undefined,
-): Promise<void> {
-	if (expected === undefined) throw new Error(`${publicSocket}: a generation launch must name the entry it replaces`);
-	const current = await statSocketIdentity(publicSocket);
-	if (current === undefined || current.dev !== expected.dev || current.ino !== expected.ino) {
-		throw new Error(`${publicSocket}: owned by another socket entry now; refusing to replace it`);
-	}
-	// rename(2) is atomic for readers of the path: every connect either reaches the old entry or
-	// this one, never nothing. The inode this supervisor bound simply answers to a second name.
-	await rename(bindSocket, publicSocket);
 }
 
 /**

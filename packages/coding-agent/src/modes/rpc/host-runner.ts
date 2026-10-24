@@ -56,6 +56,8 @@ export {
 	HOST_EXIT_USAGE,
 	type HostOutcome,
 } from "./host-outcome.ts";
+import { hostRequestKeyRoot } from "./host-request-key-root.ts";
+import { withRpcKeyRoot } from "./rpc-auth-client.ts";
 
 const PROBE_TIMEOUT_MS = 10_000;
 
@@ -101,7 +103,14 @@ export type HostRequest =
 	| { readonly action: "gc"; readonly agentDir: string }
 	| { readonly action: "shard_path"; readonly kind: ShardKind; readonly owner: string; readonly root: string };
 
-export async function runHostRequest(request: HostRequest): Promise<HostOutcome> {
+export async function runHostRequest(
+	request: HostRequest,
+	options: { readonly keyRoot?: string } = {},
+): Promise<HostOutcome> {
+	return withRpcKeyRoot(hostRequestKeyRoot(request, options.keyRoot), () => runHostRequestInKeyRoot(request));
+}
+
+async function runHostRequestInKeyRoot(request: HostRequest): Promise<HostOutcome> {
 	if (request.action === "ensure" || request.action === "handoff" || request.action === "stop") {
 		const { socket, agentDir } = request.target;
 		if ((await endpointKindOfSocket(socket, agentDir)) === "tui") {

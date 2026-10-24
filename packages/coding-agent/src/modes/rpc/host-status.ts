@@ -21,6 +21,7 @@ import { electPointer, type HostPointerState } from "./host-pointer-election.ts"
 import { observeProtocolInfo, requestOnSocket } from "./host-probe.ts";
 import { type HostProcessMetrics, readHostProcessMetrics } from "./host-process-metrics.ts";
 import { type HostPathClaimRow, type HostSessionRow, parseSessionRows, readClaimRows } from "./host-status-rows.ts";
+import { rpcKeyRoot, withRpcKeyRoot } from "./rpc-auth-client.ts";
 import type { RpcLaunchProfile } from "./rpc-types.ts";
 
 const STATUS_PROBE_TIMEOUT_MS = 10_000;
@@ -124,11 +125,21 @@ export async function readHostStatus(
 export async function probeHostStatus(
 	options: HostStatusOptions,
 	read: HostStatusReadOptions = {},
-): Promise<{
+): Promise<HostStatusProbe> {
+	// The host's key record lives under its own agent dir; a looker that names it proves the key from there.
+	return withRpcKeyRoot(rpcKeyRoot({}, options.agentDir), () => probeHostStatusInKeyRoot(options, read));
+}
+
+interface HostStatusProbe {
 	readonly report: HostStatusReport;
 	readonly answered: HostProtocolInfo | undefined;
 	readonly listing: readonly HostSessionRow[];
-}> {
+}
+
+async function probeHostStatusInKeyRoot(
+	options: HostStatusOptions,
+	read: HostStatusReadOptions,
+): Promise<HostStatusProbe> {
 	const paths = createHostDaemonPaths({
 		socket: options.socket,
 		...(options.agentDir ? { agentDir: options.agentDir } : {}),

@@ -1,21 +1,19 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import type { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { createInternalRecordStream } from "./internal-record-stream.ts";
 import { MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
+import { RPC_AUTH_HEX, rpcAuthProof, rpcProofMatches } from "./rpc-auth-proof.ts";
 
 type Frame = Record<string, unknown>;
-const HEX = /^[0-9a-f]{64}$/;
+const INTERNAL_LAUNCH_ID = "internal";
 
-function proof(key: Buffer, label: string, first: string, second: string): string {
-	return createHmac("sha256", key).update(`${label}\ninternal\n${first}\n${second}`).digest("hex");
+/** One HMAC and constant-time comparison for both endpoints (wire contract v1.1); the hop's launch id is "internal". */
+function proof(key: Buffer, label: "server" | "client", first: string, second: string): string {
+	return rpcAuthProof(key, label, INTERNAL_LAUNCH_ID, first, second);
 }
 function matches(actual: unknown, expected: string): boolean {
-	return (
-		typeof actual === "string" &&
-		HEX.test(actual) &&
-		timingSafeEqual(Buffer.from(actual, "hex"), Buffer.from(expected, "hex"))
-	);
+	return rpcProofMatches(expected, actual);
 }
 function object(value: unknown): Frame {
 	if (!isObject(value)) throw new Error("auth_failed");
@@ -25,7 +23,7 @@ function isObject(value: unknown): value is Frame {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 function nonce(value: unknown): string {
-	if (typeof value !== "string" || !HEX.test(value)) throw new Error("auth_failed");
+	if (typeof value !== "string" || !RPC_AUTH_HEX.test(value)) throw new Error("auth_failed");
 	return value;
 }
 
@@ -131,8 +129,8 @@ export function connectInternalConnection(
 		if (
 			response.id !== "internal-protocol" ||
 			response.success !== true ||
-			auth.launch_id !== "internal" ||
-			!matches(auth.server_proof, proof(key, "senpi-rpc-server", clientNonce, serverNonce))
+			auth.launch_id !== INTERNAL_LAUNCH_ID ||
+			!matches(auth.server_proof, proof(key, "server", clientNonce, serverNonce))
 		)
 			throw new Error("host_identity_unproven");
 		const [result] = await Promise.all([
@@ -140,7 +138,7 @@ export function connectInternalConnection(
 			send({
 				id: "internal-auth",
 				type: "authenticate",
-				client_proof: proof(key, "senpi-rpc-client", serverNonce, clientNonce),
+				client_proof: proof(key, "client", serverNonce, clientNonce),
 			}),
 		]);
 		if (result.id !== "internal-auth" || result.command !== "authenticate" || result.success !== true)
@@ -172,7 +170,8 @@ export function acceptInternalConnection(socket: Socket, key: Buffer, protocol: 
 		};
 		const first = await read();
 		const offered = isObject(first.auth) ? first.auth.client_nonce : undefined;
-		if (first.type !== "get_protocol_info" || typeof offered !== "string" || !HEX.test(offered)) return refuse(first);
+		if (first.type !== "get_protocol_info" || typeof offered !== "string" || !RPC_AUTH_HEX.test(offered))
+			return refuse(first);
 		const clientNonce = offered;
 		const serverNonce = randomBytes(32).toString("hex");
 		const [frame] = await Promise.all([
@@ -186,15 +185,15 @@ export function acceptInternalConnection(socket: Socket, key: Buffer, protocol: 
 					...protocol,
 					capabilities: [...(Array.isArray(protocol.capabilities) ? protocol.capabilities : []), "socket_auth"],
 					auth: {
-						launch_id: "internal",
+						launch_id: INTERNAL_LAUNCH_ID,
 						server_nonce: serverNonce,
-						server_proof: proof(key, "senpi-rpc-server", clientNonce, serverNonce),
+						server_proof: proof(key, "server", clientNonce, serverNonce),
 					},
 				},
 			}),
 		]);
 		if (frame.type !== "authenticate") return refuse(frame);
-		const valid = matches(frame.client_proof, proof(key, "senpi-rpc-client", serverNonce, clientNonce));
+		const valid = matches(frame.client_proof, proof(key, "client", serverNonce, clientNonce));
 		await send({
 			id: frame.id,
 			type: "response",
