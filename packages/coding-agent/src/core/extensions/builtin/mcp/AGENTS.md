@@ -32,7 +32,7 @@ Attach is **single-flight**: `attachPromise` memoizes the in-flight `attachSessi
 
 ## ELICITATION
 
-`elicitation.ts` implements MCP elicitation as form-only (no free-text). Must work headless and over RPC; the UI provider is injected at `before_agent_start` time via `setMcpElicitationUiProvider`.
+`elicitation.ts` implements form-only elicitation over TUI/RPC primitives; print/json processes omit its capability, and the UI provider bound at `before_agent_start` declines without calling primitives whenever `ctx.hasUI` is false.
 
 ## TESTS AND DOCS
 

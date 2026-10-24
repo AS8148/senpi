@@ -1,5 +1,5 @@
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { configureMcpElicitation, MCP_CLIENT_ELICITATION_CAPABILITY } from "../elicitation.ts";
+import { configureMcpElicitation, mcpClientCapabilities } from "../elicitation.ts";
 import { ConnectError } from "../errors.ts";
 import { loadMcpSdkClient } from "../sdk.lazy.ts";
 import {
@@ -15,11 +15,6 @@ import { ModernHttpTransport } from "./transport.ts";
 import { MODERN_PROTOCOL_VERSION } from "./wire.ts";
 
 const clientInfo = { name: "senpi-mcp-client", version: "0.0.0" };
-const probeOptions = {
-	clientInfo,
-	clientCapabilities: MCP_CLIENT_ELICITATION_CAPABILITY,
-	supportedVersions: [MODERN_PROTOCOL_VERSION],
-};
 
 export async function materializeNegotiatedTransport(
 	options: MaterializeMcpTransportOptions,
@@ -28,6 +23,8 @@ export async function materializeNegotiatedTransport(
 	signal: AbortSignal,
 ): Promise<McpMaterializedTransport> {
 	signal.throwIfAborted();
+	const clientCapabilities = mcpClientCapabilities(options.elicitationEnabled);
+	const probeOptions = { clientInfo, clientCapabilities, supportedVersions: [MODERN_PROTOCOL_VERSION] };
 	const { spec, logger } = options;
 	let outcome: EraOutcome = { kind: "legacy-fallback" };
 	if (spec.kind === "http") {
@@ -44,14 +41,14 @@ export async function materializeNegotiatedTransport(
 				});
 			}
 			const { Client } = await loadMcpSdkClient();
-			const client = new Client(clientInfo, { capabilities: MCP_CLIENT_ELICITATION_CAPABILITY });
-			await configureMcpElicitation(client, options.elicitationUiProvider);
+			const client = new Client(clientInfo, { capabilities: clientCapabilities });
+			await configureMcpElicitation(client, options.elicitationUiProvider, undefined, options.elicitationEnabled);
 			const transport = new ModernSdkBridge(
 				new ModernHttpTransport({
 					url: spec.url,
 					fetch,
 					clientInfo,
-					clientCapabilities: MCP_CLIENT_ELICITATION_CAPABILITY,
+					clientCapabilities,
 					protocolVersion: outcome.version,
 				}),
 				outcome.discovery,

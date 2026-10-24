@@ -24,6 +24,7 @@ interface SessionConnectionOptions {
 	readonly generation: McpConfigGeneration;
 	readonly declared: McpServerDeclaredConfig;
 	readonly session: McpSessionOptions;
+	readonly elicitationEnabled: boolean;
 	readonly cwd: string;
 	readonly ui: McpElicitationUiProvider;
 	readonly artifacts: McpOutputArtifacts;
@@ -65,6 +66,7 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 		config,
 		env: projectPolicy?.initial.env ?? session.env,
 		elicitationUiProvider: options.ui,
+		elicitationEnabled: options.elicitationEnabled,
 		logger,
 		serverName: name,
 		...(renewal === undefined ? {} : { resolveConfig: renewal.resolveConfig, onGenerationChanged: rekey }),

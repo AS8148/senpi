@@ -19,6 +19,10 @@ import { safeTimer } from "./wrap.ts";
 /** Declared empty on purpose: maximum server compatibility (form mode only). */
 export const MCP_CLIENT_ELICITATION_CAPABILITY = { elicitation: {} } as const;
 
+export function mcpClientCapabilities(elicitationEnabled = true): { elicitation?: Record<string, never> } {
+	return elicitationEnabled ? MCP_CLIENT_ELICITATION_CAPABILITY : {};
+}
+
 export const MCP_ELICITATION_TIMEOUT_MS = 5 * 60 * 1000;
 
 type ElicitationUi = Pick<ExtensionUIContext, "input" | "select" | "confirm">;
@@ -59,7 +63,18 @@ export async function configureMcpElicitation(
 	client: Client,
 	owner: McpElicitationUiOwner | McpElicitationUiProvider | undefined = legacyUiProvider,
 	timeoutMs: number = MCP_ELICITATION_TIMEOUT_MS,
+	elicitationEnabled = true,
 ): Promise<void> {
+	if (!elicitationEnabled) {
+		// The SDK requires an advertised capability for setRequestHandler.
+		// Its public fallback handles unsolicited requests without claiming UI support.
+		const { ErrorCode, McpError } = await loadMcpSdkTypes();
+		client.fallbackRequestHandler = async (request) => {
+			if (request.method === "elicitation/create") return { action: "decline" };
+			throw new McpError(ErrorCode.MethodNotFound, "Method not found");
+		};
+		return;
+	}
 	const { ElicitRequestSchema } = await loadMcpSdkTypes();
 	client.setRequestHandler(ElicitRequestSchema, async (request) => {
 		const params = request.params;
