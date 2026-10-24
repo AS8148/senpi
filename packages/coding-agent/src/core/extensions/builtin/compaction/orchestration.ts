@@ -69,12 +69,19 @@ export function resolveBeforeAgentStartMessage(input: {
 	message?: BeforeAgentStartEventResult["message"];
 	reminder?: string;
 	reminderEnabled?: boolean;
+	reminderEpoch?: string;
 }): BeforeAgentStartEventResult["message"] | undefined {
 	if (!input.reminder || input.reminderEnabled === false) return input.message;
-	if (!input.message) {
-		return { customType: "compaction-token-budget", content: input.reminder, display: false };
-	}
-	return { ...input.message, content: `${input.message.content}\n\n${input.reminder}` };
+	const details = input.message?.details;
+	return {
+		...(input.message ?? { customType: "compaction-token-budget", display: false }),
+		content: input.message ? `${input.message.content}\n\n${input.reminder}` : input.reminder,
+		placement: "before-prompt",
+		details: {
+			...(typeof details === "object" && details !== null ? details : {}),
+			tokenBudgetReminderEpoch: input.reminderEpoch,
+		},
+	};
 }
 
 export function resolveIdleWarmAction(

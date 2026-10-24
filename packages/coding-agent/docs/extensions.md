@@ -809,6 +809,8 @@ pi.on("before_agent_start", async (event, ctx) => {
 });
 ```
 
+Messages append after the triggering prompt by default. Set `message.placement` to `"before-prompt"` to persist the message immediately before that prompt instead. This also applies to extension-triggered turns; it does not modify earlier history or the system prompt.
+
 The `systemPromptOptions` field gives extensions access to the same structured data senpi uses to build the system prompt. This lets you inspect what senpi has loaded — custom prompts, guidelines, tool snippets, context files, skills — without re-discovering resources or re-parsing flags. Use it when your extension needs to make deep, informed changes to the system prompt while respecting user-provided configuration.
 
 Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.

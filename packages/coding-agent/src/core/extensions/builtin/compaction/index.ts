@@ -84,6 +84,7 @@ import * as todoBridge from "./todo-bridge.ts";
 import {
 	computeTokenBudgetReminder,
 	createInitialReminderState,
+	getPersistedReminderEpoch,
 	type TokenBudgetReminderState,
 } from "./token-budget-reminder.ts";
 import { isTransientSummarizationFailure } from "./transient-failure.ts";
@@ -1020,19 +1021,21 @@ export default function compactionExtension(
 			startSpeculativeCompaction(ctx, PROACTIVE_COMPACTION_INSTRUCTIONS);
 		}
 
+		const persistedReminder = getPersistedReminderEpoch(ctx.sessionManager.getBranch());
 		const reminder = computeTokenBudgetReminder({
 			contextTokens: usageWithPendingPrompt?.tokens ?? 0,
 			contextWindow,
 			thresholdTokens,
 			leadTokens,
 			compactionEpoch: speculativeGeneration,
-			state: reminderState,
+			state: persistedReminder.delivered ? { lastFiredEpoch: speculativeGeneration } : reminderState,
 		});
 		reminderState = reminder.nextState;
 		const deliveredMessage = resolveBeforeAgentStartMessage({
 			message,
 			reminder: reminder.message,
 			reminderEnabled: settings.reminderEnabled,
+			reminderEpoch: persistedReminder.epoch,
 		});
 		if (!deliveredMessage) return undefined;
 		return { message: deliveredMessage };

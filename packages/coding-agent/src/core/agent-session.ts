@@ -6176,7 +6176,7 @@ export class AgentSession {
 				this._baseSystemPrompt,
 				this._baseSystemPromptOptions,
 			);
-			this._applyBeforeAgentStartResult(messages, result);
+			this._applyBeforeAgentStartResult(messages, result, userMessage);
 
 			// The preflight above only sees persisted session context. These prompt,
 			// next-turn, and before_agent_start additions are also provider-visible,
@@ -6248,10 +6248,12 @@ export class AgentSession {
 	private _applyBeforeAgentStartResult(
 		messages: AgentMessage[],
 		result: Awaited<ReturnType<ExtensionRunner["emitBeforeAgentStart"]>>,
+		prompt: AgentMessage,
 	): void {
 		if (result?.messages) {
 			for (const msg of result.messages) {
-				messages.push({
+				const index = msg.placement === "before-prompt" ? messages.indexOf(prompt) : messages.length;
+				messages.splice(index, 0, {
 					role: "custom",
 					customType: msg.customType,
 					// Untyped extensions can pass null/missing content; normalize at ingestion.
@@ -7251,7 +7253,7 @@ export class AgentSession {
 						queueTriggerForLater();
 						return;
 					}
-					this._applyBeforeAgentStartResult(messages, result);
+					this._applyBeforeAgentStartResult(messages, result, appMessage);
 					await this._enforceFinalProviderAdmission(messages);
 					if (userAbortGeneration !== this._userAbortGeneration) {
 						queueTriggerForLater();

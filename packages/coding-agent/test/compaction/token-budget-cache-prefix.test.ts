@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
-import { buildAnthropicWarmPromptCacheParams } from "../../../ai/src/api/anthropic-messages.ts";
-import { getBuiltinModel } from "../../../ai/src/providers/all.ts";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { buildAnthropicWarmPromptCacheParams } from "@earendil-works/pi-ai/api/anthropic-messages";
+import { getBuiltinModel } from "@earendil-works/pi-ai/providers/all";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { makeTempDir } from "../../../../scripts/vitest-temp.ts";
 import { DEFAULT_COMPACTION_SETTINGS } from "../../src/core/compaction/index.ts";
 import compactionExtension from "../../src/core/extensions/builtin/compaction/index.ts";
 import type {
@@ -17,9 +21,18 @@ type Handler = (
 	ctx: ExtensionContext,
 ) => Promise<BeforeAgentStartEventResult | undefined> | BeforeAgentStartEventResult | undefined;
 
-function harness(restore: boolean) {
-	const manager = SessionManager.inMemory();
-	manager.appendMessage({ role: "user", content: "synthetic request", timestamp: 1 });
+const managers = new Set<SessionManager>();
+afterEach(() => {
+	for (const manager of managers) manager.dispose();
+	managers.clear();
+});
+
+function harness(restore: boolean, manager = SessionManager.inMemory(), tokens = 750_000) {
+	managers.add(manager);
+	if (manager.getBranch().length === 0) {
+		manager.appendMessage({ role: "user", content: "synthetic request", timestamp: 1 });
+		manager.appendMessage(fauxAssistantMessage("synthetic answer"));
+	}
 	if (restore) {
 		manager.appendCustomEntry("compaction.agent-checkpoint", {
 			schema: "senpi.compaction.agent-checkpoint.v1",
@@ -40,7 +53,6 @@ function harness(restore: boolean) {
 			sendMessage: vi.fn(),
 		}) as ExtensionAPI,
 	);
-	let tokens = 750_000;
 	const ctx = {
 		hasUI: false,
 		mode: "tui",
@@ -60,16 +72,21 @@ function harness(restore: boolean) {
 		const result = await handler(
 			{
 				type: "before_agent_start",
-				prompt: "",
+				prompt: "synthetic fresh prompt",
 				systemPrompt: "fixed synthetic system",
 				systemPromptOptions: { cwd: process.cwd() },
 			} as BeforeAgentStartEvent,
 			ctx,
 		);
-		if (result?.message) {
-			const { customType, content, display, details } = result.message;
+		const notice = result?.message;
+		const appendNotice = () => {
+			if (!notice) return;
+			const { customType, content, display, details } = notice;
 			manager.appendCustomMessageEntry(customType, content, display, details);
-		}
+		};
+		if (notice?.placement === "before-prompt") appendNotice();
+		manager.appendMessage({ role: "user", content: "synthetic fresh prompt", timestamp: 2 });
+		if (notice?.placement !== "before-prompt") appendNotice();
 		const model = getBuiltinModel("anthropic", "claude-opus-5-5");
 		if (!model) throw new Error("missing synthetic model");
 		return {
@@ -87,30 +104,54 @@ function harness(restore: boolean) {
 	return {
 		manager,
 		request,
-		changeBudget: () => {
-			tokens += 5000;
-		},
 	};
 }
 
 describe("persisted late token budget reminder cache prefix", () => {
-	it.each([false, true])("keeps serialized system checkpoints stable with restoration=%s", async (restore) => {
-		const h = harness(restore);
-		const first = await h.request();
-		const persisted = h.manager.buildSessionContext().messages;
-		h.changeBudget();
-		const second = await h.request();
-		expect(first.result?.systemPrompt).toBeUndefined();
-		expect(second.result?.systemPrompt).toBeUndefined();
-		expect(first.result?.message?.display).toBe(false);
-		expect(JSON.stringify(first.payload.system)).toBe(JSON.stringify(second.payload.system));
-		expect(first.payload.system).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({ cache_control: expect.objectContaining({ type: "ephemeral" }) }),
-			]),
-		);
-		expect(first.payload.messages).toEqual(second.payload.messages);
-		expect(h.manager.buildSessionContext().messages).toEqual(persisted);
+	it.each([false, true])(
+		"keeps distinct-epoch notices behind stable checkpoints with restoration=%s",
+		async (restore) => {
+			const h = harness(restore);
+			const first = await h.request();
+			h.manager.appendCompaction("synthetic summary", null, 750_000);
+			const second = await harness(restore, h.manager, 755_000).request();
+			expect(first.result?.systemPrompt).toBeUndefined();
+			expect(second.result?.systemPrompt).toBeUndefined();
+			expect(first.result?.message?.display).toBe(false);
+			for (const request of [first, second]) {
+				expect(request.result?.message?.content).toContain("[context budget]");
+				expect(request.result?.message?.placement).toBe("before-prompt");
+			}
+			expect(first.result?.message?.content).not.toEqual(second.result?.message?.content);
+			const remaining = [first, second].map((request) =>
+				Number(String(request.result?.message?.content).match(/\[context budget\][^\d]*(\d+)/)?.[1]),
+			);
+			expect(remaining[0]).toBeGreaterThan(remaining[1]);
+			expect(h.manager.buildSessionContext().messages.at(-1)).toMatchObject({
+				role: "user",
+				content: "synthetic fresh prompt",
+			});
+			expect(JSON.stringify(first.payload.system)).toBe(JSON.stringify(second.payload.system));
+			expect(JSON.stringify(first.payload.tools)).toBe(JSON.stringify(second.payload.tools));
+			expect(first.payload.system).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({ cache_control: expect.objectContaining({ type: "ephemeral" }) }),
+				]),
+			);
+		},
+	);
+
+	it.each(["reload", "resume"])("does not repeat a persisted notice after %s inside the same epoch", async (mode) => {
+		const directory = makeTempDir(join(tmpdir(), "budget-epoch-"));
+		const manager = SessionManager.create(directory, directory);
+		const first = await harness(false, manager).request();
+		expect(first.result?.message?.content).toContain("[context budget]");
+		const file = manager.getSessionFile();
+		if (!file) throw new Error("missing persisted session file");
+		if (mode === "resume") manager.dispose();
+		const restored = mode === "resume" ? SessionManager.open(file) : manager;
+		const second = await harness(false, restored, 755_000).request();
 		expect(second.result?.message).toBeUndefined();
+		expect(restored.getBranch().filter((entry) => entry.type === "custom_message")).toHaveLength(1);
 	});
 });
