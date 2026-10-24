@@ -32,7 +32,7 @@ Attach is **single-flight**: `attachPromise` memoizes the in-flight `attachSessi
 
 ## ELICITATION
 
-`elicitation.ts` implements form-only elicitation over TUI/RPC primitives; print/json processes omit its capability, and the UI provider bound at `before_agent_start` declines without calling primitives whenever `ctx.hasUI` is false.
+`elicitation.ts` implements form-only elicitation over TUI/RPC primitives; print/json processes omit its capability. A missing UI provider (including `ctx.hasUI` false) throws a processing error without calling primitives. An undefined dialog answer cancels without content; boolean Yes/No retains its typed meaning. No path returns decline; explicit Decline controls are tracked separately.
 
 ## TESTS AND DOCS
 

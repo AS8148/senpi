@@ -5,7 +5,7 @@
 // answers elicitation/create requests mid tool-call by walking the requested
 // flat-primitive schema through sequential ctx.ui primitives (input/select;
 // NEVER ctx.ui.custom, which is undefined in RPC mode). Without a UI
-// (print mode) the request is declined immediately — spec-correct, no hang.
+// (print mode) the request fails with a processing error, never a user refusal.
 // The whole form is bounded by a timeout that resolves to cancel so a wedged
 // dialog can never wedge the tool-call pipeline. URL mode is deliberately not
 // implemented in v1.
@@ -53,6 +53,11 @@ export function setMcpElicitationUiProvider(provider: McpElicitationUiProvider |
 	legacyUiProvider = provider;
 }
 
+async function rejectElicitation(): Promise<never> {
+	const { ErrorCode, McpError } = await loadMcpSdkTypes();
+	throw new McpError(ErrorCode.InternalError, "Elicitation cannot be processed");
+}
+
 /**
  * Wire the elicitation/create handler onto a fresh client. Async because the
  * request schema comes from the lazily loaded SDK; the caller (`buildMcpClient`
@@ -70,7 +75,7 @@ export async function configureMcpElicitation(
 		// Its public fallback handles unsolicited requests without claiming UI support.
 		const { ErrorCode, McpError } = await loadMcpSdkTypes();
 		client.fallbackRequestHandler = async (request) => {
-			if (request.method === "elicitation/create") return { action: "decline" };
+			if (request.method === "elicitation/create") return rejectElicitation();
 			throw new McpError(ErrorCode.MethodNotFound, "Method not found");
 		};
 		return;
@@ -79,9 +84,9 @@ export async function configureMcpElicitation(
 	client.setRequestHandler(ElicitRequestSchema, async (request) => {
 		const params = request.params;
 		// URL mode is deliberately unsupported in v1 (form mode only).
-		if (!("requestedSchema" in params)) return { action: "decline" };
+		if (!("requestedSchema" in params)) return rejectElicitation();
 		const ui = typeof owner === "function" ? owner() : owner?.getMcpElicitationUi();
-		if (ui === undefined) return { action: "decline" };
+		if (ui === undefined) return rejectElicitation();
 		return await runElicitationForm(ui, params.message, params.requestedSchema, timeoutMs);
 	});
 }
@@ -117,13 +122,14 @@ async function collectForm(
 		const title = `${message} - ${property.title ?? name}`;
 		if (property.type === "boolean") {
 			// confirm collapses cancellation into false, including automated RPC replies.
-			// A selection preserves decline separately from a human's explicit No.
+			// A selection preserves dismissal separately from a human's explicit No.
 			const picked = await ui.select(property.description ? `${title}\n${property.description}` : title, [
 				"Yes",
 				"No",
 			]);
+			if (picked === undefined) return { action: "cancel" };
 			// The thread gateway also accepts y/n and true/false, ignoring case and whitespace.
-			switch (picked?.trim().toLowerCase()) {
+			switch (picked.trim().toLowerCase()) {
 				case "yes":
 				case "y":
 				case "true":
@@ -135,33 +141,33 @@ async function collectForm(
 					content[name] = false;
 					break;
 				default:
-					return { action: "decline" };
+					return rejectElicitation();
 			}
 			continue;
 		}
 		if (Array.isArray(property.enum) && property.enum.length > 0) {
 			const picked = await ui.select(title, property.enum.map(String));
-			if (picked === undefined) return { action: "decline" };
+			if (picked === undefined) return { action: "cancel" };
 			content[name] = picked;
 			continue;
 		}
 		const answer = await ui.input(title, property.description);
-		if (answer === undefined) return { action: "decline" };
+		if (answer === undefined) return { action: "cancel" };
 		if (answer.length === 0) {
-			if (required.has(name)) return { action: "decline" };
+			if (required.has(name)) return rejectElicitation();
 			continue;
 		}
 		if (property.type === "number" || property.type === "integer") {
 			const parsed = Number(answer);
-			if (!Number.isFinite(parsed)) return { action: "decline" };
+			if (!Number.isFinite(parsed)) return rejectElicitation();
 			content[name] = parsed;
 			continue;
 		}
 		content[name] = answer;
 	}
 	// Even a fieldless form needs an explicit submission rather than an automatic accept.
-	if (Object.keys(content).length === 0 && (await ui.select(message, ["Submit", "Decline"])) !== "Submit") {
-		return { action: "decline" };
+	if (Object.keys(content).length === 0 && (await ui.select(message, ["Submit"])) !== "Submit") {
+		return { action: "cancel" };
 	}
 	return { action: "accept", content };
 }

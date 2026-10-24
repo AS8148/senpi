@@ -1,9 +1,9 @@
 // MCP elicitation form mode (todo 41): capability declared empty; the form
-// walks flat primitives through ui.input/select; missing UI or a
-// missing required answer declines; the bounded timeout cancels; numbers
-// parse or decline; URL-mode requests decline (v1 is form-only).
+// walks flat primitives through ui.input/select; unavailable UI and invalid
+// answers are processing errors; dismissed dialogs and bounded timeouts cancel.
 
-import { describe, expect, it } from "vitest";
+import { ErrorCode } from "@modelcontextprotocol/sdk/types.js";
+import { describe, expect, it, vi } from "vitest";
 import {
 	MCP_CLIENT_ELICITATION_CAPABILITY,
 	runElicitationForm,
@@ -33,13 +33,13 @@ describe("mcp elicitation form", () => {
 		expect(MCP_CLIENT_ELICITATION_CAPABILITY).toEqual({ elicitation: {} });
 	});
 
-	it("declines an automated task parent's cancellation without fabricating boolean values", async () => {
+	it("cancels an automated task parent's dialog without fabricating boolean values", async () => {
 		const response = await runElicitationForm(
 			scriptedUi({ confirm: async () => false, select: async () => undefined }),
 			"Server asks",
 			{ properties: { confirmed: { type: "boolean" } }, required: ["confirmed"] },
 		);
-		expect(response).toEqual({ action: "decline" });
+		expect(response).toEqual({ action: "cancel" });
 	});
 
 	it.each([
@@ -59,23 +59,32 @@ describe("mcp elicitation form", () => {
 		expect(response).toEqual({ action: "accept", content: { confirmed: expected } });
 	});
 
-	it("declines an unrecognized boolean selection without field values", async () => {
-		const response = await runElicitationForm(scriptedUi({ select: async () => "not an answer" }), "Server asks", {
-			properties: { confirmed: { type: "boolean" } },
-		});
-		expect(response).toEqual({ action: "decline" });
+	it("rejects an unrecognized boolean selection without field values", async () => {
+		await expect(
+			runElicitationForm(scriptedUi({ select: async () => "not an answer" }), "Server asks", {
+				properties: { confirmed: { type: "boolean" } },
+			}),
+		).rejects.toMatchObject({ code: ErrorCode.InternalError, data: undefined });
 	});
 
 	it.each<Parameters<typeof runElicitationForm>[2]>([
 		{ properties: { name: { type: "string" } } },
 		{ properties: {} },
-	])("declines automated cancellation even without required fields: %j", async (schema) => {
+	])("cancels a dismissed dialog even without required fields: %j", async (schema) => {
 		const response = await runElicitationForm(
 			scriptedUi({ input: async () => undefined, select: async () => undefined }),
 			"Server asks",
 			schema,
 		);
-		expect(response).toEqual({ action: "decline" });
+		expect(response).toEqual({ action: "cancel" });
+	});
+
+	it("cancels a dismissed enum dialog without returning earlier field values", async () => {
+		expect(
+			await runElicitationForm(scriptedUi({ select: async () => undefined }), "Ask", {
+				properties: { name: { type: "string" }, mode: { type: "string", enum: ["alpha", "beta"] } },
+			}),
+		).toEqual({ action: "cancel" });
 	});
 
 	it("accepts a human's explicit submission of a form with no field values", async () => {
@@ -93,21 +102,37 @@ describe("mcp elicitation form", () => {
 		});
 	});
 
-	it("declines when a required answer is missing and on invalid numbers", async () => {
+	it("cancels when a required dialog is dismissed and rejects invalid numbers", async () => {
 		const missing = await runElicitationForm(scriptedUi({ input: async () => undefined }), "Ask", SCHEMA);
-		expect(missing.action).toBe("decline");
+		expect(missing).toEqual({ action: "cancel" });
 
-		const badNumber = await runElicitationForm(
-			scriptedUi({ input: async (title: string) => (title.includes("count") ? "not-a-number" : "Ada") }),
-			"Ask",
-			SCHEMA,
-		);
-		expect(badNumber.action).toBe("decline");
+		await expect(
+			runElicitationForm(
+				scriptedUi({ input: async (title: string) => (title.includes("count") ? "not-a-number" : "Ada") }),
+				"Ask",
+				SCHEMA,
+			),
+		).rejects.toMatchObject({ code: ErrorCode.InternalError, data: undefined });
+	});
+
+	it("rejects an empty required answer rather than fabricating a refusal", async () => {
+		await expect(
+			runElicitationForm(scriptedUi({ input: async () => "" }), "Ask", {
+				properties: { name: { type: "string" } },
+				required: ["name"],
+			}),
+		).rejects.toMatchObject({ code: ErrorCode.InternalError, data: undefined });
 	});
 
 	it("cancels via the bounded timeout without wedging", async () => {
-		const hangingUi = scriptedUi({ input: () => new Promise(() => undefined) });
-		const response = await runElicitationForm(hangingUi, "Ask", SCHEMA, 50);
-		expect(response).toEqual({ action: "cancel" });
+		vi.useFakeTimers();
+		try {
+			const hangingUi = scriptedUi({ input: () => new Promise(() => undefined) });
+			const response = runElicitationForm(hangingUi, "Ask", SCHEMA, 50);
+			await vi.advanceTimersByTimeAsync(50);
+			expect(await response).toEqual({ action: "cancel" });
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

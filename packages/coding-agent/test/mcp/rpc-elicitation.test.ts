@@ -1,15 +1,16 @@
+import { ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import { expect, it, vi } from "vitest";
 import { runElicitationForm } from "../../src/core/extensions/builtin/mcp/elicitation.ts";
 import type { ExtensionUIContext } from "../../src/core/extensions/types.ts";
 import { createIdentityHarness } from "../suite/rpc-client-identity-harness.ts";
 
 it.each([
-	{ reply: { cancelled: true }, expected: { action: "decline" } },
+	{ reply: { cancelled: true }, expected: { action: "cancel" } },
 	{ reply: { value: "Yes" }, expected: { action: "accept", content: { confirmed: true } } },
 	{ reply: { value: "No" }, expected: { action: "accept", content: { confirmed: false } } },
 	{ reply: { value: " YES " }, expected: { action: "accept", content: { confirmed: true } } },
 	{ reply: { value: "n" }, expected: { action: "accept", content: { confirmed: false } } },
-	{ reply: { value: "not an answer" }, expected: { action: "decline" } },
+	{ reply: { value: "not an answer" }, expected: undefined },
 ])("preserves an RPC boolean form answer $reply", async ({ reply, expected }) => {
 	const host = await createIdentityHarness();
 	const bound = Promise.withResolvers<ExtensionUIContext>();
@@ -26,10 +27,14 @@ it.each([
 			properties: { confirmed: { type: "boolean" } },
 			required: ["confirmed"],
 		});
+		const assertion =
+			expected === undefined
+				? expect(result).rejects.toMatchObject({ code: ErrorCode.InternalError, data: undefined })
+				: expect(result).resolves.toEqual(expected);
 		const frame = await request;
 		expect(frame.method).toBe("select");
 		await connection.send({ type: "extension_ui_response", uiRequestId: frame.id, ...reply });
-		expect(await result).toEqual(expected);
+		await assertion;
 	} finally {
 		spy.mockRestore();
 		await host.cleanup();

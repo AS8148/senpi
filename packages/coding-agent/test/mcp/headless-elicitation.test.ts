@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import type { ElicitRequest } from "@modelcontextprotocol/sdk/types.js";
+import { type ElicitRequest, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../../src/config.ts";
 import { createEventBus } from "../../src/core/event-bus.ts";
@@ -29,26 +29,36 @@ afterEach(async () => {
 });
 
 describe("headless MCP elicitation (senpi#4185)", () => {
-	it("declines unsolicited elicitation without advertising support through the real SDK", async () => {
-		const client = new Client({ name: "client", version: "1" }, { capabilities: {} });
-		const server = new Server({ name: "server", version: "1" }, { capabilities: {} });
-		const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-		await configureMcpElicitation(client, undefined, undefined, false);
-		await server.connect(serverTransport);
-		try {
-			await client.connect(clientTransport);
-			const reply = Promise.withResolvers<unknown>();
-			const onmessage = serverTransport.onmessage;
-			serverTransport.onmessage = (message, extra) => {
-				if ("id" in message && message.id === "unsolicited") reply.resolve(message);
-				else onmessage?.(message, extra);
-			};
-			await serverTransport.send({ jsonrpc: "2.0", id: "unsolicited", ...booleanForm });
-			expect(await reply.promise).toEqual({ jsonrpc: "2.0", id: "unsolicited", result: { action: "decline" } });
-		} finally {
-			await Promise.all([client.close(), server.close()]);
-		}
-	});
+	it.each([false, true])(
+		"returns a processing error with no UI, elicitationEnabled=%s, through the real SDK",
+		async (elicitationEnabled) => {
+			const client = new Client(
+				{ name: "client", version: "1" },
+				{ capabilities: elicitationEnabled ? { elicitation: {} } : {} },
+			);
+			const server = new Server({ name: "server", version: "1" }, { capabilities: {} });
+			const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+			await configureMcpElicitation(client, undefined, undefined, elicitationEnabled);
+			await server.connect(serverTransport);
+			try {
+				await client.connect(clientTransport);
+				const reply = Promise.withResolvers<unknown>();
+				const onmessage = serverTransport.onmessage;
+				serverTransport.onmessage = (message, extra) => {
+					if ("id" in message && message.id === "unsolicited") reply.resolve(message);
+					else onmessage?.(message, extra);
+				};
+				await serverTransport.send({ jsonrpc: "2.0", id: "unsolicited", ...booleanForm });
+				expect(await reply.promise).toEqual({
+					jsonrpc: "2.0",
+					id: "unsolicited",
+					error: { code: ErrorCode.InternalError, message: expect.any(String) },
+				});
+			} finally {
+				await Promise.all([client.close(), server.close()]);
+			}
+		},
+	);
 
 	it.each([false, true])("uses the bound context hasUI=%s before collecting a boolean form", async (hasUI) => {
 		const root = makeRoot("elicitation-ui", cleanup);
@@ -81,9 +91,8 @@ describe("headless MCP elicitation (senpi#4185)", () => {
 		} as unknown as Client;
 		await configureMcpElicitation(client, service);
 		if (handle === undefined) throw new Error("elicitation handler was not installed");
-		expect(await handle(booleanForm)).toEqual(
-			hasUI ? { action: "accept", content: { confirmed: false } } : { action: "decline" },
-		);
+		if (hasUI) expect(await handle(booleanForm)).toEqual({ action: "accept", content: { confirmed: false } });
+		else await expect(handle(booleanForm)).rejects.toMatchObject({ code: ErrorCode.InternalError, data: undefined });
 		expect(ui.confirm).not.toHaveBeenCalled();
 		expect(ui.input).not.toHaveBeenCalled();
 		expect(ui.select).toHaveBeenCalledTimes(hasUI ? 1 : 0);
