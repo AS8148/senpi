@@ -53,3 +53,26 @@ it("leaves no barrier armed when an extension prompt is refused after an interru
 	expect(String(refused)).toContain("Human input or Resume is required");
 	expect(h.session.releaseToolBarrier("turn-1")).toBe(false);
 });
+
+it("leaves no barrier armed when a caller callback throws after the barrier is armed", async () => {
+	// Given a settled session.
+	const h = await createHarness();
+	harnesses.push(h);
+
+	// When a prompt that carries a tool barrier is started and its caller's "started" callback throws.
+	const failed = await h.session
+		.prompt("Request", {
+			toolBarrier: { id: "turn-2", deadlineMs: 60_000 },
+			promptDisposition: (disposition) => {
+				if (disposition === "started") throw new Error("client went away");
+			},
+		})
+		.then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+
+	// Then the throw surfaces and the barrier it armed is not left held until its deadline.
+	expect(String(failed)).toContain("client went away");
+	expect(h.session.releaseToolBarrier("turn-2")).toBe(false);
+});

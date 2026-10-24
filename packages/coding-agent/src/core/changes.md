@@ -62,7 +62,7 @@ The session owns the release array, prompt admission and held-input settlement b
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: when `_promptAgent` throws before the run starts, `prompt` releases the tool barrier it armed for that prompt (by its id) and rethrows.
+- `packages/coding-agent/src/core/agent-session.ts`: when `_promptAgent` throws before the run starts, `prompt` releases the tool barrier it armed for that prompt (by its id) and rethrows; the same `try` also covers the caller callbacks that run between `arm()` and `_promptAgent` (`promptDisposition("started")`, `preflightResult`, the thinking-level change), so a throw there cannot leave the barrier armed either (senpi#4122 review).
 
 ### Why
 
@@ -74,7 +74,7 @@ The session owns the release array, prompt admission and held-input settlement b
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/core/agent-session.ts`: the `_promptAgent` call at the end of `prompt`.
+- `packages/coding-agent/src/core/agent-session.ts`: the block from `arm()` through the `_promptAgent` call at the end of `prompt`.
 
 ## 2026-10-20 - A model switch restores that model's last thinking level in this session (senpi#3819)
 
