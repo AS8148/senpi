@@ -33,6 +33,8 @@ const STATUS_FIELDS = [
 	"memory_pressure",
 	"open_fds",
 	"pid",
+	"pointer",
+	"processStartTime",
 	"reachable",
 	"rss_mb",
 	"runtimeBuildId",

@@ -1,6 +1,7 @@
 import { chmod } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { basename, dirname, join } from "node:path";
+import type { Duplex } from "node:stream";
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
 import type { CreateAgentSessionRuntimeFactory } from "../../core/agent-session-runtime.ts";
 import { envValue } from "../../core/brand.ts";
@@ -21,10 +22,12 @@ import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { HostCoreGate, type HostCoreHooks } from "./host-core-gate.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
+import { HandoffAnnouncement } from "./host-handoff-announcement.ts";
 import { reopenHandoverParkedSessions } from "./host-handover-reopen.ts";
 import { performIdleHandover } from "./host-handover-wire.ts";
 import { EXPECTED_RUNTIME_BUILD_ID_ENV } from "./host-idle-handover.ts";
 import { type HostIdleOverrides, RPC_CLOSE_GRACE_MS_ENV, resolveHostIdlePolicy } from "./host-idle-policy.ts";
+import { internalHostTransport } from "./host-internal-transport.ts";
 import { parseIdleExitMs } from "./host-lifecycle.ts";
 import { prepareSocketPath } from "./host-lifecycle-proxy.ts";
 import { createZeroSessionTrim, startHostObservers } from "./host-observers.ts";
@@ -53,7 +56,6 @@ import {
 } from "./socket-ownership.ts";
 import { socketSink } from "./socket-sink.ts";
 import {
-	authenticateSocket,
 	ensureSocketSecret,
 	resolveSocketTransportAddress,
 	SOCKET_SECRET_FILE_ENV,
@@ -276,6 +278,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	const occupancy = new ClientOccupancy(() => {}, hostInstanceId());
 	let draining = false;
 	let handoffAnnounced = false;
+	const handoff = new HandoffAnnouncement();
 	const hostContext = hostSessionContext(socketPath);
 	const runtimeBuildId = await startupRuntimeBuildId();
 	const expected = process.env[EXPECTED_RUNTIME_BUILD_ID_ENV];
@@ -326,6 +329,10 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			shouldReopenParked: () => !draining,
 			...(runtimeBuildId !== undefined && { runtimeBuildId }),
 			...(canHandOver && {
+				endpoint: {
+					agentDir: options.agentDir,
+					socket: readHostWatchdogConfigFromBrandEnv()?.publicSocket ?? socketPath,
+				},
 				handover: {
 					identity: () => ({
 						instanceId: hostInstanceId(),
@@ -360,7 +367,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		process.platform === "win32"
 			? await ensureSocketSecret(process.env[SOCKET_SECRET_FILE_ENV] ?? socketSecretPath(socketPath))
 			: undefined;
-	const watchdogConfig = readHostWatchdogConfigFromBrandEnv();
+	const { watchdogConfig, admit } = internalHostTransport(readHostWatchdogConfigFromBrandEnv(), secret);
 	// This host's OWN copy of the crash-path cleanup list. A drain empties it: once a successor
 	// generation is registered, the daemon state files under those paths describe the successor,
 	// and a crash of this (already replaced) host must not take them with it.
@@ -380,8 +387,10 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			: undefined;
 	let boundIdentity: SocketFileIdentity | undefined;
 	let supervisorPublicIdentity: SocketFileIdentity | undefined;
-	const server = createServer((socket) => {
-		const accept = (): void => {
+	const server = createServer((rawSocket) => {
+		const arrivedBeforeDrain = !draining && !shuttingDown;
+		const accept = (socket: Duplex = rawSocket): void => {
+			if (draining && !shuttingDown && handoff.deliverLate(socket, arrivedBeforeDrain)) return;
 			if (draining || shuttingDown) {
 				socket.destroy();
 				return;
@@ -432,8 +441,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			socket.once("close", detach);
 			socket.once("error", () => detach());
 		};
-		if (secret) authenticateSocket(socket, secret, accept);
-		else accept();
+		admit(rawSocket, accept);
 	});
 	server.on("error", (cause) => {
 		if (!shuttingDown) process.stderr.write(`senpi rpc socket listener failed: ${errorMessage(cause)}\n`);
@@ -503,18 +511,10 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		draining = true;
 		crashCleanupPaths.length = 0;
 		hostLog("draining for a generation handoff");
-		void endpointSuperseded()
-			.then((superseded) => {
-				writer.broadcastHostRecord({
-					type: "host_superseded",
-					instanceId: hostInstanceId(),
-					generation: hostGeneration(process.env),
-					successor: superseded ? { socket: supervisorPublicSocketPath ?? socketPath } : null,
-				});
-			})
-			.catch((cause: unknown) => {
-				hostLog(`handoff announcement failed: ${String(cause)}`);
-			})
+		const identity = { instanceId: hostInstanceId(), generation: hostGeneration(process.env) };
+		void handoff
+			.begin(endpointSuperseded(), identity, supervisorPublicSocketPath ?? socketPath, hostLog)
+			.then((announced) => announced && writer.broadcastHostRecord(announced))
 			// A failed announcement still drains: parking is what lets this generation exit (senpi#2285).
 			.finally(() => {
 				handoffAnnounced = true;

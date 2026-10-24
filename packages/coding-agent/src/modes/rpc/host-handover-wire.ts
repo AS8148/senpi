@@ -35,6 +35,10 @@ export function parseBeginHandover(record: Readonly<Record<string, unknown>>): I
 		return "env must map names to strings";
 	}
 	const policy = isRecord(record.policy) ? record.policy : undefined;
+	const { agent_dir } = record;
+	if (agent_dir !== undefined && (typeof agent_dir !== "string" || agent_dir === "")) {
+		return "agent_dir must be a non-empty string";
+	}
 	return {
 		operationId: operation_id,
 		ifInstanceId: if_instance_id,
@@ -44,6 +48,7 @@ export function parseBeginHandover(record: Readonly<Record<string, unknown>>): I
 		hostArgs: host_args,
 		env: env as Readonly<Record<string, string>>,
 		...(policy !== undefined && { policy }),
+		...(agent_dir !== undefined && { agentDir: agent_dir }),
 	};
 }
 

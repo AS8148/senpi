@@ -1,3 +1,100 @@
+## 2026-10-22 - Anthropic stable-prefix cache checkpoints (senpi#3242)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `convertMessages` puts `cache_control` on the last `text`/`tool_use` block of an assistant message carrying `promptCacheBreakpoint` (never on a thinking block). Two hints are honoured when the system block holds a checkpoint (OAuth identity or a system prompt), and the second takes the tools checkpoint's slot because the system checkpoint covers the tools before it. Otherwise only the oldest hint is honoured. A hinted request drops the preceding tool-loop checkpoint, so a request never exceeds four breakpoints; a turn with ten or more parallel tool calls can then push the previous entry past the 20-block lookback and re-write the tail since the cut (bounded by the 10% block budget).
+- `packages/ai/src/api/pi-messages.ts`: strips `promptCacheBreakpoint` from assistant messages before sending, because the pi-messages wire carries `context.messages` as they are.
+
+### Why
+
+- `packages/ai/src/api/anthropic-messages.ts`: Anthropic finds earlier cache entries only within about 20 blocks before a breakpoint, and the breakpoints sat at the end of the conversation. A context-reduction step's request therefore read only the system prefix and re-wrote everything after it (400K-780K tokens per step on 1M windows in the reports). A checkpoint at the last message the frontier leaves unchanged lets the next step read that prefix.
+- `packages/ai/src/api/pi-messages.ts`: the pi-messages wire carries `context.messages` as they are, so a request-local hint must not leak onto it.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/anthropic-messages.ts`: breakpoint placement is the adapter's own request construction, after every extension payload hook.
+- `packages/ai/src/api/pi-messages.ts`: the adapter serializes the message list itself.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/anthropic-messages.ts`: `buildParams` (marker count, `toolCacheControl`, the `convertMessages` call), `convertMessages` (assistant branch, final checkpoint block) and the new `markAssistantMessageCacheCheckpoint`.
+- `packages/ai/src/api/pi-messages.ts`: the `context.messages` mapping in the request payload.
+
+## 2026-10-21 - usage.reasoning is left unset when the provider reports no reasoning count (senpi#3879)
+
+### What changed
+
+- `packages/ai/src/api/openai-completions.ts`: `usage.reasoning` is set only when `completion_tokens_details.reasoning_tokens` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/openai-responses-shared.ts`: `usage.reasoning` is set only when `output_tokens_details.reasoning_tokens` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/google-generative-ai.ts`: `usage.reasoning` is set only when `usageMetadata.thoughtsTokenCount` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/google-vertex.ts`: `usage.reasoning` is set only when `usageMetadata.thoughtsTokenCount` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+
+### Why
+
+- `packages/ai/src/api/openai-completions.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+- `packages/ai/src/api/openai-responses-shared.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+- `packages/ai/src/api/google-generative-ai.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+- `packages/ai/src/api/google-vertex.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-completions.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+- `packages/ai/src/api/openai-responses-shared.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+- `packages/ai/src/api/google-generative-ai.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+- `packages/ai/src/api/google-vertex.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/openai-completions.ts`, the `reasoning` line of the usage object.
+- LOW: `packages/ai/src/api/openai-responses-shared.ts`, the `reasoning` line of the usage object.
+- LOW: `packages/ai/src/api/google-generative-ai.ts`, the `reasoning` line of the usage object.
+- LOW: `packages/ai/src/api/google-vertex.ts`, the `reasoning` line of the usage object.
+
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `packages/ai/src/api/google-shared.ts`: the empty `providerNative` branch gains a comment saying those blocks are not replayed to Google (oxlint `no-lone-blocks`).
+- `packages/ai/src/api/openai-completions.ts`: an `oxlint-disable-next-line eslint/no-unassigned-vars` comment on `streamedReasoningDetails`, citing senpi#3934, which tracks the lost serialize-once.
+
+### Why
+
+- The repository moved lint and format from Biome to oxlint 1.89.0 and oxfmt 0.74.0 (senpi#3976). oxlint reports this site where Biome did not; the change keeps behaviour identical.
+
+### Why an extension could not handle it
+
+- Lint configuration and source comments are read by the linter before any agent code runs.
+
+### Expected merge conflict zones
+
+- The `providerNative` branch of the Google message conversion and the reasoning-details declaration in `openai-completions.ts`. senpi#3934 removes the disable comment when it restores the assignment.
+
+## 2026-10-21 - Responses cache affinity follows the stable prefix (omo#10775)
+
+### What changed
+
+- `packages/ai/src/api/openai-prompt-cache.ts`: derives a bounded, versioned key from model id, leading instructions, and the sorted tool schema set, excluding session ids and conversation messages.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, and `packages/ai/src/api/azure-openai-responses.ts`: use that derivation whenever caching is enabled, including native GPT-5.6+ requests and prewarm. Subscription transport headers and WebSocket ownership remain session-scoped.
+- `packages/ai/src/api/openai-responses-shared.ts`: emits Responses tools in name order without mutating the caller's array.
+
+### Why
+
+- `packages/ai/src/api/openai-prompt-cache.ts`: session UUID keys prevent new sessions and task children with identical prefixes from sharing cache affinity.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, and `packages/ai/src/api/azure-openai-responses.ts`: all Responses transports need the same prefix-derived body key so API-key, subscription, Azure, prewarm, and compaction calls agree.
+- `packages/ai/src/api/openai-responses-shared.ts`: stable tool ordering is required for identical provider-prefix bytes.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-prompt-cache.ts`: the derivation is shared provider behavior, not a session extension concern.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, and `packages/ai/src/api/azure-openai-responses.ts`: these adapters construct cache fields before extension payload hooks and are shared by every session.
+- `packages/ai/src/api/openai-responses-shared.ts`: the adapter serializes tool schemas after extension tool registration, so an extension cannot enforce transport-wide ordering.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/openai-prompt-cache.ts`: shared derivation and clamp.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, and `packages/ai/src/api/azure-openai-responses.ts`: imports and request builders.
+- `packages/ai/src/api/openai-responses-shared.ts`: `convertResponsesTools`.
+
 ## 2026-10-20 - chatgpt-subscription failures carry a classified providerDiagnostic (senpi#3771)
 
 ### What changed
@@ -73,6 +170,25 @@ The diagnostic rides the provider's thrown error inside the adapter, before any 
 
 - LOW: `packages/ai/src/api/google-vertex.ts`, the import block and the two helper bodies (`buildGoogleAuthOptions`, `resolveProject`).
 
+## 2026-10-21 - Advertised [CC] floor 2.1.306 (senpi#3854)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `claudeCodeVersion` moves 2.1.296 -> 2.1.306 to match the @anthropic-ai/claude-agent-sdk 0.3.306 bump in `packages/coding-agent/package.json` (and its regenerated `install-lock`).
+
+### Why
+
+- The Releasability gate's SDK currency check failed on main once 0.3.305/0.3.306 were published; the floor must track the pinned SDK's shipped [CC] version (senpi#2033).
+
+### Why an extension could not handle it
+
+- The advertised [CC] identity is a build-time constant; it is not runtime extension surface.
+
+### Expected merge conflict zones
+
+- The single `claudeCodeVersion` declaration line.
+
+
 ## 2026-10-13 - Advertised [CC] floor 2.1.296 (senpi#3258)
 
 ### What changed
@@ -111,6 +227,28 @@ The diagnostic rides the provider's thrown error inside the adapter, before any 
 ### Expected merge conflict zones
 
 - LOW: one more `Set` beside `toolReferenceReplayFallbacks` and its cleanup loop, one demotion call in `createRequest`, and one retry branch in the fork-only retry block; `anthropic-web-search-expiry.ts` is fork-only.
+
+## 2026-10-12 - Remove the /llama llama.cpp integration (senpi#3202)
+
+### What changed
+
+- `packages/ai/src/api/llama-cpp-classify.ts`: deleted. This classifier API existed only to back the removed `/llama` extension; it had no consumers outside it.
+- `packages/ai/src/api/llama-cpp-classify.lazy.ts`: deleted alongside its eager twin.
+
+### Why
+
+- `packages/ai/src/api/llama-cpp-classify.ts`: Q ordered removal of the `/llama` feature; this backend had no other consumers.
+- `packages/ai/src/api/llama-cpp-classify.lazy.ts`: the lazy entry point exists only for that deleted backend.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/llama-cpp-classify.ts`: an extension cannot remove a shipped API implementation.
+- `packages/ai/src/api/llama-cpp-classify.lazy.ts`: an extension cannot remove its shipped lazy entry point.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/llama-cpp-classify.ts`: deleted; upstream edits will conflict.
+- `packages/ai/src/api/llama-cpp-classify.lazy.ts`: deleted alongside.
 
 ## 2026-10-11 - Replay opted-in GLM server-result pairs (senpi#3125 delta)
 
