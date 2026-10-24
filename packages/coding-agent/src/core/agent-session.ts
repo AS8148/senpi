@@ -402,6 +402,7 @@ import {
 } from "./skill-invocation.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { BUILTIN_SLASH_COMMANDS } from "./slash-commands.ts";
+import type { Skill } from "./skills.ts";
 import { BUILTIN_PATH_PREFIX, createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { stopResumeDirective } from "./stop-resume-directive.ts";
 import {
@@ -1220,6 +1221,8 @@ export interface SessionStats {
 		total: number;
 	};
 	cost: number;
+	/** Some turn had no known price, so `cost` is a lower bound (senpi#3844). */
+	costUnknown?: true;
 	contextUsage?: ContextUsage;
 	/** Absent from hosts that predate the report. */
 	failures?: SessionFailureReport;
@@ -1366,7 +1369,8 @@ export class AgentSession {
 	private _stopInterrupt: StopInterrupt | undefined;
 	private _deliveredHeldInputIds: string[] = [];
 	private _heldCommandRun: Promise<void> | undefined;
-	private readonly _releaseExtras: CustomMessage[] = [];
+	/** Held person input is captured synchronously but its skills are read asynchronously, so it waits here as a promise. */
+	private readonly _releaseExtras: (CustomMessage | Promise<CustomMessage>)[] = [];
 	private _releaseExtrasGeneration = 0;
 	private _engineTurnPauseRecorded = false;
 	// The pause warning is shown once per pause: a stream of refused events would otherwise add one line each (senpi#2537).
@@ -5812,6 +5816,7 @@ export class AgentSession {
 		let messages: AgentMessage[] | undefined;
 		let titlePrompt: string | undefined;
 		let consumedNextTurnMessages: CustomMessage[] | undefined;
+		let consumedReleaseExtras: (CustomMessage | Promise<CustomMessage>)[] | undefined;
 		let inputId: string | undefined;
 		let pendingCommandInvocation: CommandInvocation | undefined;
 		const emitPendingCommandInvocation = (): void => {
@@ -5915,7 +5920,8 @@ export class AgentSession {
 			// Expand skill commands (/skill:name args) and prompt templates (/template args)
 			let expandedText = currentText;
 			if (expandPromptTemplates) {
-				expandedText = this._expandSkillCommand(expandedText);
+				const skillExpansion = this._expandSkillCommand(expandedText);
+				expandedText = typeof skillExpansion === "string" ? skillExpansion : await skillExpansion;
 				const templateExpansion = expandPromptTemplateWithMetadata(expandedText, [...this.promptTemplates]);
 				expandedText = templateExpansion.text;
 				if (
@@ -6082,7 +6088,19 @@ export class AgentSession {
 			if (environmentContext) messages.push(environmentContext);
 
 			// Add user message
-			messages.push(...this._releaseExtras.splice(0), ...this._engineTurnInput.messages());
+			// Claim before awaiting: another idle prompt or capture owns only the entries left behind.
+			const releaseExtras = this._releaseExtras.splice(0);
+			consumedReleaseExtras = releaseExtras;
+			const turnInput = this._engineTurnInput.messages();
+			if (releaseExtras.length > 0) {
+				const prepared = await Promise.allSettled(releaseExtras);
+				// A rejected preparation is dropped, not restored to fail every later prompt.
+				consumedReleaseExtras = releaseExtras.filter((_, index) => prepared[index]?.status === "fulfilled");
+				const rejected = prepared.find((result) => result.status === "rejected");
+				if (rejected !== undefined) throw rejected.reason;
+				messages.push(...prepared.flatMap((result) => (result.status === "fulfilled" ? [result.value] : [])));
+			}
+			messages.push(...turnInput);
 			const userContent: (TextContent | ImageContent)[] = userTextContent(expandedText, options?.textBlocks);
 			if (currentImages) {
 				userContent.push(...currentImages);
@@ -6136,6 +6154,8 @@ export class AgentSession {
 			await emitInputDisposition("started");
 		} catch (error) {
 			await emitInputDisposition("rejected");
+			if (consumedReleaseExtras !== undefined)
+				this._releaseExtras.unshift(...consumedReleaseExtras.filter((extra) => !this._releaseExtras.includes(extra)));
 			if (consumedNextTurnMessages && consumedNextTurnMessages.length > 0) {
 				this._pendingNextTurnMessages = [...consumedNextTurnMessages, ...this._pendingNextTurnMessages];
 			}
@@ -6268,12 +6288,20 @@ export class AgentSession {
 	 * Leading runs accept slash and dollar syntax; inline `$name` expands only when
 	 * it names a loaded skill, so ordinary dollar prose such as `$HOME` stays literal.
 	 */
-	private _expandSkillCommand(text: string): string {
+	private _expandSkillCommand(text: string): string | Promise<string> {
 		const skills = this.resourceLoader.getSkills().skills;
 		const invocationTokens = parseSkillInvocationTokens(text, {
 			knownSkillNames: new Set(skills.map((skill) => skill.name)),
 		});
 		if (invocationTokens.length === 0) return text;
+		return this._expandSkillTokens(text, skills, invocationTokens);
+	}
+
+	private async _expandSkillTokens(
+		text: string,
+		skills: readonly Skill[],
+		invocationTokens: readonly SkillInvocationToken[],
+	): Promise<string> {
 		const maxExpansions = this.settingsManager.getMaxSkillExpansionsPerPrompt();
 
 		const expandedSkillNames = new Set<string>();
@@ -6316,7 +6344,7 @@ export class AgentSession {
 			removedTokens.push(token);
 
 			try {
-				const content = readSkillFileChecked(skill.filePath, skill.provenance, skill.allowedSet);
+				const content = await readSkillFileChecked(skill.filePath, skill.provenance, skill.allowedSet);
 				const body = stripFrontmatter(content).trim();
 				skillBlocks.push({
 					name: skill.name,
@@ -6422,7 +6450,8 @@ export class AgentSession {
 		if (!processedInput) return "handled";
 
 		// Expand skill commands and prompt templates
-		let expandedText = this._expandSkillCommand(processedInput.text);
+		const skillExpansion = this._expandSkillCommand(processedInput.text);
+		let expandedText = typeof skillExpansion === "string" ? skillExpansion : await skillExpansion;
 		const templateExpansion = expandPromptTemplateWithMetadata(expandedText, [...this.promptTemplates]);
 		expandedText = templateExpansion.text;
 
@@ -7340,9 +7369,35 @@ export class AgentSession {
 		this._resumeSettlement = settlement.promise;
 		try {
 			const generation = this._userAbortGeneration;
-			const { run, continues } = this._takeHeldCommands();
-			await run;
-			const started = await this._startResumeTurnWith(generation, continues, onQueued);
+			let continues: ReadonlySet<string> = new Set();
+			const prepared = new Map<string, HeldInput>();
+			let heldInputs: HeldInput[];
+			for (;;) {
+				// A parent's pause can arrive during a read. Leave all input in custody for its run Resume.
+				if (this._runHolds.inheritedOwner() !== undefined) {
+					settlement.resolve();
+					return { turnId: undefined, delivered: Promise.resolve(false) };
+				}
+				const commands = this._takeHeldCommands();
+				continues = commands.continues;
+				if (commands.run !== undefined) {
+					await commands.run;
+					continue;
+				}
+				const pending = this._heldInputs.pending().filter((input) => !continues.has(input.inputId));
+				const unread = pending.filter((input) => prepared.get(input.inputId)?.entryId !== input.entryId);
+				if (unread.length === 0) {
+					heldInputs = pending.map((input) => prepared.get(input.inputId) ?? input);
+					break;
+				}
+				await Promise.all(
+					unread.map(async (input) => {
+						prepared.set(input.inputId, { ...input, text: await this._preparedHeldText(input) });
+					}),
+				);
+				// The hold is already released: include new or re-held input before sending, and omit withdrawals.
+			}
+			const started = await this._startResumeTurnWith(generation, continues, heldInputs, onQueued);
 			started.delivered.then(
 				() => settlement.resolve(),
 				() => settlement.resolve(),
@@ -7357,14 +7412,11 @@ export class AgentSession {
 	private _startResumeTurnWith(
 		generation: number,
 		continues: ReadonlySet<string>,
+		heldInputs: HeldInput[],
 		onQueued?: () => void,
 	): ReturnType<typeof startRunResumeTurn> {
 		return startRunResumeTurn({
-			heldInputs: () =>
-				this._heldInputs
-					.pending()
-					.filter((input) => !continues.has(input.inputId))
-					.map((input) => ({ ...input, text: this._preparedHeldText(input) })),
+			heldInputs: () => heldInputs,
 			continueInputs: () => [...continues],
 			heldWakes: () => this._engineTurnHold.messages(),
 			send: (message) =>
@@ -7438,30 +7490,33 @@ export class AgentSession {
 	}
 
 	/** A held person input's text as the model receives it: skills and prompt templates expanded. */
-	private _preparedHeldText(input: HeldInput): string {
+	private async _preparedHeldText(input: HeldInput): Promise<string> {
 		if (input.prepare !== true) return input.text;
-		return expandPromptTemplateWithMetadata(this._expandSkillCommand(input.text), [...this.promptTemplates]).text;
+		return expandPromptTemplateWithMetadata(await this._expandSkillCommand(input.text), [...this.promptTemplates]).text;
 	}
 
-	private _takeHeldInputs(): { messages: CustomMessage[]; commands: Promise<void> | undefined } {
+	private _takeHeldInputs(): { messages: Promise<CustomMessage>[]; commands: Promise<void> | undefined } {
 		const { run, continues } = this._takeHeldCommands();
 		const pending = this._heldInputs.pending();
 		// Consumed at settlement only if the releasing turn was delivered; a "." rides that turn without a message.
 		this._deliveredHeldInputIds.push(...pending.map((input) => input.inputId));
 		const messages = pending
 			.filter((input) => !continues.has(input.inputId))
-			.map(
-				(input): CustomMessage => ({
-					role: "custom",
-					customType: HELD_INPUT_ENTRY,
-					content:
-						input.images === undefined
-							? this._preparedHeldText(input)
-							: [{ type: "text", text: this._preparedHeldText(input) }, ...input.images],
-					display: true,
-					timestamp: Date.now(),
-				}),
-			);
+			.map((input): Promise<CustomMessage> => {
+				const timestamp = Date.now();
+				const message = this._preparedHeldText(input).then(
+					(text): CustomMessage => ({
+						role: "custom",
+						customType: HELD_INPUT_ENTRY,
+						content: input.images === undefined ? text : [{ type: "text", text }, ...input.images],
+						display: true,
+						timestamp,
+					}),
+				);
+				// The prompt that sends these awaits them and sees any failure; this branch only keeps an unsent one quiet.
+				message.catch(() => {});
+				return message;
+			});
 		return { messages, commands: run };
 	}
 
@@ -7937,9 +7992,11 @@ export class AgentSession {
 	/** Queued input that a whole turn started after and settled without delivering is overdue: say so (#4036). */
 	private _warnQueuedInputOutlivingRun(agentEnd: AgentEvent | undefined): void {
 		// A failed or aborted turn keeps queued input for the next prompt by design, so it proves nothing is stuck;
-		// the next turn that ends normally still catches input that really is.
-		const settledMessages = agentEnd?.type === "agent_end" ? agentEnd.messages : this.agent.state.messages;
-		const lastAssistant = settledMessages.findLast((message) => message.role === "assistant");
+		// the next turn that ends normally still catches input that really is. A settle without an agent_end comes
+		// only from such a turn (the prompt threw, a continuation failed, a retry was aborted in its backoff), and the
+		// transcript would show an earlier turn's outcome instead, so it is never judged (senpi#4064).
+		if (agentEnd?.type !== "agent_end") return;
+		const lastAssistant = agentEnd.messages.findLast((message) => message.role === "assistant");
 		if (lastAssistant?.role === "assistant" && (lastAssistant.stopReason === "error" || lastAssistant.stopReason === "aborted")) {
 			return;
 		}
@@ -13620,6 +13677,7 @@ export class AgentSession {
 				total: usageTotals.input + usageTotals.output + usageTotals.cacheRead + usageTotals.cacheWrite,
 			},
 			cost: usageTotals.cost,
+			...(usageTotals.costUnknown ? { costUnknown: true as const } : {}),
 			contextUsage: this.getContextUsage(),
 			failures: computeSessionFailureReport(this.sessionManager.getEntries()),
 		};
