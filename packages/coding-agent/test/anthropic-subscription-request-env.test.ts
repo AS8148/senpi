@@ -160,6 +160,7 @@ describe("claude-sdk-oauth request environment", () => {
 		overrideSdkBoundary({ query: queryCapturing(captured) });
 
 		await streamAnthropicSubscription(model, context, {
+			cwd: process.cwd(),
 			env: { CLAUDE_CODE_OAUTH_TOKEN: "request-token" },
 			sessionId: residentSessionId,
 			streamKind: "main",
