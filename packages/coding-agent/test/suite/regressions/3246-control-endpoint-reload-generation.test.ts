@@ -4,6 +4,7 @@
  * generation's `drain` (which surfaced as "control endpoint drain failed: stale extension
  * generation after reload" on every wake).
  */
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { TUI } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -172,6 +173,7 @@ describe.skipIf(process.platform === "win32")("senpi#3246 a control endpoint aft
 		if (current?.status !== "registered" || current.socket === undefined) throw new Error(JSON.stringify(current));
 		const retiredWake = retired?.socket === undefined ? "none" : await wakeReply(retired.socket);
 		const currentWake = await wakeReply(current.socket);
+		const sessionFile = harness.session.sessionManager.getSessionFile();
 		const host = Reflect.get(mode, "sessionControlHost");
 		const tracked: unknown = Reflect.get(Reflect.get(host, "active") ?? {}, "socket");
 
@@ -182,6 +184,7 @@ describe.skipIf(process.platform === "win32")("senpi#3246 a control endpoint aft
 			drains: [...new Set(drains)],
 			notices: drainFailures(notices),
 			tracked: tracked === current.socket,
+			sessionFileKept: sessionFile !== undefined && existsSync(sessionFile),
 		}).toEqual({
 			retired: "failed",
 			retiredWake: "none",
@@ -189,6 +192,7 @@ describe.skipIf(process.platform === "win32")("senpi#3246 a control endpoint aft
 			drains: [2],
 			notices: [],
 			tracked: true,
+			sessionFileKept: true,
 		});
 	});
 

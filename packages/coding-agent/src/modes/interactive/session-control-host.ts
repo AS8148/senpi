@@ -73,10 +73,12 @@ export class TuiSessionControlHost implements ControlEndpointHost {
 		this.active = endpoint;
 		return {
 			...outcome.registration,
-			// Its owner disposing it (a retired extension generation, senpi#3246) also takes it off this host.
+			// Its owner disposing it (a retired extension generation, senpi#3246) also takes it off this host,
+			// but only once its teardown settled: until then the next registration's `disposeActive` awaits
+			// it, so the teardown's header-only discard never removes the file the next endpoint serves.
 			dispose: async () => {
-				if (this.active === endpoint) this.active = undefined;
 				await endpoint.dispose();
+				if (this.active === endpoint) this.active = undefined;
 			},
 		};
 	}
