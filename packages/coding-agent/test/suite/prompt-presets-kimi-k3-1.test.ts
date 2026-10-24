@@ -68,7 +68,8 @@ describe("Kimi K3.1 prompt preset", () => {
 		const k3 = resolvePreset(createModel("kimi-k3", "moonshotai"), AUTO);
 		const k31 = resolvePreset(createModel("kimi-k3.1-pro", "moonshotai"), AUTO);
 
+		// Q (2026-10-24): K3.1 owns a copy, so a later K3 edit never reaches it; importing kimi-k3.ts breaks that.
 		expect(k31Source).not.toMatch(/from "\.\/kimi-k3\.ts"/);
-		expect(k31?.prompt.replace("running on Kimi K3.1.", "running on Kimi K3.")).toBe(k3?.prompt);
+		expect(k31?.prompt).not.toBe(k3?.prompt);
 	});
 });
