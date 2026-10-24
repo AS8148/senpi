@@ -1,10 +1,13 @@
 # Changelog
 
-## [Unreleased]
+## [2026.10.24-3] - 2026-10-24
 
 ### Breaking Changes
 
 ### Added
+
+- On macOS and Linux, a public RPC host endpoint (bare `--mode rpc --listen`, the host supervisor, and `senpi host ensure`) now publishes a fresh per-launch key record (`<keyRoot>/rpc/keys/<launch_id>`, a 0600 file in a 0700 directory) and proves it with an HMAC challenge-response carried in the caller's own first `get_protocol_info` frame; first-party clients verify the host's proof before sending any command and then prove the key themselves. This release serves an unauthenticated client with one deprecation line per connection; `SENPI_RPC_REQUIRE_TOKEN=1` refuses it with `auth_required`. The key root defaults to the agent directory and can be pointed elsewhere with `SENPI_RPC_KEY_ROOT` or `--rpc-key-root` without changing the client's profile; it and its `rpc/` directory must be owned by the user with no group or other write access (0755 is accepted) ([#3815](https://github.com/code-yeongyu/senpi/pull/3815))
+- Kimi K3.1 (`k3.1-pro`, `kimi-k3.1-pro` and their Highspeed ids) gets its own `kimi-k3-1` prompt preset, a separate copy of the K3 template; `promptPreset: "kimi-k3-1"` forces it ([#4184](https://github.com/code-yeongyu/senpi/pull/4184))
 
 ### Changed
 
