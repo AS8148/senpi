@@ -1,3 +1,40 @@
+## 2026-10-24 - Before-prompt custom message placement (senpi#4166)
+
+### What changed
+
+- `types.ts`: an optional `message.placement: "before-prompt"` requests persisted
+  delivery before the current prompt. `docs/extensions.md` documents its ordering.
+
+### Why
+
+Hidden user-role notices must not become the final user request.
+
+### Why an extension could not handle it
+
+The shared extension result contract must carry placement to session ingestion.
+
+### Expected merge conflict zones
+
+- `types.ts`: `BeforeAgentStartEventResult`.
+
+## 2026-10-22 - Extensions cannot open engine custody keys (senpi#3986)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/lifecycle-api.ts`: `pi.lifecycle.obligations.open` and a token's `transfer` refuse keys under `delivery:` or `wake-source:` with a typed `ReservedCustodyKey` error; the engine's own calls are unaffected.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/lifecycle-api.ts`: the engine identifies its delivery tickets and wake sources by those prefixes, so an extension ticket under them would be cancelled on a queue clear or retired as a stale wake source.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/lifecycle-api.ts`: the guard sits on the extension API itself; an extension cannot restrict what other extensions pass to `pi.lifecycle.obligations`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/lifecycle-api.ts`: `createLifecycleApi` now wraps `obligations`; upstream changes to that factory need the wrapper kept.
+
 ## 2026-10-22 - `pi.session.relocationTargets()` and `pi.session.requestRelocation()` (senpi#3959)
 
 ### What changed
