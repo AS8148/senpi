@@ -86,25 +86,29 @@ The session owns the release array, prompt admission and held-input settlement b
 
 - `packages/coding-agent/src/core/agent-session.ts`: `sendCustomMessage` looks for the ticket's queued message before queuing custody. A re-send whose itemized batch differs from the queued batch is refused with `DeliveryTicketRefused` (`different_items`); any re-send of a queued ticket no longer replaces the custody payload. `_admitItemized` records the batch's item ids on its admission, and `_joinPersistWatcher` keeps the first batch's ids.
 - `packages/coding-agent/src/core/itemized-send.ts`: `ItemizedAdmission` carries optional `itemIds`.
-- `packages/coding-agent/src/core/work-obligations.ts`: `DeliveryTicketRefused.reason` widens to `DeliveryTicketRefusal`, adding `different_items`.
+- `packages/coding-agent/src/core/work-obligations.ts`: `DeliveryTicketRefused.reason` widens to `DeliveryTicketRefusal`, adding `different_items`. `queue()` keeps the item ids a queued ticket's payload was recorded with when a plain re-send (restart redelivery) queues it again, and `queuedItemIds()` returns them.
+- `packages/coding-agent/src/core/work-custody-record.ts`: `CustodyPayload` carries optional `itemIds`, read back on restore. `sameItems` compares sorted ids, so duplicate ids count.
 
 ### Why
 
 - `packages/coding-agent/src/core/agent-session.ts`: `queue()` overwrote the custody payload with the re-send's message before the queued carrier was found, and the joined receipts were built from the re-send's items, so items absent from the written entry got `message_persisted`.
 - `packages/coding-agent/src/core/itemized-send.ts`: the comparison needs each batch's item ids where the persist watchers live.
-- `packages/coding-agent/src/core/work-obligations.ts`: the refusal needs a reason distinct from the ticket's admission.
+- `packages/coding-agent/src/core/work-obligations.ts`: the refusal needs a reason distinct from the ticket's admission; a carrier restored after a restart has no persist watcher, so its batch's ids must come from custody (senpi#4124 review).
+- `packages/coding-agent/src/core/work-custody-record.ts`: the ids must survive the session file round trip.
 
 ### Why an extension could not handle it
 
 - `packages/coding-agent/src/core/agent-session.ts`: ticket custody and persist receipts are session core state.
 - `packages/coding-agent/src/core/itemized-send.ts`: the admission object is created inside the session.
 - `packages/coding-agent/src/core/work-obligations.ts`: the refusal type is the engine's.
+- `packages/coding-agent/src/core/work-custody-record.ts`: the custody record format is the engine's.
 
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/agent-session.ts`: `_joinPersistWatcher`, the queue step of `sendCustomMessage`, the queued-carrier lookup in `_deliverCustomMessage`, and the `sameItems` helper above the class.
 - `packages/coding-agent/src/core/itemized-send.ts`: `ItemizedAdmission`.
-- `packages/coding-agent/src/core/work-obligations.ts`: `DeliveryTicketRefused`.
+- `packages/coding-agent/src/core/work-obligations.ts`: `DeliveryTicketRefused`, `queue()`, `queuedItemIds()`.
+- `packages/coding-agent/src/core/work-custody-record.ts`: `CustodyPayload`, `readPayload`.
 
 ## 2026-10-20 - A model switch restores that model's last thinking level in this session (senpi#3819)
 

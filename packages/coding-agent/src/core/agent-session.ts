@@ -1303,9 +1303,11 @@ function promptKind(options: PromptOptions | undefined): HumanInputAdmittedEvent
 /** senpi#3864: custody key prefix of a delivery ticket the engine opened itself (a producer keys its own). */
 const ENGINE_DELIVERY_KEY_PREFIX = "delivery:";
 
-/** Whether two batches carry the same items, in any order. */
+/** Whether two batches carry the same items, in any order; duplicate ids count, so [a, a] is not [a, b]. */
 function sameItems(a: readonly string[], b: readonly string[]): boolean {
-	return a.length === b.length && a.every((id) => b.includes(id));
+	const left = [...a].sort();
+	const right = [...b].sort();
+	return left.length === right.length && left.every((id, index) => id === right[index]);
 }
 
 export class AgentSession {
@@ -6907,14 +6909,22 @@ export class AgentSession {
 		}
 		// A re-send of a queued ticket must not replace the payload that queued message will write (senpi#4106).
 		const queuedCarrier = ticket === undefined ? undefined : this._queuedTicketCarrier(ticket);
-		const carrierItems = queuedCarrier && this._persistWatchers.get(queuedCarrier)?.itemIds;
+		// A carrier restored after a restart has no watcher; its custody payload still records the batch's items.
+		const carrierItems =
+			queuedCarrier && ticket !== undefined
+				? (this._persistWatchers.get(queuedCarrier)?.itemIds ?? obligations.queuedItemIds(ticket))
+				: undefined;
 		if (ticket !== undefined && itemized?.itemIds && carrierItems && !sameItems(carrierItems, itemized.itemIds)) {
 			deferredTurnClaim?.resolve("finished-without-start");
 			itemized.failed(new DeliveryTicketRefused(ticket, "different_items"));
 			return;
 		}
 		if (ticket && queuedCarrier === undefined)
-			obligations.queue(ticket, { message: deliveryMessage, deliverAs: options?.deliverAs });
+			obligations.queue(ticket, {
+				message: deliveryMessage,
+				deliverAs: options?.deliverAs,
+				...(itemized?.itemIds ? { itemIds: itemized.itemIds } : {}),
+			});
 		onQueued?.();
 		// A batch a user abort (Esc or Stop) dropped is decided again only after this delivery releases its ticket.
 		let readmit = false;

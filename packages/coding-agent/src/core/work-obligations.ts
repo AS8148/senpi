@@ -124,10 +124,23 @@ export class SessionWorkObligations implements WorkObligations {
 		if (admission === "unknown") throw new CustodyViolation(ticketId);
 		if (admission !== "admitted") return false;
 		const record = this.ticketRecord(ticketId);
-		this.install({ ...record, state: "queued", payload, delivery: undefined });
+		// A restored queued ticket is re-sent plain; it keeps the item ids its batch was recorded with (senpi#4106).
+		const itemIds = payload.itemIds ?? (record.state === "queued" ? record.payload?.itemIds : undefined);
+		this.install({
+			...record,
+			state: "queued",
+			payload: { ...payload, ...(itemIds ? { itemIds } : {}) },
+			delivery: undefined,
+		});
 		this.delivering.add(ticketId);
 		this.store.changed();
 		return true;
+	}
+
+	/** The item ids a queued ticket's batch was recorded with, if any. */
+	queuedItemIds(ticketId: DeliveryTicketId): readonly string[] | undefined {
+		const record = [...this.records.values()].find((value) => value.ticketId === ticketId);
+		return record?.state === "queued" ? record.payload?.itemIds : undefined;
 	}
 
 	endDelivery(ticketId: DeliveryTicketId): void {
