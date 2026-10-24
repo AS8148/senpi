@@ -124,6 +124,21 @@ describe.skipIf(process.platform === "win32")("public POSIX authentication", () 
 		]);
 	});
 
+	it("grace: serves a keyless first frame over 8 KiB with one deprecation line and no drop", async () => {
+		const qa = await host("bare", false);
+		const client = await peer(qa.socket);
+		const reply = await client.request({ id: "big", type: "list_sessions", padding: "x".repeat(9000) });
+		expect(reply).toMatchObject({ id: "big", type: "response" });
+		client.socket.destroy();
+		await client.closed;
+		const drained = once(qa.child, "close");
+		qa.child.kill("SIGTERM");
+		await drained;
+		const lines = qa.stderr().split("\n");
+		expect(lines.filter((line) => line.includes("did not prove the endpoint key"))).toHaveLength(1);
+		expect(lines.filter((line) => line.includes("dropped an unauthenticated connection"))).toEqual([]);
+	});
+
 	it("authenticates fragmented and coalesced frames", async () => {
 		const qa = await host("bare");
 		const client = await peer(qa.socket);

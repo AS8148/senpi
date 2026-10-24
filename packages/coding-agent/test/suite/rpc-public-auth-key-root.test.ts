@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseHostArgs } from "../../src/cli/host-command.ts";
 import { getAgentDir } from "../../src/config.ts";
+import { hostRequestKeyRoot } from "../../src/modes/rpc/host-request-key-root.ts";
 import { rpcKeyRoot, withRpcKeyRoot } from "../../src/modes/rpc/rpc-auth-client.ts";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -30,5 +31,27 @@ describe.skipIf(process.platform === "win32")("public RPC credential-root select
 				}),
 			),
 		);
+	});
+
+	// senpi#3815 review L3: `host gc --agent-dir D` dials D's endpoints with D's key records.
+	it("dials a gc target with its own key root, over the environment and any enclosing root", () => {
+		vi.stubEnv("SENPI_RPC_KEY_ROOT", "/environment-root");
+		const gc = { action: "gc", agentDir: "/gc-target" } as const;
+		expect(hostRequestKeyRoot(gc)).toBe("/gc-target");
+		expect(withRpcKeyRoot("/caller", () => hostRequestKeyRoot(gc))).toBe("/gc-target");
+		expect(hostRequestKeyRoot(gc, "/flag-root")).toBe("/flag-root");
+	});
+
+	it("dials a status target from the caller's chosen root, else the target's agent dir", () => {
+		const status = {
+			action: "status",
+			target: { socket: "/target/rpc/rpc.sock", agentDir: "/target" },
+			includeWorkers: false,
+			all: false,
+		} as const;
+		expect(hostRequestKeyRoot(status)).toBe("/target");
+		vi.stubEnv("SENPI_RPC_KEY_ROOT", "/environment-root");
+		expect(hostRequestKeyRoot(status)).toBe("/environment-root");
+		expect(hostRequestKeyRoot(status, "/flag-root")).toBe("/flag-root");
 	});
 });

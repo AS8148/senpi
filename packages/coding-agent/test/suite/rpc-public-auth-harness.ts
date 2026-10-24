@@ -1,10 +1,11 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
 import { once } from "node:events";
+import { existsSync, watch } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
 import { hermeticProviderEnv } from "../helpers/rpc-hermetic.ts";
 import { killAndWait, reapProcessesUnder } from "../helpers/spawned-host-reaper.ts";
@@ -20,7 +21,14 @@ export async function sandbox() {
 	return { root, agentDir, socket: join(root, "s") };
 }
 
-export async function launchHost(qa: Awaited<ReturnType<typeof sandbox>>, path: LaunchPath, strict = true) {
+export async function launchHost(
+	qa: Awaited<ReturnType<typeof sandbox>>,
+	path: LaunchPath,
+	strict = true,
+	extraEnv: Readonly<Record<string, string>> = {},
+	/** `socket`: ready once the listener's entry exists, for a host that logs no bare-listener line. */
+	readiness: "log" | "socket" = "log",
+) {
 	const args =
 		path === "bare"
 			? ["--mode", "rpc", "--listen", qa.socket]
@@ -38,6 +46,7 @@ export async function launchHost(qa: Awaited<ReturnType<typeof sandbox>>, path: 
 			SENPI_RPC_HOST_IDLE_EXIT_MS: "60000",
 			PI_OFFLINE: "1",
 			PI_TELEMETRY: "0",
+			...extraEnv,
 		},
 		stdio: ["ignore", "pipe", "pipe"],
 	});
@@ -59,8 +68,15 @@ export async function launchHost(qa: Awaited<ReturnType<typeof sandbox>>, path: 
 				finish();
 		};
 		const onExit = () => finish(new Error(`host exited: ${stderr} ${stdout}`));
+		const watcher =
+			readiness === "socket"
+				? watch(qa.root, (_event, name) => {
+						if (name === basename(qa.socket) && existsSync(qa.socket)) finish();
+					})
+				: undefined;
 		const finish = (error?: Error) => {
 			clearTimeout(timeout);
+			watcher?.close();
 			child.stderr?.off("data", onData);
 			child.stdout?.off("data", onData);
 			child.off("exit", onExit);
@@ -70,6 +86,7 @@ export async function launchHost(qa: Awaited<ReturnType<typeof sandbox>>, path: 
 		child.stderr?.on("data", onData);
 		child.stdout?.on("data", onData);
 		child.once("exit", onExit);
+		if (readiness === "socket" && existsSync(qa.socket)) finish();
 	});
 	return { child, stderr: () => stderr };
 }

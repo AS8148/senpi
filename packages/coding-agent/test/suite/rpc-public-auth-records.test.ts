@@ -1,4 +1,5 @@
 import { once } from "node:events";
+import { realpathSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -127,7 +128,12 @@ describe.skipIf(process.platform === "win32")("public RPC launch key records", (
 		cleanup.push(() => new Promise<void>((resolve) => server.close(() => resolve())));
 		const client = await Peer.connect(qa.socket);
 		const closed = once(client.socket, "close");
-		await expect(qa.endpoint.publish()).rejects.toMatchObject({ code: "key_publication_failed" });
+		const rpc = realpathSync(join(qa.agentDir, "rpc"));
+		// The exit names the fix, so a umask-002 agent directory is one command away from working (L6).
+		await expect(qa.endpoint.publish()).rejects.toMatchObject({
+			code: "key_publication_failed",
+			message: expect.stringContaining(`chmod go-w ${rpc}`),
+		});
 		await closed;
 	});
 
