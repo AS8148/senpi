@@ -115,7 +115,7 @@ export class LifecycleSessionBinding {
 	}
 
 	consume(message: AgentMessage): string | undefined {
-		return consumeLifecycleDelivery(this.session, this.controller, message);
+		return this.write(() => consumeLifecycleDelivery(this.session, this.controller, message));
 	}
 
 	consumedEntry(message: AgentMessage): string | undefined {
@@ -278,12 +278,13 @@ export class LifecycleSessionBinding {
 
 	/**
 	 * The single sink every write this binding makes goes through: the controller's records, custody and child
-	 * reports, its events, and the restore-time interruption records. After dispose() nothing is written or emitted,
-	 * because the session file is no longer this session's (senpi#4120 review).
+	 * reports, its events, the consumed delivery's transcript entry, and the restore-time interruption records.
+	 * After dispose() nothing is written or emitted, because the session file is no longer this session's
+	 * (senpi#4120 review, senpi#4149).
 	 */
-	private write(record: () => unknown): void {
-		if (this.disposed) return;
-		record();
+	private write<T>(record: () => T): T | undefined {
+		if (this.disposed) return undefined;
+		return record();
 	}
 
 	private observeWakeSource(data: unknown): void {
