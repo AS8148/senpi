@@ -34,8 +34,8 @@ upstream.json  Accepted upstream baseline recorded by merges (read by scripts)
 - The release driver emits a final stdout status line: `RELEASE_DECISION: RELEASE | SKIP | FAILED`.
   The merge agent emits `MERGE_RESULT: CLEAN_PR_READY | NO_RELEASE_NEEDED | CONFLICTS | QA_FAILED | AGENT_FAILED`.
 - Release runs only after the upstream PR is merge-committed into `main`, a fresh `/cl`
-  audit passes on that tip, and `scripts/upstream-release-worthy.mjs` finds `## [Unreleased]`
-  package changelog entries.
+  audit passes on that tip, and `scripts/upstream-release-worthy.mjs` finds package entries
+  in `[Unreleased]` or pending fragments (a read-only compile preview).
 
 ## ANTI-PATTERNS
 
