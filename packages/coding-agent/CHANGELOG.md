@@ -6,11 +6,7 @@
 
 ### Added
 
-- Shared RPC hosts support live-only `attach_session`, one-hold `release_attachment`, and atomic `reclaim_session`. Attachments are fenced by durable session identity, and temporary releases let active turns finish ([#3795](https://github.com/code-yeongyu/senpi/issues/3795), [#3814](https://github.com/code-yeongyu/senpi/pull/3814)).
-
 ### Changed
-
-- Socket-host session mutations now require attachment. This release serves legacy unattached mutations with a deprecation line; `SENPI_RPC_REQUIRE_ATTACH=1` enforces immediately. `release_session` excludes the caller's own holds when checking for other attached clients ([#3795](https://github.com/code-yeongyu/senpi/issues/3795), [#3814](https://github.com/code-yeongyu/senpi/pull/3814)).
 
 - A person's turn now writes two session lifecycle records, one `running` record when its epoch opens and one `done` (or other terminal) record when it seals, instead of three or four. The `session_lifecycle` event for that turn arrives when its run starts rather than when the input is admitted; input into a still-open epoch is still recorded at once ([#3980](https://github.com/code-yeongyu/senpi/issues/3980)).
 - A scheduled prompt (`schedule_prompt`) now arrives in its session while that session is open in the TUI or over RPC: the open session delivers its own due prompts, steered into the running turn when the agent is working, or starting a turn when it is idle. Before, `senpi schedule run` held them until the session was closed and then ran them headlessly. Prompts for sessions that are not open still go through `senpi schedule run`. If the open session cannot deliver a due prompt, it now says so in a warning ([#4074](https://github.com/code-yeongyu/senpi/issues/4074)).
