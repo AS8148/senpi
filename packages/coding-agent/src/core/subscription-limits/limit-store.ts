@@ -228,8 +228,8 @@ function combineConcurrent(a: MirroredLimits, b: MirroredLimits): MirroredLimits
 	const later = <T>(x: T | undefined, y: T | undefined): T | undefined =>
 		x === undefined ? y : y === undefined ? x : canonical(x) >= canonical(y) ? x : y;
 	if (a.reportedAt !== b.reportedAt) {
-		const [older, newer] = a.reportedAt < b.reportedAt ? [a, b] : [b, a];
-		return concurrentRecord(a, newer.windows, newer.plan ?? older.plan, later(a.error, b.error), newer.reportedAt);
+		const newer = a.reportedAt < b.reportedAt ? b : a;
+		return concurrentRecord(a, newer.windows, newer.plan, later(a.error, b.error), newer.reportedAt);
 	}
 	const windows = new Map(a.windows.map((window) => [window.id, window]));
 	for (const window of b.windows) windows.set(window.id, later(windows.get(window.id), window) ?? window);
