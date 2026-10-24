@@ -434,4 +434,49 @@ describe("itemized sendMessage with a delivery ticket", () => {
 			fixture.h.session.messages.some((message) => message.role === "custom" && message.customType === WAKE),
 		).toBe(false);
 	});
+
+	it("settles a re-send with the written entry when the running turn wrote its queued carrier while it waited", async () => {
+		// Given a running turn, a ticketed batch queued behind it, and a re-send held while its header is persisted
+		const fixture = await resumeFixture();
+		fixtures.push(fixture);
+		const ticket = openTicket(fixture, "result:written-race");
+		const toolStarted = fixture.toolStarted();
+		const running = fixture.h.session.prompt("start");
+		await toolStarted;
+		const ended = deliveryEnded(fixture, ticket);
+		const first = Promise.resolve(sendWithTicket(fixture, ticket)).then(
+			(receipts) => receipts,
+			(error: unknown) => error,
+		);
+		await ended;
+		const manager = fixture.h.session.sessionManager;
+		const persistHeaderNow = manager.persistHeaderNow.bind(manager);
+		const headerHeld = Promise.withResolvers<void>();
+		const headerReached = Promise.withResolvers<void>();
+		vi.spyOn(manager, "persistHeaderNow").mockImplementationOnce(async () => {
+			headerReached.resolve();
+			await headerHeld.promise;
+			return persistHeaderNow();
+		});
+		const again = Promise.resolve(sendWithTicket(fixture, ticket)).then(
+			(receipts) => receipts,
+			(error: unknown) => error,
+		);
+		await headerReached.promise;
+
+		// When the running turn ends and writes the queued message before the re-send continues
+		fixture.releaseTool();
+		await running;
+		await settle(fixture);
+		headerHeld.resolve();
+		const [firstOutcome, againOutcome] = await settlesWithin(Promise.all([first, again]), "written-race receipts");
+
+		// Then both sends get the written entry's receipts and the message is written once
+		expect(againOutcome).not.toBeInstanceOf(Error);
+		expect((againOutcome as readonly SendMessageReceipt[]).map((receipt) => receipt.itemId)).toEqual(["a", "b"]);
+		expect((firstOutcome as readonly SendMessageReceipt[]).map((receipt) => receipt.itemId)).toEqual(["a", "b"]);
+		expect(
+			fixture.h.session.messages.filter((message) => message.role === "custom" && message.customType === WAKE),
+		).toHaveLength(1);
+	});
 });

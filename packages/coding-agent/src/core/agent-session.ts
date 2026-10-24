@@ -1361,6 +1361,8 @@ export class AgentSession {
 	private _lifecycleBinding: LifecycleSessionBinding;
 	/** Itemized batches waiting for the entry their one message is written to (senpi#3811). */
 	private readonly _persistWatchers = new WeakMap<object, PersistWatcher>();
+	/** The entry each ticket's queued message was last written as, so a re-send that lost the race still gets its receipt. */
+	private readonly _writtenTicketEntries = new Map<string, string>();
 	private _resumeSettlement: Promise<void> = Promise.resolve();
 	private readonly _engineTurnRelease = new EngineTurnRelease();
 	private readonly _engineTurnInput: EngineTurnInput;
@@ -3862,6 +3864,7 @@ export class AgentSession {
 						);
 					this._incrementMessageRevision();
 					this.externalAdmission.observePersisted(event.message);
+					this._recordWrittenTicket(event.message, entryId);
 					this._takePersistWatcher(event.message)?.persisted(entryId);
 				} else if (
 					event.message.role === "user" ||
@@ -6845,6 +6848,11 @@ export class AgentSession {
 		);
 	}
 
+	private _recordWrittenTicket(message: AgentMessage, entryId: string): void {
+		const ticket = message.role === "custom" ? messageTicket(message) : undefined;
+		if (ticket !== undefined) this._writtenTicketEntries.set(ticket, entryId);
+	}
+
 	private _takePersistWatcher(message: AgentMessage): PersistWatcher | undefined {
 		const watcher = this._persistWatchers.get(message);
 		this._persistWatchers.delete(message);
@@ -6919,6 +6927,7 @@ export class AgentSession {
 			itemized.failed(new DeliveryTicketRefused(ticket, "different_items"));
 			return;
 		}
+		if (ticket && queuedCarrier === undefined) this._writtenTicketEntries.delete(ticket);
 		if (ticket && queuedCarrier === undefined)
 			obligations.queue(ticket, {
 				message: deliveryMessage,
@@ -7052,12 +7061,21 @@ export class AgentSession {
 			deferredTurnClaim?.resolve("delegated");
 			return;
 		}
-		// A re-send that found the ticket's carrier queued, which a clear removed while it waited, must not be written
-		// with the retired ticket: it settles as cleared, like the send it would have joined (senpi#4125 review).
-		if (itemized !== undefined && options?.joinsQueuedCarrier === true) {
-			deferredTurnClaim?.resolve("finished-without-start");
-			itemized.failed(new QueuedDeliveryCleared(itemized.itemIds));
-			return;
+		// A re-send that found the ticket's carrier queued and lost it while it waited is never written a second time.
+		// If the running turn wrote the carrier, the re-send settles with that entry (its items matched the carrier's);
+		// if a clear or a retire removed it, an itemized re-send settles as cleared, like the send it joined.
+		if (options?.joinsQueuedCarrier === true && options.ticket !== undefined) {
+			const writtenEntry = this._writtenTicketEntries.get(options.ticket);
+			if (writtenEntry !== undefined) {
+				itemized?.persisted(writtenEntry);
+				deferredTurnClaim?.resolve("delegated");
+				return;
+			}
+			if (itemized !== undefined) {
+				deferredTurnClaim?.resolve("finished-without-start");
+				itemized.failed(new QueuedDeliveryCleared(itemized.itemIds));
+				return;
+			}
 		}
 		const appMessage = {
 			role: "custom" as const,
@@ -7851,6 +7869,7 @@ export class AgentSession {
 			appMessage.details,
 		);
 		this._emitEntryAppended(entryId);
+		this._recordWrittenTicket(appMessage, entryId);
 		this._takePersistWatcher(appMessage)?.persisted(entryId);
 		this._incrementMessageRevision();
 		this._emit({ type: "message_start", message: appMessage });
