@@ -521,6 +521,8 @@ tightens an existing user-owned, non-symlink `rpc/keys` directory to 0700; clien
 unsafe modes rather than changing them.
 The record is exclusively created with `O_NOFOLLOW`, fsynced, and checked to be a user-owned
 regular file with mode 0600. Publication failure closes the endpoint with `key_publication_failed`.
+A group- or other-writable agent directory or `rpc` (for example one created under umask 002) is such a
+failure: the host exits, and its message names the directory and the fix, `chmod go-w <dir>`.
 Each launch generates a new UUID and a new 32-byte key in memory. Hosts delete only their own
 record; `senpi host gc` also collects records whose process is dead or whose PID has been reused.
 
@@ -583,9 +585,24 @@ back. A host's `auth_failed` triggers one fresh connection and credential lookup
 unauthenticated retry.
 
 This release serves clients that never prove the key, with one stderr deprecation line per
-connection. `SENPI_RPC_REQUIRE_TOKEN=1` enforces now: an unproven command receives
-`auth_required`, a wrong proof receives `auth_failed`, then the connection closes before any
-later frame executes. Pre-authentication input is limited to 8 KiB and 2 seconds.
+connection and no limit beyond the normal JSONL ones, whatever the first frame (a long prompt or
+an image included) and whether or not the client first received a challenge it could not answer.
+A challenge in flight is not cut short: its `authenticate` may arrive after 2 seconds.
+`SENPI_RPC_REQUIRE_TOKEN=1` enforces now: the first frame must be a `get_protocol_info` carrying
+`auth.client_nonce`, and any other first frame, a keyless `get_protocol_info` included, receives
+`auth_required`; a wrong proof receives `auth_failed`; either way the connection closes before any
+later frame executes. Under enforcement, pre-authentication input is limited to 8 KiB and 2 seconds.
+
+The host never drops an unauthenticated connection silently. Each drop writes one stderr line,
+`senpi rpc host: dropped an unauthenticated connection on <endpoint>: <reason>`, where the reason
+is `auth_required`, `auth_failed`, `pre-auth budget exceeded`, `pre-auth deadline`,
+`first frame over the line limit` or `key publication failed`. The line carries no frame
+content, nonce or key material.
+
+A host is supervised only when it holds the internal key its supervisor hands it on stdin; the
+supervisor-watch environment (`SENPI_RPC_HOST_WATCH_*` and its companions) never switches public
+authentication off, and a host removes those variables once read, so nothing it starts
+inherits them.
 Clients accept pre-change hosts whose protocol answer has no `data.auth`. A missing record
 is the one grace exception: the client logs the key-root remedy and continues without sending
 `authenticate`; an enforcing host then refuses subsequent commands. Enforcement defaults and

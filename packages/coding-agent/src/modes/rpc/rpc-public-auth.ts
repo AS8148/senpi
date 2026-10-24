@@ -44,14 +44,15 @@ export class PublicRpcConnection {
 		this.requireToken = requireToken;
 		socket.pause();
 		// Enforcing: a client that has not proven the key by the deadline is dropped. Grace: a silent or slow legacy client
-		// (a passive observer) is served as before, with its one deprecation line.
+		// (a passive observer) is served as before, with its one deprecation line; a challenge in flight is left to
+		// finish, so its `authenticate` still reaches this filter instead of the router.
 		this.timer = setTimeout(() => {
-			if (this.requireToken) socket.destroy();
-			else if (!this.active && !this.failed) this.grace();
+			if (this.requireToken) this.drop("pre-auth deadline");
+			else if (!this.active && !this.failed && this.challenge === undefined) this.grace();
 		}, SOCKET_HANDSHAKE_TIMEOUT_MS);
 		const detach = attachJsonlLineReader(this.raw, (line) => this.line(line), {
 			maxLineLength: MAX_RPC_LINE_CHARACTERS,
-			onOversizedLine: () => socket.destroy(),
+			onOversizedLine: () => (this.active ? socket.destroy() : this.drop("first frame over the line limit")),
 		});
 		socket.on("error", () => socket.destroy());
 		socket.once("close", () => {
@@ -71,9 +72,10 @@ export class PublicRpcConnection {
 				const end = newline === -1 ? chunk.length : newline + 1;
 				const segment = chunk.subarray(offset, end);
 				if (!this.active) this.bytes += segment.length;
-				if (!this.active && this.bytes > PREAUTH_BYTES) {
-					this.failed = true;
-					socket.destroy();
+				// Only enforcement bounds pre-auth input: in grace a keyless legacy client is served whatever its first frame
+				// (a long prompt, an image), with or without a challenge it could not answer (no key record).
+				if (!this.active && this.requireToken && this.bytes > PREAUTH_BYTES) {
+					this.drop("pre-auth budget exceeded");
 					return;
 				}
 				this.raw.write(segment);
@@ -84,7 +86,7 @@ export class PublicRpcConnection {
 			() => {
 				if (!socket.destroyed) socket.resume();
 			},
-			() => socket.destroy(),
+			() => this.drop("key publication failed"),
 		);
 	}
 
@@ -134,7 +136,11 @@ export class PublicRpcConnection {
 						return;
 					}
 					this.challenge = { id: request.id, client: nonce, server: randomBytes(32).toString("hex") };
-				} else if (!this.requireToken) this.grace();
+				} else if (this.requireToken) {
+					// Wire contract frame 5: under enforcement any other first frame, a keyless get_protocol_info included.
+					this.refuse(request, "auth_required");
+					return;
+				} else this.grace();
 				this.forward(line);
 				return;
 			}
@@ -179,9 +185,25 @@ export class PublicRpcConnection {
 		);
 	}
 
+	/** Every pre-auth drop says why on stderr, by reason code only: never a frame, a nonce or key material. */
+	private logDrop(reason: string): void {
+		process.stderr.write(
+			`senpi rpc host: dropped an unauthenticated connection on ${this.endpoint.endpoint}: ${reason}\n`,
+		);
+	}
+
+	private drop(reason: string): void {
+		if (this.failed) return;
+		this.failed = true;
+		clearTimeout(this.timer);
+		this.logDrop(reason);
+		this.socket.destroy();
+	}
+
 	private refuse(request: Readonly<Record<string, unknown>> | undefined, code: "auth_required" | "auth_failed"): void {
 		this.failed = true;
 		clearTimeout(this.timer);
+		this.logDrop(code);
 		this.socket.end(
 			serializeJsonLine({
 				id: request?.id,

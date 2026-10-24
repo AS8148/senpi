@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { constants, unlinkSync } from "node:fs";
+import { constants, type Stats, unlinkSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -17,13 +17,19 @@ const MAX_KEY_RECORD_BYTES = 4096;
  * itself must be a real (non-symlink) directory owned by this user with mode exactly 0700.
  */
 export async function checkRpcKeyDirectory(path: string, privateKeys = false): Promise<void> {
-	const info = await fs.lstat(privateKeys ? path : await fs.realpath(path));
-	if (
-		!info.isDirectory() ||
-		info.uid !== process.getuid?.() ||
-		(privateKeys ? (info.mode & 0o7777) !== 0o700 : (info.mode & 0o022) !== 0)
-	)
-		throw new RpcEndpointAuthError("unsafe_key_record", path);
+	const checked = privateKeys ? path : await fs.realpath(path);
+	const problem = keyDirectoryProblem(await fs.lstat(checked), checked, privateKeys);
+	if (problem !== undefined) throw new RpcEndpointAuthError("unsafe_key_record", `${checked} ${problem}`);
+}
+
+/** What is wrong with one key-root directory, worded so the message names the fix (senpi#3815 review L6). */
+function keyDirectoryProblem(info: Stats, path: string, privateKeys: boolean): string | undefined {
+	if (!info.isDirectory()) return "is not a directory";
+	if (info.uid !== process.getuid?.()) return "is not owned by this user";
+	const mode = info.mode & 0o7777;
+	if (privateKeys)
+		return mode === 0o700 ? undefined : `must be mode 0700 (is 0${mode.toString(8)}); run: chmod 700 ${path}`;
+	return (mode & 0o022) === 0 ? undefined : `is writable by group or others; run: chmod go-w ${path}`;
 }
 
 async function checkRpcKeyParents(root: string): Promise<void> {

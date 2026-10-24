@@ -37,7 +37,6 @@ import {
 	type HostTarget,
 	runHostRequest,
 } from "../modes/rpc/host-runner.ts";
-import { withRpcKeyRoot } from "../modes/rpc/rpc-auth-client.ts";
 import { type ParsedHostArgs, parseHostArgs } from "./host-command-args.ts";
 import { emit } from "./host-emit.ts";
 
@@ -70,9 +69,7 @@ export async function runHostCommand(args: readonly string[]): Promise<number> {
 	}
 	try {
 		const request = await hostRequest(parsed);
-		const outcome = await withRpcKeyRoot(parsed.keyRoot ?? process.env.SENPI_RPC_KEY_ROOT ?? getAgentDir(), () =>
-			runHostRequest(request),
-		);
+		const outcome = await runHostRequest(request, parsed.keyRoot === undefined ? {} : { keyRoot: parsed.keyRoot });
 		if (parsed.subcommand === "shard-path" && !parsed.json) writeSync(1, `${String(outcome.payload.socket)}\n`);
 		else emit(outcome.payload);
 		return outcome.exitCode;
