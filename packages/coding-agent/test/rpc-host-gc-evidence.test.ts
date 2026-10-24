@@ -239,6 +239,29 @@ describe.skipIf(process.platform === "win32")("gc evidence read from disk and so
 		});
 	}
 
+	it("removes an endpoint whose only session-path claim is held by an exited, unreaped owner", async () => {
+		const qa = endpointScratch("gcz3");
+		const paths = await deadEndpoint(qa.legacy, qa.agentDir);
+		const zombie = await heldZombie();
+		try {
+			const sessionPath = join(qa.sessionDir, "held-by-zombie.jsonl");
+			await writeJson(reservationFile(paths.reservationsDir, sessionPath), {
+				instanceId: "g-zombie",
+				pid: zombie.pid,
+				processStartTime: zombie.processStartTime,
+				sessionPath,
+				attached: true,
+			});
+
+			expect(await gcHostEndpoints(qa.agentDir)).toEqual({
+				removed: [{ socket: qa.legacy, dir: paths.dir, reason: "socket_absent" }],
+				kept: [],
+			});
+		} finally {
+			zombie.release();
+		}
+	});
+
 	it("keeps an endpoint whose public socket refuses while a successor bind beside it answers", async () => {
 		const qa = endpointScratch("gcn");
 		const paths = await deadEndpoint(qa.legacy, qa.agentDir);

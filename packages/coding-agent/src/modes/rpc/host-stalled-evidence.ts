@@ -15,7 +15,6 @@ import { isAbsolute, join } from "node:path";
 import type { HolderGeneration } from "../../core/session-holders.ts";
 import {
 	processIsLive,
-	processIsRunning,
 	processStartTimeMs,
 	readProcessIdentity,
 	sameProcessStartMs,
@@ -173,9 +172,10 @@ export async function hostChildAlive(generation: HostGenerationPaths): Promise<b
 	const record = await readJsonObject(generation.childPidFile);
 	const pid = record?.pid;
 	if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return undefined;
-	if (!processIsRunning(pid)) return false;
+	if (!processIsLive(pid)) return false;
 	const observed = await readProcessIdentity(pid, process.platform, 1_000, processIsLive, "UTC");
-	if (!processIsRunning(pid)) return false;
+	// `absent` includes an exited, unreaped child (state Z), read in the same async snapshot (senpi#4119).
+	if (observed.kind === "absent" || !processIsLive(pid)) return false;
 	const recordedMs =
 		typeof record?.processStartTime === "string" ? processStartTimeMs(record.processStartTime) : undefined;
 	const observedMs = observed.kind === "present" ? processStartTimeMs(observed.identity) : undefined;
