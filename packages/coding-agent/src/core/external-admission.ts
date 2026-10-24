@@ -42,7 +42,7 @@ export interface EditorHoldState {
 	readonly revision: number;
 }
 
-type PendingLane = ExternalDeliverAs | "start";
+type PendingLane = ExternalDeliverAs | "start" | (() => boolean);
 
 export class ExternalAdmission {
 	private turnEpochValue = 0;
@@ -111,9 +111,10 @@ export class ExternalAdmission {
 	}
 
 	/** Durable custody will replay this delivery: reserve its id before asynchronous recovery or gateway admission. */
-	restoreQueued(deliveryId: string): void {
+	restoreQueued(deliveryId: string, isOwned: () => boolean): void {
 		if (this.pending.has(deliveryId) || this.emitted.has(deliveryId) || this.failed.has(deliveryId)) return;
-		this.pending.set(deliveryId, "followUp");
+		// Recovery chooses the payload's queue lane; this reservation only tracks durable ownership.
+		this.pending.set(deliveryId, isOwned);
 	}
 
 	/**
@@ -142,6 +143,7 @@ export class ExternalAdmission {
 		if (this.closedReason !== undefined) throw new Error(this.closedReason);
 		const turn_epoch = this.turnEpochValue;
 		const id = input.delivery_id;
+		this.releaseRestored();
 		if (this.pending.has(id) || this.emitted.has(id) || this.failed.has(id)) {
 			return { kind: "already_admitted", turn_epoch };
 		}
@@ -173,6 +175,7 @@ export class ExternalAdmission {
 	}
 
 	list(): AdmittedDeliveries {
+		this.releaseRestored();
 		const deliveries = { pending: [...this.pending.keys()], emitted: [...this.emitted] };
 		if (this.failed.size === 0) return deliveries;
 		const failed = [...this.failed].map(([delivery_id, error]) => ({ delivery_id, error }));
@@ -209,10 +212,17 @@ export class ExternalAdmission {
 		if (this.fileTakesWrites) this.failed.clear();
 	}
 
-	/** The runtime's queues were cleared: queued deliveries are no longer held. */
+	/** Cleared carriers are no longer held; custody not yet enqueued for recovery still owns its delivery. */
 	dropQueued(): void {
+		this.releaseRestored();
 		for (const [id, lane] of this.pending) {
-			if (lane !== "start") this.pending.delete(id);
+			if (lane !== "start" && typeof lane !== "function") this.pending.delete(id);
+		}
+	}
+
+	private releaseRestored(): void {
+		for (const [id, lane] of this.pending) {
+			if (typeof lane === "function" && !lane()) this.pending.delete(id);
 		}
 	}
 
