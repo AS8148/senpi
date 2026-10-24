@@ -50,6 +50,21 @@ describe("MCP OAuth metadata issuer trust", () => {
 		await expect(beginAuthorization(provider, { fetchFn })).rejects.toMatchObject({ oauthKind: "needs_auth" });
 	});
 
+	it("does not mistake a cached path issuer without PRM for the root fallback", async () => {
+		const { provider, issuer } = await setup();
+		await expect(
+			provider.saveDiscoveryState({
+				authorizationServerUrl: issuer,
+				authorizationServerMetadata: {
+					issuer: "https://auth.example.com:9443",
+					authorization_endpoint: `${issuer}/authorize`,
+					token_endpoint: `${issuer}/token`,
+					response_types_supported: ["code"],
+				},
+			}),
+		).rejects.toMatchObject({ oauthKind: "needs_auth" });
+	});
+
 	it("does not normalize the issuer in root fallback metadata", async () => {
 		const { provider, state, fetchFn } = await setup();
 		state.prm = false;

@@ -6,9 +6,11 @@ import type { McpStoredAuth } from "./token-store.ts";
 export function validatedAuthorizationServerIssuer(info: OAuthServerInfo, serverName: string): string {
 	// The SDK's legacy fallback discovers root metadata and spells the origin with a trailing slash.
 	// Only that configured-resource fallback is normalized; PRM-provided identifiers remain exact.
-	const issuer = info.resourceMetadata?.authorization_servers?.length
-		? info.authorizationServerUrl
-		: new URL(info.authorizationServerUrl).origin;
+	const origin = new URL(info.authorizationServerUrl).origin;
+	const issuer =
+		!info.resourceMetadata?.authorization_servers?.length && info.authorizationServerUrl === `${origin}/`
+			? origin
+			: info.authorizationServerUrl;
 	if (info.authorizationServerMetadata !== undefined && info.authorizationServerMetadata.issuer !== issuer) {
 		throw new OAuthFlowError(
 			"needs_auth",
