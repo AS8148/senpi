@@ -1422,11 +1422,29 @@ export class AgentSession {
 	private _postCompactionDeferredFollowUpMessages: AgentMessage[] = [];
 
 	// Compaction state
-	private _compactionAbortController: AbortController | undefined = undefined;
-	private _autoCompactionAbortController: AbortController | undefined = undefined;
+	// Each abort controller below is an isCompacting fact; setting or clearing one is a lifecycle edge (senpi#3980).
+	private _compactionAbortControllerValue: AbortController | undefined = undefined;
+	private _autoCompactionAbortControllerValue: AbortController | undefined = undefined;
+	private get _compactionAbortController(): AbortController | undefined {
+		return this._compactionAbortControllerValue;
+	}
+	private set _compactionAbortController(controller: AbortController | undefined) {
+		if (this._compactionAbortControllerValue === controller) return;
+		this._compactionAbortControllerValue = controller;
+		this.refreshLifecycle();
+	}
+	private get _autoCompactionAbortController(): AbortController | undefined {
+		return this._autoCompactionAbortControllerValue;
+	}
+	private set _autoCompactionAbortController(controller: AbortController | undefined) {
+		if (this._autoCompactionAbortControllerValue === controller) return;
+		this._autoCompactionAbortControllerValue = controller;
+		this.refreshLifecycle();
+	}
 	private _pendingCompactionAdmission: PendingCompactionAdmission | undefined = undefined;
 	private readonly _compactionLifecycle = new CompactionLifecycleCoordinator();
-	private readonly _sessionWorkBarrier = new SessionWorkBarrier();
+	// Work held by the barrier is a lifecycle fact: its start and its release are edges (senpi#3980).
+	private readonly _sessionWorkBarrier = new SessionWorkBarrier(() => this.refreshLifecycle());
 	/**
 	 * Extension-published activity that outlives a turn (background terminal
 	 * jobs, terminal monitors, loop-guard holds). Counts persist across extension
@@ -1470,7 +1488,15 @@ export class AgentSession {
 	private _messageRevision = 0;
 
 	// Branch summarization state
-	private _branchSummaryAbortController: AbortController | undefined = undefined;
+	private _branchSummaryAbortControllerValue: AbortController | undefined = undefined;
+	private get _branchSummaryAbortController(): AbortController | undefined {
+		return this._branchSummaryAbortControllerValue;
+	}
+	private set _branchSummaryAbortController(controller: AbortController | undefined) {
+		if (this._branchSummaryAbortControllerValue === controller) return;
+		this._branchSummaryAbortControllerValue = controller;
+		this.refreshLifecycle();
+	}
 
 	private _sessionTitleAbortController: AbortController | undefined = undefined;
 	private _sessionTitlePromise: Promise<void> | undefined = undefined;
