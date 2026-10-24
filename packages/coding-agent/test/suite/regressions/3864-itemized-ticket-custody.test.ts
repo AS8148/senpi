@@ -1,6 +1,6 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-import type { SendMessageItem } from "../../../src/core/extensions/types.ts";
+import type { SendMessageItem, SendMessageReceipt } from "../../../src/core/extensions/types.ts";
 import { DeliveryTicketRefused } from "../../../src/core/work-obligations.ts";
 import { type ResumeFixture, resumeFixture, settle, settlesWithin } from "./issue-3811-resume-support.ts";
 
@@ -16,12 +16,12 @@ async function textFixture(): Promise<ResumeFixture> {
 	return fixture;
 }
 
-function sendWithTicket(fixture: ResumeFixture, ticket: string) {
+function sendWithTicket(fixture: ResumeFixture, ticket: string, batch: readonly SendMessageItem[] = items) {
 	return fixture
 		.api()
 		.sendMessage(
-			{ customType: WAKE, content: "Task A finished\n\nTask B finished", display: false },
-			{ triggerTurn: true, deliverAs: "followUp", items, ticket },
+			{ customType: WAKE, content: batch.map((item) => item.content).join("\n\n"), display: false },
+			{ triggerTurn: true, deliverAs: "followUp", items: batch, ticket },
 		);
 }
 
@@ -219,5 +219,96 @@ describe("itemized sendMessage with a delivery ticket", () => {
 			firstReceipts?.map((receipt) => receipt.entryId),
 		);
 		expect(ticketOpen(fixture, ticket)).toBe(false);
+	});
+
+	it("refuses a re-send of a queued ticket that carries different items, and keeps the queued message as sent", async () => {
+		// Given a running turn and a ticketed batch queued as a follow-up behind it (senpi#4106)
+		const fixture = await resumeFixture();
+		fixtures.push(fixture);
+		const ticket = openTicket(fixture, "result:batch");
+		const toolStarted = fixture.toolStarted();
+		const running = fixture.h.session.prompt("start");
+		await toolStarted;
+		const ended = deliveryEnded(fixture, ticket);
+		const first = sendWithTicket(fixture, ticket);
+		await ended;
+
+		// When the producer re-sends the ticket with an item the queued message does not carry
+		const other: readonly SendMessageItem[] = [{ itemId: "c", producer: "task", content: "Task C finished" }];
+		const again = Promise.resolve(sendWithTicket(fixture, ticket, other)).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		fixture.releaseTool();
+		await running;
+		await settle(fixture);
+
+		// Then no receipt claims item c was written, and the written entry is the first send's batch
+		const [firstReceipts, refused] = await settlesWithin(Promise.all([first, again]), "itemized receipts");
+		expect(refused).toBeInstanceOf(DeliveryTicketRefused);
+		expect(firstReceipts?.map((receipt: SendMessageReceipt) => receipt.itemId)).toEqual(["a", "b"]);
+		const written = fixture.h.session.messages.flatMap((message) =>
+			message.role === "custom" && message.customType === WAKE ? [message.content] : [],
+		);
+		expect(written).toEqual(["Task A finished\n\nTask B finished"]);
+		expect(ticketOpen(fixture, ticket)).toBe(false);
+	});
+
+	it("refuses a re-send with different items into a carrier restored without a watcher, from its custody payload", async () => {
+		// Given a ticket whose queued batch [a, b] was restored from custody and re-sent plain, as restart redelivery does
+		const fixture = await resumeFixture();
+		fixtures.push(fixture);
+		const ticket = openTicket(fixture, "result:restored");
+		const toolStarted = fixture.toolStarted();
+		const running = fixture.h.session.prompt("start");
+		await toolStarted;
+		const obligations = fixture.h.session.workObligations;
+		const message = { customType: WAKE, content: "Task A finished\n\nTask B finished", display: false };
+		obligations.queue(ticket, { message, deliverAs: "followUp", itemIds: ["a", "b"] });
+		obligations.endDelivery(ticket);
+		await fixture.h.session.sendCustomMessage(message, { triggerTurn: true, deliverAs: "followUp", ticket });
+
+		// When the producer re-sends the ticket with an item that carrier does not carry
+		const other: readonly SendMessageItem[] = [{ itemId: "c", producer: "task", content: "Task C finished" }];
+		const again = Promise.resolve(sendWithTicket(fixture, ticket, other)).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		fixture.releaseTool();
+		await running;
+		await settle(fixture);
+
+		// Then the re-send is refused instead of receiving a receipt for an item that was never written
+		expect(await settlesWithin(again, "re-send refusal")).toBeInstanceOf(DeliveryTicketRefused);
+	});
+
+	it("does not treat a batch with a duplicate id as the same as one with a different id", async () => {
+		// Given a queued batch whose producer sent item a twice
+		const fixture = await resumeFixture();
+		fixtures.push(fixture);
+		const ticket = openTicket(fixture, "result:duplicate");
+		const toolStarted = fixture.toolStarted();
+		const running = fixture.h.session.prompt("start");
+		await toolStarted;
+		const ended = deliveryEnded(fixture, ticket);
+		const doubled: readonly SendMessageItem[] = [
+			{ itemId: "a", producer: "task", content: "Task A finished" },
+			{ itemId: "a", producer: "task", content: "Task A finished again" },
+		];
+		const first = Promise.resolve(sendWithTicket(fixture, ticket, doubled)).catch(() => undefined);
+		await ended;
+
+		// When the producer re-sends the ticket as [a, b]
+		const again = Promise.resolve(sendWithTicket(fixture, ticket)).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		fixture.releaseTool();
+		await running;
+		await settle(fixture);
+		await first;
+
+		// Then item b gets no receipt: the re-send is refused
+		expect(await settlesWithin(again, "re-send refusal")).toBeInstanceOf(DeliveryTicketRefused);
 	});
 });
