@@ -123,25 +123,6 @@ Shared-handler routing, socket capabilities, worker transport and disconnect tea
 
 Handler bind and dialog response dispatch; session writer attachment and capability updates; worker output forwarding and control dispatch.
 
-## 2026-10-23 - Carry named MCP reference failures in loaded surfaces (senpi#3858)
-
-### What changed
-
-- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcLoadedMcpServer` gains optional `lastError`, a sanitized diagnostic.
-- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: carries the MCP service's `lastError` into `get_loaded_surfaces` and its change fingerprint, alongside the server's error state.
-
-### Why
-
-- `packages/coding-agent/src/modes/rpc/rpc-types.ts` and `packages/coding-agent/src/modes/rpc/connection-handler.ts`: a missing file or unset variable previously left a zero-tool server reported as enabled, with no explanation in the RPC inventory.
-
-### Why an extension could not handle it
-
-- `packages/coding-agent/src/modes/rpc/rpc-types.ts` and `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the RPC protocol and loaded-surface projection are core-owned.
-
-### Expected merge conflict zones
-
-- LOW: `RpcLoadedMcpServer` in `packages/coding-agent/src/modes/rpc/rpc-types.ts` and `loadedMcpServers` in `packages/coding-agent/src/modes/rpc/connection-handler.ts`.
-
 ## 2026-10-22 - Host requests: a session asks its client to continue it on another computer (senpi#3959)
 
 ### What changed

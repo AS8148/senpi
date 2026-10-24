@@ -55,24 +55,6 @@
 
 - `scripts/local-release.mjs`: the `generate-models` call before `check:provider-defaults`.
 
-## 2026-10-22 - The pi-ai `./models` entry graph admits two reference leaves (senpi#3858)
-
-### What changed
-
-- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 26 files (was 24 after senpi#3378). The added files are `auth/credential-read.ts`, the credential-store read that `auth/resolve.ts` wraps in `ModelsError`, and `utils/config-reference-error.ts`, the typebox-free error a slot read raises for an unresolved reference; the reasons are recorded beside the budget and the forbid rules are unchanged.
-
-### Why
-
-- `scripts/check-entry-graphs.mjs`: a slot-scoped request must refuse a projected key that is still an unresolved reference with a typed error, and `./models` reaches `auth/resolve.ts`, so both leaves join its graph. Both stay inside the forbid rules: neither reaches `providers/`, `models.generated.ts` or the typebox helpers.
-
-### Why an extension could not handle it
-
-- `scripts/check-entry-graphs.mjs`: entry-graph budgets are repository build tooling.
-
-### Expected merge conflict zones
-
-- `scripts/check-entry-graphs.mjs`: the `./models` row, which senpi#3292 and senpi#3378 also raised.
-
 ## 2026-10-19 - The bundle ships the RPC host supervisor as its own program (senpi#3743)
 
 ### What changed
