@@ -81,7 +81,7 @@ export interface SessionReleasePort extends ReleaseSettlePort {
 	code(cause: unknown): string;
 	/** Requests for the session in flight on any connection, the release itself not counted. */
 	otherRequests(sessionId: string): number;
-	/** Clients attached to the session other than the connection asking for the release. */
+	/** Caller holds are already authorized; force is required only for OTHER attachments. */
 	otherAttachments(sessionId: string): number;
 	/**
 	 * Claims every attachment and tears the session down, sealing it as released. Its claim is taken
@@ -286,9 +286,8 @@ function releasable(
 	if (session === undefined) return refuse(RPC_ERROR_RELEASE_UNSUPPORTED, { detail: "worker_runtime" });
 	const sessionPath = entry.sessionPath ?? session.sessionFile;
 	if (sessionPath === undefined) return refuse(RPC_ERROR_RELEASE_UNSUPPORTED, { detail: "no_session_file" });
-	// The requesting connection's own attachment is not another client: it is drained with the rest.
-	const others = port.otherAttachments(command.sessionId);
-	if (others > 0 && command.force !== true) return refuse(RPC_ERROR_ATTACHED, { attachments: others });
+	const elsewhere = port.otherAttachments(command.sessionId);
+	if (elsewhere > 0 && command.force !== true) return refuse(RPC_ERROR_ATTACHED, { attachments: elsewhere });
 	return { session, sessionPath, attachments: entry.attachments };
 }
 
