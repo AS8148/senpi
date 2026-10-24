@@ -7,6 +7,7 @@ import type { Goal } from "./extensions/builtin/goal/types.ts";
 import type { ExtensionRunner } from "./extensions/runner.ts";
 import { StaleExtensionContextError } from "./extensions/stale-context-error.ts";
 import type { AgentEndEvent } from "./extensions/types.ts";
+import { deliveryIdOf } from "./external-admission.ts";
 import { consumeLifecycleDelivery, lifecycleDeliveryEntries, messageTicket } from "./lifecycle-delivery.ts";
 import { readLifecycleGoal } from "./lifecycle-goal.ts";
 import { lifecycleHistory } from "./lifecycle-history.ts";
@@ -70,6 +71,17 @@ export class LifecycleSessionBinding {
 			},
 			readRuntime: () => readLifecycleRuntimeFacts(session),
 		});
+		// A crashed receiver may have durable custody but no transcript entry yet. Recovery owns that
+		// delivery already; register it before session_start can let the gateway enqueue a second carrier.
+		for (const record of this.controller.obligations.active) {
+			if (record.state !== "queued" || !record.payload || !record.ticketId) continue;
+			const message = { role: "custom" as const, ...record.payload.message, timestamp: 0 };
+			const deliveryId = deliveryIdOf(message);
+			if (deliveryId === undefined) continue;
+			if (session.sessionManager.reduceHistory(lifecycleDeliveryEntries).has(record.ticketId))
+				session.externalAdmission.observePersisted(message);
+			else session.externalAdmission.restoreQueued(deliveryId);
+		}
 		this.unsubscribeHuman = bindLifecycleHumanInput(session, (event) => this.controller.humanInput(event.at));
 		this.unsubscribeAdmission = session.externalAdmission.onInputsSettled(() => this.controller.admissionSettled());
 		this.unsubscribeGoal = onGoalLifecycleChange(session.sessionManager, (goal) => {
