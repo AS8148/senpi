@@ -9,6 +9,22 @@ Senpi uses JSON settings files with project settings overriding global settings.
 
 Edit directly or use `/settings` for common options. To save startup model defaults interactively, use `/model` and press Ctrl+S on the desired model. To save the startup thinking level, use `/thinking` and press Ctrl+S.
 
+`/reasoning`, `/efforts`, and the thinking-level cycle key change the current session and its per-model memory, not the startup default. The `/settings` thinking option is an explicit default save. RPC thinking changes follow the same memory-only rule; turn-scoped changes remain ephemeral.
+
+## state.json
+
+Senpi keeps automatically written bookkeeping in `<agentDir>/state.json`, beside the other `*-state.json` files. It contains `tipsHistory`, `changelogSeen`, legacy `lastChangelogVersion`, `modelThinkingLevels`, `modelLastOnThinkingLevels`, and `modelServiceTiers`. Showing tips, acknowledging changelogs, and remembering per-model reasoning or fast mode no longer rewrite your global settings file.
+
+Existing global state keys move silently on first load. Values already in `state.json` win; project settings are never migrated. Legacy settings values remain a read fallback for one release. Migration writes state first, then removes the keys from settings, so an interrupted migration can be repeated safely. JSONC comments are lost during that one-time rewrite. Downgrading to an older build can re-show tips once.
+
+A corrupt or unreadable state file is debug-logged once and ignored without disabling your configuration. Truncated state can be replaced by the next bookkeeping save. A failed migration is retried on the next process launch, not by every manager in the current process.
+
+During a mixed-version upgrade, an older session can re-add bookkeeping to settings. A new session preserves those keys until migration can safely copy them; old-session writes can still trigger config reloads. Restart older sessions to end that transition.
+
+## Keeping your config in git
+
+Commit `settings.json` (or `settings.jsonc`), `models.json`, and `mcp.json` after checking that your configuration contains no inline credentials. Ignore `auth.json`, `state.json`, `sessions/`, and caches. Credentials belong in `auth.json`, not settings or state. For a reasoning level that travels with your config, pin it in `favoriteModels`, such as `"provider/model:high"`, rather than copying per-model memory.
+
 ## Project Trust
 
 On interactive startup, senpi asks before trusting a project folder that contains project-local settings, resources, or project `.agents/skills` and has no saved decision for the folder or a parent folder in `~/.senpi/agent/trust.json`. Trusting a project allows senpi to load `.senpi/settings.json` and `.senpi` resources, install missing project packages, and execute project extensions.
@@ -87,10 +103,7 @@ Permission rules are a confirmation policy, not a sandbox. Senpi, extensions, pa
 | `defaultModel` | string | - | Startup model ID (saved with Ctrl+S in `/model`, or edited manually) |
 | `recommendedModels` | string[] | `kimi-k3`, `gpt-6-astra`, `gpt-5.6-sol`, `claude-fable-5-1`, `claude-opus-5-5`, `glm-5.2` | Preferred default model ids in priority order. Built-in thinking levels are kimi-k3/`max`, GPT-6 Astra/`high`, GPT-5.6 Sol/`medium`, claude-fable-5-1/`high`, claude-opus-5-5/`max`, glm-5.2/`max`. Override the list or disable auto-switch with `--no-recommended-models` / `warnings.offRecommendedModel`. |
 | `defaultThinkingLevel` | string | - | Startup thinking level (saved with Ctrl+S in `/thinking`, or edited manually): `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
-| `modelThinkingLevels` | object | - | Per-model reasoning effort memory (`"provider/id": "level"`) |
-| `modelLastOnThinkingLevels` | object | - | Per-model last non-off reasoning level, used by `/reasoning on` to restore the previous effort |
-| `modelServiceTiers` | object | - | Per-model service tier memory (`"provider/id": "auto" \| "priority"`) |
-| `promptPreset` | string | `"auto"` | Force a system prompt preset: `"auto"`, `"kimi-k2-6"`, `"kimi-k2-7"`, `"kimi-k2-8"`, `"kimi-k3"`, `"glm-5.2"`, `"glm-5.3"`, `"grok-4.5"`, `"grok-4.6"`, `"grok-4.7"`, `"claude-fable-5"`, `"claude-fable-5-1"`, `"claude-opus-5-5"`, `"claude-opus-5"`, `"claude-sonnet-5-5"`, `"claude-opus-4-5"`, `"claude-opus-4-6"`, `"claude-opus-4-7"`, `"claude-opus-4-8"`, `"deepseek-v4-flash"`, `"deepseek-v4-flash-0731"`, `"deepseek-v4-1-flash"`, `"deepseek-v4-pro"`, `"gpt-5"`, `"gpt-5.2"`, `"gpt-5.3-codex"`, `"gpt-5.4"`, `"gpt-5.5"`, `"gpt-5.6"`, or `"gpt-6-astra"` |
+| `promptPreset` | string | `"auto"` | Force a system prompt preset: `"auto"`, `"kimi-k2-6"`, `"kimi-k2-7"`, `"kimi-k2-8"`, `"kimi-k3"`, `"glm-5.2"`, `"glm-5.3"`, `"grok-4.5"`, `"grok-4.6"`, `"grok-4.7"`, `"claude-fable-5"`, `"claude-fable-5-1"`, `"claude-opus-5-5"`, `"claude-opus-5"`, `"claude-sonnet-5-5"`, `"claude-haiku-5-5"`, `"claude-opus-4-5"`, `"claude-opus-4-6"`, `"claude-opus-4-7"`, `"claude-opus-4-8"`, `"deepseek-v4-flash"`, `"deepseek-v4-flash-0731"`, `"deepseek-v4-1-flash"`, `"deepseek-v4-pro"`, `"gemini-4-argon"`, `"gpt-5"`, `"gpt-5.2"`, `"gpt-5.3-codex"`, `"gpt-5.4"`, `"gpt-5.5"`, `"gpt-5.6"`, or `"gpt-6-astra"` |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
 | `showCacheMissNotices` | boolean | `false` | Show transcript notices for significant prompt-cache misses, compaction or branch-summary usage, and provider recovery diagnostics such as dropped Anthropic thinking blocks |
 | `thinkingBudgets` | object | - | Custom token budgets per thinking level. Anthropic, Google, and Bedrock use these natively. OpenAI-compatible models use them when `compat.thinkingTokenBudgetField` (or `supportsThinkingTokenBudget`) is set. |
@@ -129,10 +142,8 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 | `externalEditor` | string | `$VISUAL`, then `$EDITOR`, then Notepad on Windows or `nano` elsewhere | Command for Ctrl+G external editor; takes precedence over environment variables |
 | `quietStartup` | boolean \| `"header"` | `false` | `true` hides the startup header and loaded-resource listing. `"header"` keeps the header (version and key hints) but hides the model scope line and loaded-resource listing |
 | `tips` | boolean | `true` | Show the rotating startup and working-status tip lines |
-| `tipsHistory` | object | - | Internal record of which tips were shown last (managed automatically) |
 | `defaultProjectTrust` | string | `"ask"` | Fallback project trust behavior: `"ask"`, `"always"`, or `"never"`. Global setting only |
 | `collapseChangelog` | boolean | `false` | Show condensed changelog after updates |
-| `changelogSeen` | object | - | Internal per-source record of the latest changelog version acknowledged (managed automatically) |
 | `enableInstallTelemetry` | boolean | `true` | Send the anonymous install/update ping and selected provider attribution headers. This does not control update checks |
 | `enableAnalytics` | boolean | `false` | Opt-in analytics data sharing. Currently only asked for during the experimental first-time setup (`PI_EXPERIMENTAL=1`) |
 | `trackingId` | string | - | Analytics tracking identifier, generated when `enableAnalytics` is turned on |
@@ -187,6 +198,19 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the senpi version update check. Use `--
   }
 }
 ```
+
+### Context Files and Skills
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `contextFiles.maxBytesPerFile` | number | `65536` | Maximum UTF-8 bytes loaded from each AGENTS.md / CLAUDE.md, including the truncation note and any closing code fence |
+| `contextFiles.maxTotalBytes` | number | `131072` | Maximum combined UTF-8 bytes of loaded context files, including truncation notes and closing code fences |
+
+Files receive budget nearest-first: the current directory, its ancestors, then the global file. A cut prefers a newline in the last quarter of the available content budget; otherwise it uses a UTF-8 character boundary. An open backtick or tilde fence is closed with the same marker before the truncation note; the closing marker's bytes count against the budget. Files with less than 1024 bytes of budget left are skipped when they would need truncation, with a warning distinguishing an undersized per-file limit from budget used by nearer files. Both limits accept positive numbers (rounded down); invalid values use the defaults.
+
+The skills section has a fixed 48 KiB rendered UTF-8 byte cap, including its roots table and markup. Above 100 visible skills or 64 KiB of descriptions, descriptions become one line of at most 160 characters. If needed to meet the section cap, smaller catalogs also use compact descriptions, then all descriptions are dropped. If names and locations still exceed the cap, only the first skills that fit are listed, with the omitted count inside the section. Skills remain available for explicit invocation.
+
+Context cuts, skipped files, and compacted or omitted skills share the "Context size limits" resource notice in interactive mode and appear once on stderr at startup in print, JSON, and RPC modes, with the affected path when present. Ordinary skill validation warnings keep their existing diagnostic behavior and are not printed to stderr by this size check.
 
 ### Compaction
 
@@ -296,7 +320,7 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 
 #### Model fallback chains
 
-`retry.fallbackChains` maps a primary-model selector to an ordered list of fallback selectors. A selector is `provider/model` with an optional `:thinking-level` suffix, or a bare `model` id that applies to every provider serving that model family. Bare selectors expand against the models you actually have: providers holding an OAuth credential are preferred, then a fixed precedence order, and OpenRouter is never chosen by expansion. Senpi ships bare default chains for `claude-fable-5-1` and `claude-fable-5` - `claude-opus-5-5:max`, then `claude-opus-5:max`, `claude-opus-4-8:max`, and `claude-opus-4-6:max` - and for `claude-opus-5-5` - `claude-opus-5:max`, then `claude-opus-4-8:max`, then `claude-opus-4-6:max` - so Fable 5.1, Fable 5 and Opus 5.5 keep a fallback chain whichever provider serves them, and a fallback never leaves the Anthropic family; set a key to `[]` to opt out entirely, or set one `provider/claude-fable-5-1` key to override just that provider. For example, this switches Fable 5.1 to Kimi K3 at `max` thinking when an eligible failure occurs:
+`retry.fallbackChains` maps a primary-model selector to an ordered list of fallback selectors. A selector is `provider/model` with an optional `:thinking-level` suffix, or a bare `model` id that applies to every provider serving that model family. Bare selectors expand against the models you actually have: providers holding an OAuth credential are preferred, then a fixed precedence order, and OpenRouter is never chosen by expansion. Senpi ships bare default chains for `claude-fable-5-1` and `claude-fable-5` - `claude-opus-5-5:max`, then `claude-opus-5:max` - and for `claude-opus-5-5` - `claude-opus-5:max` - so Fable 5.1, Fable 5 and Opus 5.5 keep a fallback chain whichever provider serves them, and a fallback never leaves the Anthropic family; set a key to `[]` to opt out entirely, or set one `provider/claude-fable-5-1` key to override just that provider. For example, this switches Fable 5.1 to Kimi K3 at `max` thinking when an eligible failure occurs:
 
 ```json
 {
@@ -312,7 +336,7 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 
 A chain is only for the exact primary model it names: selector lookup first considers an exact thinking-level selector, then the same `provider/model` without its thinking suffix. Wildcard selectors, role keys such as `default`, and other catch-all chains are not supported.
 
-A fallback entry with `:thinking-level` requests that level on the target model; a bare entry inherits the current thinking level. Either value is clamped to the target model's supported levels. When an unpinned fallback later returns to the primary, it restores the original thinking level unless you changed it while using the fallback.
+A fallback entry with `:thinking-level` requests that level on the target model; a bare entry inherits the current thinking level. Either value is clamped to the target model's supported levels. An entry may name the same model as its key at another thinking level: it is a rung of its own, so the chain retries that model at the other level before it moves to the next model. An entry without a suffix names the rung already in flight, so the chain skips it. A hard failure parks only the rung that failed, so the chain still tries that model at its other levels; a failure that applies to the whole model (an auth error, a model that does not exist) therefore costs one request per listed level before the chain moves on. A transient, rate-limit or billing failure parks every level of the model at once. When an unpinned fallback later returns to the primary, it restores the original thinking level unless you changed it while using the fallback.
 
 `/fallback` writes these settings to the global settings file. Project settings are still merged when read; because `fallbackChains` is a nested map, a project `retry.fallbackChains` replaces the global map rather than merging individual chain keys.
 
@@ -391,6 +415,7 @@ When unset, senpi leaves provider payloads unchanged. This setting currently app
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `anthropicSubscriptionProvider.enabled` | boolean | `false` | Enable the ambient (host-CLI-derived) lane of `anthropic-subscription`. Env override: `SENPI_CLAUDE_SDK_OAUTH_ENABLED`. Explicit senpi-side logins (stored OAuth accounts in `auth.json`, `CLAUDE_CODE_OAUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN_<n>` env accounts) keep the provider available with this unset |
+| `anthropicSubscriptionProvider.accountFallback` | boolean | `true` | Allow automatic switching between managed Claude accounts. `false` surfaces failure instead of using another account, including when the selected account is already blocked. Same-account retries and refresh remain enabled. Independent of `retry.modelFallback`. Env override: `SENPI_CLAUDE_SDK_OAUTH_ACCOUNT_FALLBACK` |
 | `cursorCliOauthProvider.enabled` | boolean | `false` | Enable the `cursor-cli-oauth` fallback lane and automatic native credential bootstrap. Env override: `SENPI_CURSOR_CLI_OAUTH_ENABLED` |
 | `providers.<id>.maxConcurrency` | number | unlimited | Cap the streaming requests senpi keeps in flight against one provider, keyed by registry provider id (`anthropic`, `openai`, ...). `0`, a negative value, a fraction, or an absent key all mean unlimited |
 
@@ -450,6 +475,27 @@ unknown (e.g. Google models) or caching is off, no budget applies and timeout be
 A foreground `bash` command still running at the budget is handed to a live background session
 instead of being killed; its explicit `timeout` remains the kill deadline. See
 `terminal.timeoutAction` to switch that hand-off back to a kill.
+
+### Handoff Hint
+
+When a large session sits idle past its model's prompt-cache lifetime, the next reply has to resend the whole
+context at the cache-write price. The handoff hint shows one line above the editor with that price and the price of
+a fresh session's first reply, plus two choices: **Start fresh with a handoff** (`/handoff`) opens a new session,
+linked to this one, whose first entry is a short brief built from the session's state (goal, open todos, last request
+and answer, touched files, the old session's path); **Keep going** (`/handoff keep`) hides it for the rest of the
+session. A reopened session (a resume or `--continue`) counts its cache age from its last reply, so reopening a large
+session after its cache expired shows the hint before the first reply. The hint never interrupts a turn and never
+switches on its own; if another extension cancels the switch, the hint stays. `/handoff` with any other argument
+only explains the two choices. Prices come from the model's cost card; on a
+subscription they are API-price equivalents. No hint is shown for models without a cache lifetime or a price, for task
+children, in print/JSON mode, for turns an extension started, while a goal is active, or once compaction is about to
+run.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `handoffHint.enabled` | boolean | `true` | Offer the hint at all |
+| `handoffHint.minContextTokens` | number | `200000` | No hint below this context size |
+| `handoffHint.minSavingUsd` | number | `1` | No hint unless a fresh session saves at least this much on the next reply |
 
 ### Shell
 
@@ -528,6 +574,17 @@ await tool.monitor({ description: "build", command: "bun run build", filter: "^d
 
 This is the default and has no setting. Tools may declare `exposure: "eval"` to join this policy; `bash`, `powershell` and `grep` use that declaration. They remain registered and discoverable through `tool_schema` inside eval. Hooks and permission checks apply unchanged to calls made this way, and the prompt surfaces that document these tools render the `tool.<name>(` form to match. If the model attempts a direct call anyway, the call returns a hint naming the eval form instead of executing the tool. When the `eval` tool is unavailable (codemode not loaded, or a child agent whose allowlist omits it), the policy stays inert and otherwise enabled tools remain directly callable, so shell, text search, workflow and monitor access is never lost.
 
+### Automatic Turns
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `engineTurns.maxPerUserInput` | number | `0` | Turns the agent may start on its own (stream-rule nudges, goal continuations, other extension follow-ups) after one user message before it pauses; `0` (the default) turns the limit off |
+| `engineTurns.maxToolFreePerMinute` | number | `12` | Turns started on its own within 60 s that called no tool before it pauses; `0` turns the limit off |
+| `turn_inactivity_ms` | number | `3600000` | Milliseconds a turn may run with no tool progress before it is stopped as a deadline; renewed only by tool execution events and admitted user input, never by streamed text. Minimum `60000`; `0` disables |
+| `turn_max_runtime_ms` | number | `21600000` | Hard cap on one turn's runtime from prompt accept; `0` disables |
+
+When a limit is reached the session pauses with a notice instead of starting another turn; any message you send continues it, because only turns since your last message count.
+
 ### Ask User
 
 | Setting | Type | Default | Description |
@@ -557,6 +614,10 @@ While a question is pending, the terminal title shows `? <header>` unless an act
 | `todo.firstTurnPlan` | `"force"` \| `"remind"` \| `"off"` | `"force"` | First prompt of a session that is not a question (`?`/`!` ending): `"remind"` adds a hidden reminder to open the turn with a phased `todo` init; `"force"` also sends a named `tool_choice` for `todo` on that first request where the provider accepts one (Anthropic models whose compat allows forced tool choice with thinking off, OpenAI Responses, OpenAI Chat Completions unless `compat.supportsForcedToolChoice` is `false`), otherwise it falls back to the reminder. A provider that refuses the forced choice gets the request once more without it, and that model is not forced again for the rest of the process; `"off"` disables both. Print and JSON modes never arm |
 | `todo.turnEndBackstop` | `boolean` | `true` | When a main-session turn (not print/json, no active goal or continuation) ends text-only while the todo list still has open tasks and the final paragraph does not ask the user a question, queue a hidden `senpi.todo-owed` followUp nudging the next open task. At most two per chain of unattended turns; the third notifies once and stays silent until the next accepted user message |
 
+While open todo work has an active wake source (such as `senpi-task`), a running goal, a pending continuation, or pending messages, the backstop sends no nudge or warning. The footer shows `waiting: <sources>` until the next `agent_start`; session start and tree navigation also clear it. The `todo_owed_reminder` event reports `reason: "waiting"` and the source names, and the session log records suppression reasons at debug level.
+
+A goal whose continuation already stopped does not count as waiting: it keeps its own stop notice and gets no footer or nudge. With nothing on duty, the two automatic continuations stay hidden and count only while they close no task; when both end with open work, one notice says why the agent stopped and how to resume it (reply, or `/todo done` / `/todo drop`). The chain also resets on accepted direct input, session start, or tree navigation.
+
 ### Sessions
 
 | Setting | Type | Default | Description |
@@ -564,6 +625,7 @@ While a question is pending, the terminal title shows `? <header>` unless an act
 | `sessionDir` | string | - | Directory where session files are stored. Accepts absolute or relative paths, plus `~`. |
 | `sessionShutdownHandlerWarnMs` | number | `2000` | Warn when a single extension's `session_shutdown` handler has run this long. Set to `0` to disable the warning. |
 | `sessionShutdownHandlerTimeoutMs` | number | `10000` | Hard cap for a single extension's `session_shutdown` handler. Set to `0` to disable the cap. |
+| `sessionShutdownQuitBudgetMs` | number | `2000` | Total time a quit that exits senpi waits on all `session_shutdown` handlers together. Set to `0` to disable it. |
 
 ```json
 { "sessionDir": ".senpi/sessions" }
@@ -576,8 +638,10 @@ When multiple sources specify a session directory, precedence is `--session-dir`
 senpi bounds each extension's `session_shutdown` handler so one slow extension cannot hold quit, `/reload`, `/new`, `/resume` or a fork hostage. Past `sessionShutdownHandlerWarnMs` it logs one warning naming the extension; at `sessionShutdownHandlerTimeoutMs` it aborts the `signal` that handler received on the event, reports an extension error, and continues teardown with the next handler. The handler itself is not killed - it keeps running until the process exits - so extensions that persist durable state should observe `event.signal`.
 
 ```json
-{ "sessionShutdownHandlerWarnMs": 2000, "sessionShutdownHandlerTimeoutMs": 10000 }
+{ "sessionShutdownHandlerWarnMs": 2000, "sessionShutdownHandlerTimeoutMs": 10000, "sessionShutdownQuitBudgetMs": 2000 }
 ```
+
+A quit that exits senpi (interactive quit, print mode, a single-connection RPC process) also has a total budget, counted from when senpi starts running the shutdown handlers (the steps before them, such as stopping the TUI, are not counted): every handler still starts, in order, but once `sessionShutdownQuitBudgetMs` has passed senpi stops waiting, logs one warning naming the extension that overran it and the elapsed time, and exits. Handlers that start after that point get 1 ms, so their synchronous cleanup still runs. `/reload`, `/new`, `/resume`, forks, and an RPC host closing one session while it keeps running keep only the per-handler limits.
 
 Only `session_shutdown` is bounded; other extension events (including ask-user and approval dialogs, which may legitimately wait for minutes) are unaffected.
 
@@ -599,7 +663,7 @@ Only `session_shutdown` is bounded; other extension events (including ask-user a
 
 #### Per-model memory
 
-`modelThinkingLevels`, `modelLastOnThinkingLevels`, and `modelServiceTiers` are maps from `"provider/id"` to a level or tier value. They're managed automatically: switching models, using `/reasoning`, `/efforts`, or `/fast` writes the appropriate key. You rarely need to edit them by hand, but the shape looks like this:
+In `state.json`, `modelThinkingLevels`, `modelLastOnThinkingLevels`, and `modelServiceTiers` are maps from `"provider/id"` to a level or tier value. They're managed automatically: switching models, using `/reasoning`, `/efforts`, or `/fast` writes the appropriate key. You rarely need to edit them by hand, but the state file's shape looks like this:
 
 ```json
 {
@@ -657,20 +721,21 @@ priority tier, which keeps `service_tier` off the wire. Under a `:priority` pin 
 effect, because the pin outranks it. `ultrafast` is not a remembered value: a stored `ultrafast` is
 ignored. Select Ultrafast with a decorator, a `models.json` `serviceTier`, or `openai.serviceTier`.
 
-#### GPT-6 Astra Ultrafast
+#### Ultrafast (GPT-6 Astra and GPT-6.1 Sol)
 
 Select Ultrafast independently of reasoning effort on either first-party lane:
 
 ```bash
 senpi --model chatgpt-subscription/gpt-6-astra:xhigh:ultrafast
-senpi --model openai/gpt-6-astra:ultrafast:max
+senpi --model openai/gpt-6.1-sol:ultrafast:max
+senpi --model chatgpt-subscription/gpt-6.1-sol-ultrafast
 ```
 
-Astra supports `low`, `medium`, `high`, `xhigh`, and `max` with Ultrafast. The two decorators can appear in either order and work in `favoriteModels` and `--models` patterns too. A custom model entry can instead set `serviceTier: "ultrafast"` in `models.json`; keep its cost at Standard rates, since the adapter applies the Ultrafast multiplier. Astra Ultrafast costs 6x Standard, including cached input and long-context rates.
+Both models support `low`, `medium`, `high`, `xhigh`, and `max` with Ultrafast. `chatgpt-subscription/gpt-6.1-sol-ultrafast` is a catalog model that always sends GPT-6.1 Sol at Ultrafast, with `xhigh` as its default effort; any other effort you select still applies. The two decorators can appear in either order and work in `favoriteModels` and `--models` patterns too. A custom model entry can instead set `serviceTier: "ultrafast"` in `models.json`; keep its cost at Standard rates, since the adapter applies the Ultrafast multiplier. Ultrafast costs 6x Standard for both models, including cached input and long-context rates.
 
-This is an explicit request preference; availability is determined by the provider and account. Use it with GPT-6 Astra on OpenAI or ChatGPT Subscription. Senpi sends it only to the `openai` and `chatgpt-subscription` providers: selecting it on any other provider, including a gateway that serves GPT-6 Astra, prints a warning and the request goes out at that provider's default tier. On OpenAI or ChatGPT Subscription, selecting it for a model other than GPT-6 Astra prints a warning and still sends it, because the provider may accept it; other models keep their Standard price. `/fast` remains the Priority toggle. Switching between Ultrafast and another tier starts a fresh WebSocket response chain while retaining the conversation.
+This is an explicit request preference; availability is determined by the provider and account. Use it with GPT-6 Astra or GPT-6.1 Sol on OpenAI or ChatGPT Subscription. Senpi sends it only to the `openai` and `chatgpt-subscription` providers: selecting it on any other provider, including a gateway that serves one of these models, prints a warning and the request goes out at that provider's default tier. On OpenAI or ChatGPT Subscription, selecting it for any other model prints a warning and still sends it, because the provider may accept it; those models keep their Standard price. `/fast` remains the Priority toggle. Switching between Ultrafast and another tier starts a fresh WebSocket response chain while retaining the conversation.
 
-See OpenAI's [Ultrafast guide](https://developers.openai.com/api/docs/guides/ultrafast-mode) and [Astra model page](https://developers.openai.com/api/docs/models/gpt-6-astra).
+See OpenAI's [Ultrafast guide](https://developers.openai.com/api/docs/guides/ultrafast-mode) and [pricing](https://developers.openai.com/api/docs/pricing).
 
 ### Markdown
 
@@ -732,9 +797,6 @@ See [packages.md](packages.md) for package management details.
   "defaultProvider": "anthropic",
   "defaultModel": "claude-sonnet-4-20250514",
   "defaultThinkingLevel": "medium",
-  "modelThinkingLevels": {
-    "anthropic/claude-sonnet-4-20250514": "high"
-  },
   "theme": "dark",
   "compaction": {
     "enabled": true,

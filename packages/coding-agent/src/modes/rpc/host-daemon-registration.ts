@@ -26,10 +26,14 @@ import { rename, rm } from "node:fs/promises";
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import {
 	type DaemonPidFile,
+	ProcessIdentityUnreadableError,
 	parseDaemonPidFile,
+	processIsLive,
 	processMatchesPidFile,
+	processStartTimeMs,
 	readProcessStartTime,
-} from "../app-server/daemon/process.ts";
+	sameProcessStartMs,
+} from "../../utils/process-identity.ts";
 import {
 	createGenerationDirectory,
 	generationPaths,
@@ -39,7 +43,9 @@ import {
 	sameEndpoint,
 } from "./host-daemon-paths.ts";
 import { isRecord, parseJson, readFileOrUndefined, writeStateFile } from "./host-daemon-state.ts";
-import { pruneDeadGenerations } from "./host-generations.ts";
+import { endClaimsOfEndedGenerations, pruneDeadGenerations } from "./host-generations.ts";
+import { hostChildAlive } from "./host-stalled-evidence.ts";
+import { logUnknownHostIdentity } from "./host-supervisor-log.ts";
 
 /** Who wrote a registration: the process identity a later stop must match to be allowed. */
 export interface HostPidFileWriter {
@@ -78,7 +84,19 @@ export interface RegisteredHost {
 export async function readHostRegistration(paths: HostDaemonPaths): Promise<RegisteredHost | undefined> {
 	const pointer = parseJson(await readFileOrUndefined(paths.pointerFile));
 	if (!pointer || typeof pointer.instance_id !== "string") return undefined;
-	const text = await readFileOrUndefined(generationPaths(paths, pointer.instance_id).pidFile);
+	return readGenerationRegistration(paths, pointer.instance_id);
+}
+
+/**
+ * One NAMED generation's record, whatever the pointer says: a caller asking a superseded generation
+ * to drain addresses it by instance id (#3653). The record proves nothing by itself; `provenOwner`
+ * still decides whether it names a live process serving this endpoint.
+ */
+export async function readGenerationRegistration(
+	paths: HostDaemonPaths,
+	instanceId: string,
+): Promise<RegisteredHost | undefined> {
+	const text = await readFileOrUndefined(generationPaths(paths, instanceId).pidFile);
 	const record = text === undefined ? undefined : parseDaemonPidFile(text);
 	if (record === undefined) return undefined;
 	const parsed = parseJson(text) ?? {};
@@ -87,7 +105,7 @@ export async function readHostRegistration(paths: HostDaemonPaths): Promise<Regi
 		record,
 		...(writer && { writer }),
 		...(typeof parsed.socket === "string" && { socket: parsed.socket }),
-		instanceId: pointer.instance_id,
+		instanceId,
 		generation: typeof parsed.generation === "number" ? parsed.generation : 0,
 	};
 }
@@ -151,6 +169,9 @@ export async function writeGenerationRecord(
 export async function clearHostRegistration(paths: HostDaemonPaths): Promise<void> {
 	const pointer = parseJson(await readFileOrUndefined(paths.pointerFile));
 	if (typeof pointer?.instance_id === "string") {
+		if (await hostChildAlive(generationPaths(paths, pointer.instance_id)))
+			throw new Error(`refusing to clear generation ${pointer.instance_id} with a live host child`);
+		await endClaimsOfEndedGenerations(paths, new Set([pointer.instance_id]));
 		await rm(generationPaths(paths, pointer.instance_id).dir, { recursive: true, force: true });
 	}
 	await rm(paths.settingsFile, { force: true });
@@ -174,6 +195,7 @@ export async function releaseGeneration(
 	owner: { readonly instanceId: string; readonly pid: number; readonly superseded?: boolean },
 ): Promise<void> {
 	const generation = generationPaths(paths, owner.instanceId);
+	if (await hostChildAlive(generation)) return;
 	const record = parseDaemonPidFile((await readFileOrUndefined(generation.pidFile)) ?? "");
 	if (record !== undefined && record.pid !== owner.pid) return;
 	if (owner.superseded === true) {
@@ -189,6 +211,19 @@ export async function releaseGeneration(
 }
 
 /**
+ * Drops the pointer and the boot settings while the pointer still names `instanceId`, and leaves that
+ * generation's directory to the generation itself: `host stop` signals a supervisor that still reads
+ * its stop intent from there before it releases it.
+ */
+export async function releaseRegistrationPointer(paths: HostDaemonPaths, instanceId: string): Promise<void> {
+	const pointer = parseJson(await readFileOrUndefined(paths.pointerFile));
+	if (pointer?.instance_id !== instanceId) return;
+	await rm(paths.settingsFile, { force: true });
+	// Last: "no pointer" is what every reader takes as "no host here" (senpi#2241).
+	await rm(paths.pointerFile, { force: true });
+}
+
+/**
  * The generation serving this socket, when - and only when - its record PROVES which process that
  * is. An owner nobody can prove may not be signalled at all (I1), so an unreadable identity, a
  * missing guard or a record about another endpoint all read as "no owner".
@@ -198,12 +233,18 @@ export async function provenOwner(
 	socket: string,
 ): Promise<{ pid: number; processStartTime: string; instanceId: string } | undefined> {
 	const record = registered?.record;
-	if (!record || record.processStartTime === null) return undefined;
+	if (!record) return undefined;
 	if (registered?.socket !== undefined && !sameEndpoint(registered.socket, socket)) return undefined;
+	if (record.processStartTime === null) {
+		if (processIsLive(record.pid)) logUnknownHostIdentity("host.pid", record.pid);
+		return undefined;
+	}
 	const identity = { pid: record.pid, processStartTime: record.processStartTime };
-	return (await processMatchesPidFile(identity, readProcessStartTime).catch(() => false))
-		? { ...identity, instanceId: registered.instanceId }
-		: undefined;
+	const proven = await processMatchesPidFile(identity, readProcessStartTime).catch((error: unknown) => {
+		if (error instanceof ProcessIdentityUnreadableError) logUnknownHostIdentity("host.pid", identity.pid);
+		return false;
+	});
+	return proven ? { ...identity, instanceId: registered.instanceId } : undefined;
 }
 
 /**
@@ -222,7 +263,10 @@ export async function writtenByThisProcess(
 				() => null,
 			)
 		: await thisProcessStartTime();
-	return writer.startTime === startTime;
+	return sameProcessStartMs(
+		processStartTimeMs(writer.startTime),
+		startTime === null ? undefined : processStartTimeMs(startTime),
+	);
 }
 
 let selfStartTime: Promise<string | null> | undefined;
@@ -233,6 +277,11 @@ export function thisProcessStartTime(): Promise<string | null> {
 		() => null,
 	);
 	return selfStartTime;
+}
+
+/** A caller-supplied instance id names a directory under `generations/`: never a path of its own. */
+export function isGenerationId(instanceId: string): boolean {
+	return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(instanceId) && !instanceId.includes("..");
 }
 
 /** A record from a host started before writer stamps existed simply has no writer: it reads as foreign. */

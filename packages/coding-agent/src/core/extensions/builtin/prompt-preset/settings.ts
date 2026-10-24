@@ -4,9 +4,11 @@ export type PromptPresetName =
 	| "auto"
 	| "claude-fable-5"
 	| "claude-fable-5-1"
+	| "claude-fable-5-5"
 	| "claude-opus-5-5"
 	| "claude-opus-5"
 	| "claude-sonnet-5-5"
+	| "claude-haiku-5-5"
 	| "claude-opus-4-8"
 	| "claude-opus-4-7"
 	| "claude-opus-4-6"
@@ -17,6 +19,7 @@ export type PromptPresetName =
 	| "deepseek-v4-pro"
 	| "glm-5.2"
 	| "glm-5.3"
+	| "gemini-4-argon"
 	| "grok-4.5"
 	| "grok-4.6"
 	| "grok-4.7"
@@ -42,9 +45,11 @@ export const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"auto",
 	"claude-fable-5",
 	"claude-fable-5-1",
+	"claude-fable-5-5",
 	"claude-opus-5-5",
 	"claude-opus-5",
 	"claude-sonnet-5-5",
+	"claude-haiku-5-5",
 	"claude-opus-4-8",
 	"claude-opus-4-7",
 	"claude-opus-4-6",
@@ -55,6 +60,7 @@ export const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"deepseek-v4-pro",
 	"glm-5.2",
 	"glm-5.3",
+	"gemini-4-argon",
 	"grok-4.5",
 	"grok-4.6",
 	"grok-4.7",

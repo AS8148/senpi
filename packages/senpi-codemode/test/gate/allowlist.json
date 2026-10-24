@@ -1,6 +1,119 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#3612": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/kernel-globals-ledger.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/py/death-reason.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/host-memory-state.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/kernel-globals-ledger.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/py/death-reason.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/host-memory-state.ts",
+				"legacyContracts/test/kernel-death-reason.test.ts/pythonDeathReason names the prelude's parent watch when it stopped the kernel itself",
+				"legacyContracts/test/kernel-death-reason.test.ts/pythonDeathReason is the exit status with the last memory reading otherwise",
+				"legacyContracts/test/kernel-death-reason.test.ts/host memory state reads the macOS pressure level and swap in use",
+				"legacyContracts/test/kernel-death-reason.test.ts/host memory state reads Linux available memory and swap in use",
+				"legacyContracts/test/py-kernel-global-names.test.ts/a Python result names the user globals defined so far (senpi#3612) lists what cells defined, never the prelude's own helpers",
+				"legacyContracts/test/py-kernel-global-names.test.ts/a Python result names the user globals defined so far (senpi#3612) caps the names it lists but still counts every global",
+				"legacyContracts/test/py-kernel-lost-globals-notice.test.ts/restart notices name the globals a lost Python kernel held a SIGKILL from outside names the lost globals, the last reading, and the host's memory state",
+				"legacyContracts/test/py-kernel-lost-globals-notice.test.ts/restart notices name the globals a lost Python kernel held a later generation of the same session names what the previous kernel held, once",
+				"legacyContracts/test/py-kernel-lost-globals-notice.test.ts/restart notices name the globals a lost Python kernel held a reset leaves nothing for a later generation to announce",
+				"legacyContracts/test/py-kernel-pipe-error-death.test.ts/a Python interpreter whose death surfaces as a pipe error before its exit between cells: the next cell runs on a replacement that carries the restart notice",
+				"legacyContracts/test/py-kernel-pipe-error-death.test.ts/a Python interpreter whose death surfaces as a pipe error before its exit during a cell: that cell is lost, and the next one carries the restart notice",
+				"legacyContracts/test/py-kernel-pipe-error-death.test.ts/a Python interpreter whose death surfaces as a pipe error before its exit with no exit after it: the pipe error alone is the death, announced on the next cell"
+			],
+			"reason": "Refs senpi#3612: reviewed additive changes. Three new modules enter the extension and first-kernel import scopes (the per-session lost-globals ledger, the Python death reason, the host memory reader); new contracts prove a pipe error before the exit is still a reported, announced death, restart notices name the lost globals and the cause of an outside SIGKILL with the host memory state, a later session generation announces what the previous kernel held, a reset clears it, and Python results name the user globals."
+		},
+		"senpi#3205": {
+			"additions": [
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost does not parse a cell whose only import text is inside data",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites real static and dynamic imports",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites a comment before a dynamic call",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites a block comment before named bindings",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites a line comment before a default binding",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites a non-ASCII binding",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost prepares a large data cell full of comment-like import text in linear time"
+			],
+			"reason": "senpi#3205 adds contracts proving a cell whose only import text is data is prepared without a Babel parse, that real static and dynamic imports are still rewritten (including after a comment and with a non-ASCII binding, which the review found the first gate skipped), and that a large data cell full of comment-like import text is prepared in linear time. The frozen baseline and every existing contract remain unchanged."
+		},
+		"senpi#3064": {
+			"additions": [
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root pip scratch is owned and removed after success (#3064)",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root pip scratch is owned and removed after failure (#3064)",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root pip scratch is owned and removed after cancel (#3064)",
+				"legacyContracts/test/js-process-fixtures.test.ts/awaits a fixture kernel child before removing its cwd (#3064)",
+				"legacyContracts/test/environments/py-installer-cleanup.test.ts/pip scratch cleanup errors preserves success and reports exhausted cleanup retries (#3064)",
+				"legacyContracts/test/environments/py-installer-cleanup.test.ts/pip scratch cleanup errors preserves failure and reports exhausted cleanup retries (#3064)",
+				"legacyContracts/test/environments/py-installer-cleanup.test.ts/pip scratch cleanup errors preserves cancel and reports exhausted cleanup retries (#3064)"
+			],
+			"reason": "senpi#3064 adds real pip subprocess contracts proving scratch containment and removal after success, failure, and cancellation, preserves install outcomes when cleanup fails, and awaits kernel exit before removing its cwd. Every existing approval and contract remains unchanged."
+		},
+		"senpi#3072": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/eval-cells-rpc.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/eval-cells-rpc.ts"
+			],
+			"reason": "senpi#3072: reviewed session-scoped, model-invisible RPC handlers share the existing eval cell manager. Record only this module's additive import membership in the frozen baseline."
+		},
+		"senpi#3048": {
+			"additions": [
+				"legacyContracts/test/kernels/jl/lazy-globals.test.ts/Julia lazy globals declarations (Refs senpi#3048) installs zero sizing declarations before a below-threshold first result",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) installs zero handle declarations before the first result",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) returns empty globals when the sizing asset is missing",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) returns empty globals when the sizing asset is invalid",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) creates the first handle inside @async from an empty cwd",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) creates the first handle inside Threads.@spawn from an empty cwd",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) includes once when two real tasks create their first handles concurrently",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) keeps task waiting lazy before any handle is created",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) loads named handle types before annotations and isa checks are evaluated",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) serializes and displays a first handle inside a user function",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) restarts with zero declarations and recreates a saved handle reference",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) wraps the first completion handle without predeclared types",
+				"legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement refuses legacy embedded-clock samples instead of treating them as post-result CPU",
+				"legacyContracts/test/bench/session-postresult.test.ts/benchmark post-result CPU boundary (Refs senpi#3048) counts cold encoding before-value and flush work before sampling the received result",
+				"legacyContracts/test/bench/session-postresult.test.ts/benchmark post-result CPU boundary (Refs senpi#3048) counts cold encoding during-result and flush work before sampling the received result",
+				"legacyContracts/test/kernels/jl/startup-frames.test.ts/Julia startup frames (Refs senpi#3048) reports every startup stage without running the frame encoder in the first or the replacement interpreter"
+			],
+			"reason": "Refs senpi#3048: reviewed additive real-Julia contracts cover zero eager sizing bindings below the memory threshold, zero eager handle declarations, empty-cwd first use in async and threaded tasks, empty diagnostic replies for missing/invalid sizing assets, atomic concurrent first inclusion, named types, first-use serialization/display and reference recreation after reset; existing contracts prove complete post-result CPU sampling and refuse legacy saved CPU boundaries without changing the frozen baseline; a real-Julia interrupt contract proves pre-encoded startup frames keep the first and replacement interpreters from running the frame encoder before their first cell."
+		},
+		"senpi#3034": {
+			"additions": [
+				"legacyContracts/test/py-kernel-bookkeeping.test.ts/Python per-cell bookkeeping uses two FIFO operations zero Python queue locks and one capture scope per cell"
+			],
+			"reason": "senpi#3034, plan row 45 fix c: deterministic reader/main work counts retain two FIFO operations and one owner acquire/release while removing Python queue condition work and halving capture-scope setups."
+		},
+		"senpi#3028": {
+			"additions": [
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals jl does no globals work or payload serialization below threshold",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals jl preserves above threshold notice and globals payload",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals jl collects globals above threshold when hysteresis suppresses notice",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals rb does no globals work or payload serialization below threshold",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals rb preserves above threshold notice and globals payload",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals rb collects globals above threshold when hysteresis suppresses notice",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request retains ownership until a matching reply and reads the footprint once",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request ignores replies from a different process cell or pending run",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request bounds a missing reply without skipping the footprint notice",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request retires the pending deadline on reset without formatting a stale notice",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request requests globals at an enabled ceiling even when the notice threshold is disabled",
+				"legacyContracts/test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (rb) memory ceiling Given a finished cell waiting for globals when it is stopped then its result settles and kernel state survives",
+				"legacyContracts/test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given a finished cell waiting for globals when it is stopped then its result settles and kernel state survives",
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/subprocess-memory-globals.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/subprocess-memory-globals.ts"
+			],
+			"reason": "senpi#3028 separates every-cell footprint accounting from bounded, cell-owned globals diagnostics; below-threshold work counts and main notice snapshots prove parity."
+		},
+		"senpi#3033": {
+			"additions": [
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips performs zero async stat round trips on each warm cell",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips refuses the very next cell when the cwd is deleted",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips refuses the very next cell when the cwd is replaced by a file",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original EACCES error on warm reuse",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original ELOOP error on warm reuse",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original EMFILE error on warm reuse",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original EIO error on warm reuse"
+			],
+			"reason": "senpi#3033, plan row 45 fix b: warm cells check the real cwd on every reuse without an async filesystem round trip; deletion and replacement refuse the next cell with the existing error, and unrelated I/O errors retain their identity."
+		},
 		"1": {
 			"additions": [],
 			"reason": "The initial harness preserves the merge-base surfaces without additive production changes."
@@ -660,6 +773,40 @@
 			],
 			"reason": "Lead decision A (2026-10-01), node 32: add event-ordered shell restart notice and preservation witnesses without changing default prompts, schemas, helpers, or native shell semantics."
 		},
+		"37": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/bridges/eval-environment-schemas.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/bridges/eval-environment-schemas.ts",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries are exactly the five documented names",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document the magics, %load and the environment modes",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document isolate, its refusals and the sandbox limits",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries name only error codes the source actually emits",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries keep each code in the entry that owns it"
+			],
+			"reason": "Plan row 37 (F4/F5 shortfall, IS-3): the eval:environments and eval:isolation virtual tool_schema entries, a module the extension and first kernel load, and their contract tests. Additive only; no prompt cell changes."
+		},
+		"38": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/environments/packages-install.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/packages-install.ts",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When it installs a local tarball with bun, then it returns the receipt %bun add reports and the next cell imports the package",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the owning cell is cancelled once the installer has started, then nothing is published and the kernel answers the next cell",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the manager is not a JavaScript installer, then the cell fails with environment_installer_unavailable and installs nothing",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When it installs a local wheel, then it returns the %pip receipt and the next cell imports the package",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When the install fails, then the cell error carries environment_install_failed and pip's stderr tail",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch fails with environment_install_timeout when the install outlives its timeout",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch reports the owning cell's stop as environment_install_cancelled, not as a timeout",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch refuses a manager whose environment the cell does not have",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch refuses malformed arguments before any install starts",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the owning cell is cancelled once the installer has started, then the install itself is cancelled, nothing is published and the kernel answers the next cell",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When the owning cell is cancelled once pip has started, then the install itself is cancelled and nothing is published",
+				"legacyContracts/test/environments/packages-install-runtime-wiring.test.ts/Given a session runtime with Python enabled When it is created, then the bridge's packages.install() and the %pip magics share one Python environment",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch passes the requirement list to the session installer as separate arguments, never re-split, and returns its receipt",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch validates a list with the same %pip rules, keeping markers and backslashes as written",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When packages.install() passes a requirement list, then each item reaches pip as one argument: a path with a space and a marker stay intact"
+			],
+			"reason": "Plan row 38 (F4 shortfall, IS-6): the packages.install() cell helper, a module the extension and first kernel load, and its contract tests. The helper is reached through a reserved bridge tool and documented on demand; no prompt cell changes."
+		},
 		"2718": {
 			"additions": [
 				"imports/extension/packages/senpi-codemode/src/kernels/shared/process-cpu.ts",
@@ -1192,6 +1339,1330 @@
 				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a cell without a summary whose first code line is only escape and control characters when its live row renders then the headline is the next line with content (senpi#2850)"
 			],
 			"reason": "senpi#2850: a summary-less live row skips a first code line that sanitizes to nothing; the contract fails before the change (the row shows only the ellipsis)."
+		},
+		"senpi#2909": {
+			"additions": [
+				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) keeps nothing from a discarded attempt that had already collected data",
+				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) never discards a worker failure together with a spike",
+				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) settles between every retry and labels the block once retries run out",
+				"legacyContracts/test/bench/run.test.ts/paired runtime scheduling discards a first runtime's reports when a later runtime in the same attempt spikes (senpi#2909)",
+				"legacyContracts/test/bench/run.test.ts/paired runtime scheduling labels a block that spikes over 80 on every attempt instead of refusing the run (senpi#2909)",
+				"legacyContracts/test/bench/run.test.ts/paired runtime scheduling re-runs only the block a host-load spike over 80 hits, keeping the others (senpi#2909)",
+				"legacyContracts/test/bench/settle.test.ts/waitForLoadBelow (senpi#2909) gives up after its timeout and says so",
+				"legacyContracts/test/bench/settle.test.ts/waitForLoadBelow (senpi#2909) waits while a decaying 1-minute load is over the ceiling",
+				"legacyContracts/test/bench/block-spike.test.ts/a block attempt's spike checks (senpi#2909) discards the attempt when the block's start load is over 80",
+				"legacyContracts/test/bench/block-spike.test.ts/a block attempt's spike checks (senpi#2909) discards the attempt when only the closing host sample is over 80",
+				"legacyContracts/test/bench/block-spike.test.ts/a block attempt's spike checks (senpi#2909) discards the attempt when a runtime's own report saw load over 80",
+				"legacyContracts/test/bench/settle-process.test.ts/waitForLoadBelow keeps its process alive (senpi#2909) finishes the wait in a process that has nothing else to do",
+				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) waits for the load from before a spike that was already under way when the block started"
+			],
+			"changes": [
+				{
+					"key": "legacyContracts/test/bench/run.test.ts/paired runtime scheduling refuses the run end to end when host load crosses 80 between measurements",
+					"reason": "senpi#2909: a host-load spike over 80 no longer refuses the whole run; only the affected block is discarded and re-run (up to 3 retries, each after the load falls back to its last pre-spike level, or the core count if higher), and a block that spikes every time is labelled so the run is INCONCLUSIVE. The same coverage moves to the renamed contracts listed under additions ('re-runs only the block a host-load spike over 80 hits' and 'labels a block that spikes over 80 on every attempt instead of refusing the run'). The pre-run admission refusal is unchanged."
+				}
+			],
+			"reason": "senpi#2909: per-block bench spike guard. A load spike over 80 discards and re-runs only the affected block after the load settles, never discards a worker failure, and labels a block that keeps spiking; new contracts in run.test.ts, run-retry.test.ts, block-spike.test.ts, settle.test.ts and settle-process.test.ts."
+		},
+		"senpi#2922": {
+			"additions": [
+				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) never waits for a load at or above the refusal ceiling (senpi#2922)",
+				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) caps the target even when the host has more cores than the cap (senpi#2922)"
+			],
+			"reason": "senpi#2922: the spike-retry settle target is capped 10 under the refusal ceiling, so a calm level near 80 cannot set a target a retry would start into; two new contracts in run-retry.test.ts (the cap, and the cap on a host with more cores than the cap)."
+		},
+		"senpi#2921": {
+			"additions": [
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a first cell whose import of node:net is built from a string at run time when stopped then its server closes"
+			],
+			"reason": "senpi#2921 review: a new stop contract pins that a server the first cell opens through a string-built import (new Function) is closed by a stop, so a future cold-start deferral of the socket and server builtins cannot reopen that gap. Test-only; no prompt cell changes."
+		},
+		"senpi#2933": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/tool/render-agent.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/render-blocks.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/render-call.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/render-cell.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/render-detail.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/render-live.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/render-result.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/render-status.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/render-tail.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/render-agent.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/render-blocks.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/render-call.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/render-cell.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/render-detail.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/render-live.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/render-result.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/render-status.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/render-tail.ts",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a done cell with badges at 40 cols then the row is exactly one line",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a long headline at 40 cols with a badge then the headline is cut before elapsed drops (review MEDIUM-3)",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell behind another at 200 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell behind another at 40 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell behind another at 50 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell behind another at 60 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell behind another at 80 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell waiting on the kernel at 200 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell waiting on the kernel at 40 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell waiting on the kernel at 50 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell waiting on the kernel at 60 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell waiting on the kernel at 80 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a running cell with a bounded status history when its live block renders then the stored omission count survives (senpi#2933 review HIGH-2)",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a streaming call with reset and timeout at 200 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a streaming call with reset and timeout at 40 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a streaming call with reset and timeout at 50 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a streaming call with reset and timeout at 60 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a streaming call with reset and timeout at 80 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a very long summary at 40 cols then the summary keeps a readable remainder",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with reset and timeout at 200 cols across elapsed values then the height is constant",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with reset and timeout at 40 cols across elapsed values then the height is constant",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with reset and timeout at 50 cols across elapsed values then the height is constant",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with reset and timeout at 60 cols across elapsed values then the height is constant",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with reset and timeout at 80 cols across elapsed values then the height is constant",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with timeout 600 at 200 cols then the header stays one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with timeout 600 at 40 cols then the header stays one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with timeout 600 at 50 cols then the header stays one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with timeout 600 at 60 cols then the header stays one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with timeout 600 at 80 cols then the header stays one row",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: constant total height with output and events (senpi#2933 review MEDIUM-2) Given streaming through running with output and status events then the total height is identical",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: fixed-height streaming (senpi#2933) Given code longer than the window when streaming then the newest line is visible and the marker is inside the height",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: fixed-height streaming (senpi#2933) Given exactly window-length code when streaming then no earlier-lines marker appears",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: fixed-height streaming (senpi#2933) Given more streamed lines when re-rendered then the height does not grow",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: fixed-height streaming (senpi#2933) Given streaming code when rendered at 200 columns then the block keeps a constant line count",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: fixed-height streaming (senpi#2933) Given streaming code when rendered at 40 columns then the block keeps a constant line count",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: fixed-height streaming (senpi#2933) Given streaming code when rendered at 80 columns then the block keeps a constant line count",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: fixed-height streaming (senpi#2933) Given wrapping code at a narrow width then visual lines count toward the window",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: one-line terminal rows (senpi#2933) Given a cancelled cell when rendered collapsed then it is exactly one line",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: one-line terminal rows (senpi#2933) Given a completed cell when rendered collapsed then it is exactly one line with icon summary status and duration",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: one-line terminal rows (senpi#2933) Given a completed cell when rendered expanded then the full code and output are shown",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: one-line terminal rows (senpi#2933) Given an errored cell when rendered collapsed then it is exactly one line with the error icon",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: partial-arg totality (senpi#2933) Given code and language args without a summary when rendered then it never throws",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: partial-arg totality (senpi#2933) Given code-only args when rendered then it never throws",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: partial-arg totality (senpi#2933) Given empty args when rendered then it never throws and never falls back to key=value",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: queued and running header (senpi#2933) Given a queued cell when rendered then the block shows a queued badge and keeps the fixed height",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: queued and running header (senpi#2933) Given a running cell when rendered then the block has the same fixed height as streaming",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: queued and running header (senpi#2933) Given a running cell when the clock advances then spinner and elapsed advance with the height unchanged",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: streaming header names the state (senpi#2933) Given a call still streaming when rendered then the header says streaming with the spinner and no elapsed",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: streaming header names the state (senpi#2933) Given a call still streaming when the host gives no spinner frame then the header still says streaming (review MEDIUM-1)",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: streaming header names the state (senpi#2933) Given a running cell when rendered then the header says running with elapsed",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: streaming header names the state (senpi#2933) Given a streaming call when the host gives no spinner frame then the call lane arms its own ticker (review MEDIUM-5)",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a complete call before its result arrives when it renders then the header says streaming (senpi#2933)",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a completed cell when its row renders collapsed then it is one line with icon summary status and duration (senpi#2933)",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell when its row renders collapsed then the header leads with the summary and the code window follows (senpi#2933)",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell with no output yet when its row renders collapsed then it is the fixed-height block (senpi#2933)",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay clean in the terminal (senpi#2831) Given a cell without a summary whose first code line carries escape and control characters when its live row renders then the header and window carry none of them (senpi#2839)",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay clean in the terminal (senpi#2831) Given a cell without a summary whose first code line is only escape and control characters when its live row renders then the headline is the next line with content (senpi#2850)",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay clean in the terminal (senpi#2831) Given a peek or stop call still streaming without its cell id when it renders then the title has no undefined",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay clean in the terminal (senpi#2831) Given a summary carrying escape and control characters when its live row renders then the header is one clean line with none of them",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay clean in the terminal (senpi#2831) Given a wide-character summary when its live row renders in a narrow terminal then the header fits the width in screen cells",
+				"legacyContracts/test/eval-render-runtime.test.ts/eval renderer runtime badge keeps the done row one line at 40 cols by letting the badge drop (senpi#2933 review MEDIUM-1)",
+				"legacyContracts/test/eval-render-runtime.test.ts/eval renderer runtime badge renders the collapsed one-line row without any badge when runtime is unknown (senpi#2933)",
+				"legacyContracts/test/eval-render-runtime.test.ts/eval renderer runtime badge shows version and home-contracted interpreter path in the collapsed one-line cell row (senpi#2933)",
+				"legacyContracts/test/eval-render-theme.test.ts/eval renderer theme hierarchy Given a themed live status tail whose newest event overflows then every row keeps one frame border and whole escape sequences (senpi#2933 review NEW-3)",
+				"legacyContracts/test/eval-render-theme.test.ts/eval renderer theme hierarchy Given themed status events when rendered expanded then operation and error summaries use semantic colors (senpi#2933)",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live block: truly constant total height (senpi#2933 review HIGH-C) Given a long status event at 40 cols then its newest rows stay inside the budget and the cut rows are counted",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live block: truly constant total height (senpi#2933 review HIGH-C) Given every tail shape at 200 cols then the total height is identical",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live block: truly constant total height (senpi#2933 review HIGH-C) Given every tail shape at 40 cols then the total height is identical",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live block: truly constant total height (senpi#2933 review HIGH-C) Given every tail shape at 80 cols then the total height is identical",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live block: truly constant total height (senpi#2933 review HIGH-C) Given one output line when rendered then the block keeps the full height (no flicker)",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live output tail counts hidden rows exactly (senpi#2933 review NEW-1) Given 10 output lines at 80 cols then the marker says 9 earlier lines and shows the last line",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live output tail counts hidden rows exactly (senpi#2933 review NEW-1) Given 3 output lines at 80 cols then the marker says 2 earlier lines and shows the last line",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live output tail counts hidden rows exactly (senpi#2933 review NEW-1) Given 4 output lines at 80 cols then the marker says 3 earlier lines and shows the last line",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live output tail counts hidden rows exactly (senpi#2933 review NEW-1) Given one 200-char output line at 40 cols then the marker counts every hidden wrapped row",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live status tail keeps the newest event rows (senpi#2933 review NEW-2) Given the stored bound, folded events and a cut event at 20 cols then the one-row marker keeps both counts",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live status tail keeps the newest event rows (senpi#2933 review NEW-2) Given the stored bound, folded events and a cut event at 25 cols then the one-row marker keeps both counts",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live status tail keeps the newest event rows (senpi#2933 review NEW-2) Given the stored bound, folded events and a cut event at 30 cols then the one-row marker keeps both counts",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live status tail keeps the newest event rows (senpi#2933 review NEW-2) Given one 4-line event at 40 cols then its newest row is kept and the marker counts the rows cut from its head",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live status tail keeps the newest event rows (senpi#2933 review NEW-2) Given two 2-line events at 40 cols then the newest event is visible and older rows fold into the marker",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given 20 wrapped source lines at 40 cols then the marker counts hidden source lines",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given 3 source lines with one 150-char line at 40 cols then the newest line stays visible",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given a single source line taller than the window then its last rows show with the marker",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given the 6-line JS cell with one long SQL line at 100 cols then the newest line is visible and the marker is not zero",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given the 6-line JS cell with one long SQL line at 40 cols then the newest line is visible and the hidden SQL line is counted once",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given a long SQL line whose head rows are cut by the window when running with output then the marker counts the cut line",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live window keeps indentation (senpi#2933 review HIGH-A) Given an indented Python cell when running then the window keeps inner spacing and indentation",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live window keeps indentation (senpi#2933 review HIGH-A) Given an indented Python cell when streaming then the window keeps leading whitespace",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live window keeps indentation (senpi#2933 review HIGH-A) Given code with tabs then the window expands them without collapsing indentation",
+				"legacyContracts/test/eval-render.test.ts/eval renderer Given completed cell details when rendered expanded then framed status agent and JSON output are visible (senpi#2933)",
+				"legacyContracts/test/eval-tool-execution-render.test.ts/eval summary in transcript frames Given a completed eval with a summary when the result row renders then the one-line row carries the summary (senpi#2933)",
+				"legacyContracts/test/eval-tool-execution-render.test.ts/eval summary in transcript frames Given a six-line cell with a summary when collapsed and expanded then the one-line row and the full code render (senpi#2933)"
+			],
+			"changes": [
+				{
+					"key": "legacyContracts/test/eval-render-runtime.test.ts/eval renderer runtime badge shows version and home-contracted interpreter path in the cell header",
+					"reason": "senpi#2933 changes the collapsed eval row to the fixed-height live block while streaming/running and one line when done, so this contract's old layout leaves the baseline; its honest rename 'eval renderer runtime badge shows version and home-contracted interpreter path in the collapsed one-line cell row (senpi#2933)' is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-render-runtime.test.ts/eval renderer runtime badge renders headers without any badge when runtime is unknown",
+					"reason": "senpi#2933 changes the collapsed eval row to the fixed-height live block while streaming/running and one line when done, so this contract's old layout leaves the baseline; its honest rename 'eval renderer runtime badge renders the collapsed one-line row without any badge when runtime is unknown (senpi#2933)' is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-render-theme.test.ts/eval renderer theme hierarchy Given themed status events when rendered then operation and error summaries use semantic colors",
+					"reason": "senpi#2933 changes the collapsed eval row to the fixed-height live block while streaming/running and one line when done, so this contract's old layout leaves the baseline; its honest rename 'eval renderer theme hierarchy Given themed status events when rendered expanded then operation and error summaries use semantic colors (senpi#2933)' is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-render.test.ts/eval renderer Given completed cell details when rendered then framed status agent and JSON output are visible",
+					"reason": "senpi#2933 changes the collapsed eval row to the fixed-height live block while streaming/running and one line when done, so this contract's old layout leaves the baseline; its honest rename 'eval renderer Given completed cell details when rendered expanded then framed status agent and JSON output are visible (senpi#2933)' is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-tool-execution-render.test.ts/eval summary in transcript frames Given a completed eval with a summary when the result frame renders then it carries the summary",
+					"reason": "senpi#2933 changes the collapsed eval row to the fixed-height live block while streaming/running and one line when done, so this contract's old layout leaves the baseline; its honest rename 'eval summary in transcript frames Given a completed eval with a summary when the result row renders then the one-line row carries the summary (senpi#2933)' is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-tool-execution-render.test.ts/eval summary in transcript frames Given a six-line cell with a summary when collapsed then the summary line and a four-line code preview render",
+					"reason": "senpi#2933 changes the collapsed eval row to the fixed-height live block while streaming/running and one line when done, so this contract's old layout leaves the baseline; its honest rename 'eval summary in transcript frames Given a six-line cell with a summary when collapsed and expanded then the one-line row and the full code render (senpi#2933)' is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-tool-execution-render.test.ts/eval ToolExecutionComponent lifecycle Given the pending -> running -> done lifecycle then exactly one framed box renders at every state",
+					"reason": "senpi#2933: same title, subject updated — the pre-result call lane reads 'streaming' (MEDIUM-1); the terminal row renders as one line."
+				},
+				{
+					"key": "legacyContracts/test/eval-render-theme.test.ts/eval renderer theme hierarchy Given a themed JavaScript call when rendered then the framed code uses syntax highlighting",
+					"reason": "senpi#2933: same title, subject updated — the pre-result call lane reads 'streaming' (MEDIUM-1); the terminal row renders as one line."
+				},
+				{
+					"key": "legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a cell without a summary whose first code line is only escape and control characters when its live row renders then the headline is the next line with content (senpi#2850)",
+					"reason": "senpi#2933: renamed — the live row is now the fixed block, so the headline assertion moved to the block header (╭─) and the 8-row block."
+				},
+				{
+					"key": "legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a wide-character summary when its live row renders in a narrow terminal then the row fits the width in screen cells",
+					"reason": "senpi#2933: renamed — the live row is now the fixed block; the wide-character header assertion moved to the block header."
+				},
+				{
+					"key": "legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a peek or stop call still streaming without its cell id when it renders then the title has no undefined",
+					"reason": "senpi#2933: renamed — the peek/stop streaming title contract is unchanged; the row shape changed to the block."
+				},
+				{
+					"key": "legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a cell without a summary whose first code line carries escape and control characters when its live row renders then the row is one clean line (senpi#2839)",
+					"reason": "senpi#2933: renamed — the live row is now the fixed block; the headline and window stay control-free."
+				},
+				{
+					"key": "legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given a 5-line JS cell with one long SQL line at 100 cols then the newest line is visible and the marker is exact",
+					"reason": "Opus round-3 MEDIUM-E: the fixture is 6 lines, not 5, and the title overstated its check; renamed to the honest 'the 6-line JS cell with one long SQL line at 100 cols then the newest line is visible and the marker is not zero' and listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given a 5-line JS cell with one long SQL line at 40 cols then the newest line is visible",
+					"reason": "Opus round-3 MEDIUM-E: the fixture is 6 lines, not 5, and the title overstated its check; renamed to the honest 'the 6-line JS cell with one long SQL line at 40 cols then the newest line is visible and the hidden SQL line is counted once' (exact count asserted) and listed under additions."
+				}
+			],
+			"reason": "senpi#2933 (Q): render.ts is split by responsibility into render-*.ts modules (pure move, new import-census entries for the extension and first kernel), and the eval row gains a fixed-height live code window while streaming/queued/running plus a one-line collapsed row for done/error/cancelled; new contracts in eval-render-live-block.test.ts, and the live-row contracts whose layout changed are renamed (see changes). No prompt cell changes."
+		},
+		"senpi#2999": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/js/windows-tree-kill-host.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/windows-tree-kill-host.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/windows-tree-kill.js",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, host copy (senpi#2999) #given a kernel child on wininit's recycled parent pid #when its tree is planned #then the system tree stays out",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, host copy (senpi#2999) #given a listing or none #when kill args are built #then pids are named without /T, or /T on the root alone",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, host copy (senpi#2999) #given a protected image under the root #when planned #then only the root is killed",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, host copy (senpi#2999) #given an older process that names the root's recycled pid #when planned #then it is not adopted",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, host copy (senpi#2999) #given the root is an ancestor of this process #when planned #then nothing is killed",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, host copy (senpi#2999) #given the root is no longer listed #when planned #then nothing is killed",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given a kernel child on wininit's recycled parent pid #when its tree is planned #then the system tree stays out",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given a listing or none #when kill args are built #then pids are named without /T, or /T on the root alone",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given a protected image under the root #when planned #then only the root is killed",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given an older process that names the root's recycled pid #when planned #then it is not adopted",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given the root is an ancestor of this process #when planned #then nothing is killed",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given the root is no longer listed #when planned #then nothing is killed"
+			],
+			"reason": "senpi#2999: codemode's Windows tree kill computes the tree from creation-time-checked parentage instead of taskkill /T. The listed keys are the parameterized contracts that run on both the host copy (windows-tree-kill-host.ts) and the worker copy (windows-tree-kill.js), plus the import-graph additions those modules bring."
+		},
+		"senpi#3003": {
+			"additions": [
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document packages.install with its signature, managers, receipt and codes",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document every error code the source raises"
+			],
+			"reason": "senpi#3003: tool_schema(\"eval:environments\") now documents packages.install(manager, requirements, {timeout?}) — its signature, the per-language managers (pip; bun/npm), the receipt fields, cancellation by stop and the environment_install_timeout code — and the virtual-schema contract test gains a two-way emitted-vs-documented code check plus the packages.install assertions. No prompt, description, snippet, guidelines or input-schema changes."
+		},
+		"senpi#2995": {
+			"additions": [
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/group-signal-notice.js",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given   kill -TERM -- -5 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given PG=$(ps -o pgid= -p $W | tr -d ' '); kill -TERM -- -$PG when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given a ps that cannot be spawned when the agent group is read then the lookup returns nothing instead of throwing",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given bash -lc 'kill -KILL -- -$GROUP' when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given echo \"killall bun stops every bun\" when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given echo \"run kill -9 on the stuck pid\" when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given echo \"use kill -9 1234 if needed\" when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given echo killed -- -1 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given for p in 1; do kill -- -$p; done when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given git log --grep kill foo -1 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given grep -c killall notes.txt when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given if true; then kill -- -5; fi when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill $PID; head -5 log.txt when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -- -$$ when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -- -1234 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -0 1234 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -9 -1234 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -9 1234 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -TERM $PID when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -TERM -$(cat /tmp/job.pgid) when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -TERM 1234 -5678 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -l when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -s TERM -${PG} when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill 1234 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given killall bun when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given no readable process group when the notice is built then it still carries its tag",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given nohup kill -- -5 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given pkill --pgroup 5 sleep when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given pkill -g 77 sleep when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given pkill -g0 sleep when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given sh -c 'killall -TERM node' when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given skill -9 1234 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given sudo -n kill -9 -5 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given sudo killall node when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given xargs kill -- -5 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given { kill -- -5; } when scanned then it is a group signal",
+				"legacyContracts/test/js-kernel-cell-process-group-bun.test.ts/JavaScript kernel children start their own process group (senpi#2995) Given a Bun.$ command that signals a process group when it runs then the cell gets the shared-group notice",
+				"legacyContracts/test/js-kernel-cell-process-group-bun.test.ts/JavaScript kernel children start their own process group (senpi#2995) Given a Bun.spawn background job when the cell signals the job's process group then the agent is not in it and the job is gone",
+				"legacyContracts/test/js-kernel-cell-process-group-bun.test.ts/JavaScript kernel children start their own process group (senpi#2995) Given a cell that promisifies child_process.exec when it runs then the result keeps stdout and stderr and the group-signal notice still fires",
+				"legacyContracts/test/js-kernel-cell-process-group-bun.test.ts/JavaScript kernel children start their own process group (senpi#2995) Given a node:child_process background job when the cell signals the job's process group then the agent is not in it and the job is gone"
+			],
+			"reason": "senpi#2995: the worker's shell capture imports the new group-signal-notice.js. It warns when a Bun.$, exec/execFile or synchronous-spawner command signals a process group, since those children stay in the agent's group. The listed contracts cover child process groups, the detector, the notice tag, a missing ps, and promisify(exec)."
+		},
+		"senpi#3016": {
+			"additions": [
+				"legacyContracts/test/subprocess-stdin-epipe.test.ts/subprocess kernel stdin write failures (senpi#3016) Given a Python interpreter that closed its stdin when the transport sends its init frame then start fails with the EPIPE and the host survives",
+				"legacyContracts/test/subprocess-stdin-epipe.test.ts/subprocess kernel stdin write failures (senpi#3016) Given a kernel child that closed its stdin when a frame is sent then the EPIPE is reported once through onError and the host survives"
+			],
+			"reason": "senpi#3016: a kernel child's stdin write failure (EPIPE) is reported once through onError, for the shared subprocess kernels and the Python transport, instead of an unhandled stream error ending the host. A send after exit is refused."
+		},
+		"senpi#3020": {
+			"additions": [
+				"legacyContracts/test/js-kernel-cell-orphan-group-bun.test.ts/JavaScript kernel retires a cell's orphaned grandchildren through their process group (senpi#3020) Given a Bun.spawn child whose grandchild was re-parented to init when the cell settles then the grandchild is gone and the agent is alive",
+				"legacyContracts/test/js-kernel-cell-orphan-group-bun.test.ts/JavaScript kernel retires a cell's orphaned grandchildren through their process group (senpi#3020) Given a node:child_process child whose grandchild was re-parented to init when the cell settles then the grandchild is gone and the agent is alive",
+				"legacyContracts/test/process-group-retire.test.ts/cell process-group retirement (senpi#3020) Given a cell child's live group when groups are retired then it gets SIGTERM and then SIGKILL",
+				"legacyContracts/test/process-group-retire.test.ts/cell process-group retirement (senpi#3020) Given a recorded leader that exited and a live process now holding its pid when groups are retired then that group is left alone",
+				"legacyContracts/test/process-group-retire.test.ts/cell process-group retirement (senpi#3020) Given the agent's own process group in the list when groups are retired then it is never signalled"
+			],
+			"reason": "senpi#3020: at cell retirement every process group the kernel gave a cell child is signalled, so a grandchild re-parented to init is stopped. The agent's own group, and a group whose exited leader's pid is held by a live process again, are never signalled."
+		},
+		"senpi#3005": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/bun-ffi.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/bun-ffi.ts"
+			],
+			"reason": "The shared isBunFfi/loadBunFfi guard module replaces the two getBuiltinModule('bun:ffi') casts in process-cpu.ts and process-group-cpu.ts; no behavior change."
+		},
+		"senpi#3025": {
+			"additions": [
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) passes a head that recovers and runs every queued cell under the ceiling, although the base ratio is ~20x",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head that leaves a queued cell unrun",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head that runs a queued cell twice",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head whose median wall time exceeds the ceiling",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) keeps the base-ratio gate for runtimes without a budget",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head whose median cpu exceeds the ceiling while wall stays under it",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) tests the wall ceiling through --inject-slow, keeping the recorded observations"
+			],
+			"reason": "senpi#3025: the bench judges crash-queue-100 on rb and jl by an absolute head budget (all 100 queued cells run once after one replacement, within a median-wall ceiling), because their base never recovered from the crash and the head/base ratio compares a failure path with the real work. The listed contracts are the new comparator tests."
+		},
+		"senpi#3261": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/tool/display-json-bounds.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/display-json-size.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/display-json-bounds.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/display-json-size.ts",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) a 100,000-character key is trimmed, the sibling is kept, and the budget holds",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) a key after an escaped string is kept",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) a key of 3,000 control characters is trimmed, the sibling is kept, and the budget holds",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) a paginated response keeps its scalars after a large rows array",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) emoji keys stay keys and a trimmed emoji string never splits a surrogate pair",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) emoji-heavy records keep their scalars and the budget holds",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) kept records keep all their own fields",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) too many keys to show still stays within the budget with a visible count",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given a displayed object wrapping a large Buffer when the cell settles then the stored jsonOutputs entry is bounded",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given a legacy oversized stored Buffer entry when rendered then a bounded placeholder line is shown",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given a legacy oversized stored entry when rendered then a bounded summary replaces the tree",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given a malformed stored entry when rendered then the failure stays local to the entry",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given the real legacy shape with the Buffer nested under a key when rendered then the placeholder shows for the buffer key",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a Buffer nested under a key becomes a placeholder summary with its sibling keys",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a control-character string keeps its sibling keys and stays inside the budget",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a deeply nested value keeps its top-level keys with a depth marker",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a long array of records stays a non-empty partial array with an elision marker",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a long string under a key truncates with a marker and keeps its sibling keys",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a wide object keeps its leading keys with an elision marker, not a dropped value",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display wrapped image detection (#3261) Given an object holding only image bytes under buffer when displayed then just the frame resolves",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display wrapped image detection (#3261) Given an object whose buffer field holds BM-prefixed non-BMP bytes when displayed then it stays on the JSON path",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display wrapped image detection (#3261) Given an object whose buffer field holds image bytes when displayed then it resolves to an image frame plus metadata text",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display wrapped image detection (#3261) Given an object whose buffer field holds non-image bytes when displayed then it stays on the JSON path"
+			],
+			"reason": "senpi#3261 adds contracts proving stored display jsonOutputs follow the display text budget (serialized Buffers collapse to placeholders), legacy oversized or malformed entries render a bounded local summary instead of throwing, and { buffer: <image bytes>, ...metadata } displays as an image frame plus metadata text. The frozen baseline and every existing contract remain unchanged. The review rounds add the display-json-bounds/display-json-size modules (split for size) and contracts proving every top-level key survives trimming, keys are trimmed within the budget, and characters above U+FFFF count at their serialized length. The frozen baseline and every existing contract remain unchanged."
+		},
+		"senpi#3748": {
+			"additions": [
+				"legacyContracts/test/bench/workload-spill-sizes.test.ts/output-spill candidates (codemode-gate race on main 46d15a1c93) never stats a kernel temp file, which the kernel can rename away between listing and stat",
+				"legacyContracts/test/bench/workload-spill-sizes.test.ts/output-spill candidates (codemode-gate race on main 46d15a1c93) never picks a temp file as the spill even when it exists and is the largest",
+				"legacyContracts/test/bench/workload-spill-sizes.test.ts/output-spill candidates (codemode-gate race on main 46d15a1c93) still fails when a final path cannot be stat'ed"
+			],
+			"reason": "senpi#3748 fixes the output-spill bench race (a kernel ledger written as <path>.<pid>.tmp and renamed could vanish between listing and stat) and adds contracts proving a temp file is never stat'ed or picked as the spill, and a stat error on a final path still rejects. The frozen baseline and every existing contract remain unchanged."
+		},
+		"senpi#4040": {
+			"additions": [],
+			"reason": "senpi#4040 adopts no-em-dash-copy and intentionally normalizes punctuation in every eval prompt variant. Each prompt cell is measured by measureSurfaces and its bytes/tokens are recomputed. Schemas, runtimes, helpers, imports and invariants remain unchanged.",
+			"changes": [
+				{
+					"key": "prompts/default/false/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/js/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/js/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/js/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/js/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/js+py/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/js+py/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/js+py/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/js+py/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/false/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/default/true/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/false/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/claude/true/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/false/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/codex/true/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/false/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/gpt/true/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/false/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/false/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/all/bun",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/all/bun/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/all/node",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				},
+				{
+					"key": "prompts/kimi/true/true/all/node/host",
+					"reason": "senpi#4040: replace em dashes with sentence punctuation and recompute copy size."
+				}
+			]
 		}
 	}
 }

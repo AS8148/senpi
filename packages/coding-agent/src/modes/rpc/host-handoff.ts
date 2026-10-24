@@ -27,12 +27,16 @@
  * ensure and `host gc`: an ensure arriving meanwhile attaches to whichever generation the handoff
  * left registered, and gc never judges the endpoint halfway through.
  */
+import { getAgentDir } from "../../config.ts";
 import { createDaemonDirectories, createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { provenOwner, readHostRegistration } from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
+import { STOP_WAIT_BUDGET_MS } from "./host-ensure-stop.ts";
+import { foreignAgentDirRefusal } from "./host-handoff-agent-dir.ts";
 import { handoffUnregisteredHost, SESSION_COUNT_TIMEOUT_MS } from "./host-handoff-unregistered.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
+import { electPointer } from "./host-pointer-election.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
 import { SUCCESSOR_START_BUDGET_MS, startSuccessor } from "./host-successor.ts";
 
@@ -46,9 +50,11 @@ export const HANDOFF_LOCK_HOLD_MS = HANDOFF_PROBE_TIMEOUT_MS + 2 * SESSION_COUNT
 
 /**
  * How long a handoff waits for the lock. The longest holder is an ensure that probes the running host
- * and then hands it off itself (its upgrade path); 10 s of headroom for a slow runner.
+ * and then hands it off itself (its upgrade path), or one that waits out a stopped host's stall before
+ * starting a replacement; 10 s of headroom for a slow runner.
  */
-const HANDOFF_LOCK_WAIT_MS = HANDOFF_PROBE_TIMEOUT_MS + HANDOFF_LOCK_HOLD_MS + 10_000;
+const HANDOFF_LOCK_WAIT_MS =
+	HANDOFF_PROBE_TIMEOUT_MS + Math.max(HANDOFF_LOCK_HOLD_MS, STOP_WAIT_BUDGET_MS + 10_000) + 10_000;
 
 export interface HandoffHostOptions {
 	readonly socket: string;
@@ -89,6 +95,8 @@ export type HandoffRefusal =
 	| "upgrade_unsupported"
 	/** No record proves which process serves this socket, and that host holds sessions (or will not say). */
 	| "unknown_owner"
+	/** The running host belongs to another agent dir; only a client of that dir may replace it (#3560). */
+	| "foreign_agent_dir"
 	/** A host from before layout 2, proven by its flat record, holds sessions; `detail` says how to retire it. */
 	| "legacy_host"
 	/** The public socket stopped being the one this handoff was decided against. */
@@ -128,18 +136,24 @@ export async function handoffHost(options: HandoffHostOptions): Promise<HandoffR
 }
 
 /** The handoff itself, for a caller that already holds this socket's ensure lock: an ensure's upgrade. */
-export async function handoffHostLocked(options: HandoffHostOptions): Promise<HandoffResult> {
-	if (handoffUnsupported(options)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
-	const paths = createHostDaemonPaths({
-		socket: options.socket,
-		...(options.agentDir ? { agentDir: options.agentDir } : {}),
-	});
+export async function handoffHostLocked(requested: HandoffHostOptions): Promise<HandoffResult> {
+	if (handoffUnsupported(requested)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
+	// One agent dir for the guard, the daemon paths and the successor's environment alike (an empty
+	// string keeps its pre-#3563 meaning: this process's default).
+	const options = { ...requested, agentDir: requested.agentDir || getAgentDir() };
+	const paths = createHostDaemonPaths({ socket: options.socket, agentDir: options.agentDir });
+	// Created before the agent-dir guard on purpose: realpath needs the caller's dir to exist, so a refused
+	// foreign caller may leave an empty daemon dir under its own agent dir (harmless).
 	await createDaemonDirectories(paths);
 	const host = await probeProtocolInfo(options.socket, HANDOFF_PROBE_TIMEOUT_MS);
 	if (!host) return { action: "refuse", reason: "no_host", upgradeable: false };
 	if (!host.capabilities.includes(GENERATION_HANDOFF_CAPABILITY)) {
 		return { action: "refuse", reason: "handoff_unsupported", upgradeable: false };
 	}
+	const foreign = await foreignAgentDirRefusal(options.socket, options.agentDir, host);
+	if (foreign) return foreign;
+	// A pointer an earlier prune dropped is given back to the one proven live generation (senpi#1911).
+	await electPointer(paths);
 	const registered = await readHostRegistration(paths);
 	const owner = await provenOwner(registered, options.socket);
 	if (!owner) return handoffUnregisteredHost(options, paths, host);

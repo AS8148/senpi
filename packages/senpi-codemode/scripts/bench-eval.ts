@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Check } from "typebox/value";
+import { CPU_BOUNDARY } from "./bench-cpu-contract.ts";
 import { admitHost, type Decision, decide } from "./bench-compare.ts";
 import {
 	injectCalibrationOffset,
@@ -50,7 +51,7 @@ function printDecision(decision: Decision, out: string): void {
 	console.log("  row | threshold | band | MDE | ratio | median paired ratio | verdict");
 	for (const result of decision.results) {
 		console.log(
-			`  ${result.scenario} ${result.runtimeId} ${result.metric} | ${fixed(result.threshold)} | ${fixed(result.band)} | ${fixed(result.mde)} | ${fixed(result.ratio)} | ${fixed(result.medianPairedRatio)} | ${result.verdict}`,
+			`  ${result.scenario} ${result.runtimeId} ${result.metric} | ${fixed(result.threshold)} | ${fixed(result.band)} | ${fixed(result.mde)} | ${fixed(result.ratio)} | ${fixed(result.medianPairedRatio)} | ${result.verdict}${result.headBudget === undefined ? "" : " (head budget)"}`,
 		);
 	}
 	const count = (verdict: string) => decision.results.filter((result) => result.verdict === verdict).length;
@@ -187,7 +188,8 @@ async function finish(decision: Decision, out: string, context: Readonly<Record<
 	const { run, ...rest } = context;
 	const runResult: RunResult | undefined = isRunResult(run) ? run : undefined;
 	const report = {
-		schemaVersion: 1,
+		schemaVersion: 2,
+		cpuBoundary: CPU_BOUNDARY,
 		suite: "senpi-codemode-eval",
 		package: "@code-yeongyu/senpi-codemode",
 		createdAt: new Date().toISOString(),
@@ -206,6 +208,7 @@ async function finish(decision: Decision, out: string, context: Readonly<Record<
 			: {
 					blocks: runResult.blocks,
 					admissionLoads: runResult.admissionLoads,
+					retriedBlocks: runResult.retriedBlocks,
 					runtimes: runResult.runtimes,
 					failures: runResult.failures,
 					reports: runResult.reports,

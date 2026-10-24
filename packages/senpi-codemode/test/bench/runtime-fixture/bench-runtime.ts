@@ -1,4 +1,5 @@
 import { createInterface } from "node:readline";
+import { CPU_BOUNDARY } from "../../../scripts/bench-cpu-contract.ts";
 import { implementedScenarios } from "../../../scripts/bench-scenarios.ts";
 
 const requests = createInterface({ input: process.stdin });
@@ -17,10 +18,11 @@ for await (const _request of requests) {
 	};
 	console.log(
 		`BENCH_RUNTIME:${JSON.stringify({
+			cpuBoundary: CPU_BOUNDARY,
 			hostRuntime: "bun",
 			hostVersion: "fixture",
 			runtimeVersion: "fixture",
-			loadavg: [0, 0, 0],
+			loadavg: [Number(process.env.BENCH_FIXTURE_REPORT_LOAD ?? 0), 0, 0],
 			scenarios: { [step.name]: step.rep < 0 ? [] : [sample] },
 		})}`,
 	);

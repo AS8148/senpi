@@ -1,5 +1,6 @@
 import { getAgentDir } from "../../../../config.ts";
 import { createSessionLogger, type SessionLogger } from "../../../session-log.ts";
+import type { ResumeModeSource } from "./settings.ts";
 
 /**
  * Per-turn continuity observability for the claude-sdk-oauth lane.
@@ -59,6 +60,15 @@ export type ContinuityObservation = {
 	deltaMessages?: number;
 	payloadBytes?: number;
 	collapsedDirectives?: number;
+	/** Where a `disabled`/`resume_mode_off` setting came from, so the notice can name it. */
+	settingSource?: ResumeModeSource;
+	/**
+	 * Short digest of the serving account, never its name: lets a quota cascade be attributed
+	 * to seats without reading credentials (oh-my-openagent#10304).
+	 */
+	seat?: string;
+	/** The attempt runs on a different seat than the lineage's last one: its prompt cache is cold. */
+	seatChanged?: boolean;
 };
 
 export type ContinuityObservabilityBoundary = {
@@ -276,6 +286,9 @@ export function emitContinuityObservation(
 		kind: observation.kind,
 		reason: observation.reason,
 		...(observation.deltaMessages === undefined ? {} : { count: observation.deltaMessages }),
+		...(observation.settingSource === undefined ? {} : { settingSource: observation.settingSource }),
+		...(observation.seat === undefined ? {} : { seat: observation.seat }),
+		...(observation.seatChanged === undefined ? {} : { seatChanged: observation.seatChanged }),
 		...(sessionId === undefined ? {} : { sessionId }),
 	});
 }

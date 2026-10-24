@@ -14,6 +14,7 @@
 import { Text } from "@earendil-works/pi-tui";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { type Static, Type } from "typebox";
+import { redactResolvedReferenceData, redactResolvedReferenceValues } from "../../../config-reference-redaction.ts";
 import type { ToolDefinition } from "../../types.ts";
 import type { McpCachedServerCatalog } from "./catalog-cache.ts";
 import type { ServerConnection } from "./connection.ts";
@@ -59,7 +60,9 @@ export async function readMcpResourceAsText(server: McpResourceServer, uri: stri
 		contents = result.contents;
 	} catch (error) {
 		throw new ToolExecError(
-			`Failed to read MCP resource ${uri}: ${error instanceof Error ? error.message : String(error)}`,
+			redactResolvedReferenceValues(
+				`Failed to read MCP resource ${uri}: ${error instanceof Error ? error.message : String(error)}`,
+			),
 			{
 				phase: "call",
 				serverName: server.server,
@@ -103,12 +106,12 @@ export function createMcpResourceTools(servers: () => readonly McpResourceServer
 			const lines = scoped.flatMap((entry) =>
 				entry.resources.map(
 					(resource) =>
-						`- @mcp:${entry.server}/${resource.uri} — ${resource.name ?? resource.uri}${resource.mimeType ? ` (${resource.mimeType})` : ""}`,
+						`- @mcp:${entry.server}/${resource.uri} - ${resource.name ?? resource.uri}${resource.mimeType ? ` (${resource.mimeType})` : ""}`,
 				),
 			);
 			const text = lines.length === 0 ? "No MCP resources available." : lines.join("\n");
 			return {
-				content: [{ type: "text", text }],
+				content: [{ type: "text", text: redactResolvedReferenceValues(text) }],
 				details: {
 					preview: `${lines.length} resource(s)`,
 					server: params.server ?? "*",
@@ -129,15 +132,22 @@ export function createMcpResourceTools(servers: () => readonly McpResourceServer
 		async execute(_id, params: Static<typeof ReadParams>) {
 			const entry = servers().find((candidate) => candidate.server === params.server);
 			if (entry === undefined) {
-				throw new ToolExecError(`Unknown MCP server '${params.server}' for resource ${params.uri}.`, {
-					phase: "call",
-					serverName: params.server,
-				});
+				throw new ToolExecError(
+					redactResolvedReferenceValues(`Unknown MCP server '${params.server}' for resource ${params.uri}.`),
+					{
+						phase: "call",
+						serverName: params.server,
+					},
+				);
 			}
 			const text = await readMcpResourceAsText(entry, params.uri);
 			return {
 				content: [{ type: "text", text }],
-				details: { preview: params.uri, server: params.server, tool: "mcp_read_resource" },
+				details: redactResolvedReferenceData({
+					preview: params.uri,
+					server: params.server,
+					tool: "mcp_read_resource",
+				}),
 			};
 		},
 		renderCall(args, theme) {
@@ -181,5 +191,6 @@ export async function expandMcpResourceMentions(
 			notices.push(`@mcp mention left as-is: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
-	return { changed: expanded !== text, notices, text: expanded };
+	const redacted = redactResolvedReferenceValues(expanded);
+	return { changed: redacted !== text, notices: redactResolvedReferenceData(notices), text: redacted };
 }

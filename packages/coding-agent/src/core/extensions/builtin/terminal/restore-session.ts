@@ -10,8 +10,6 @@
 import { existsSync } from "node:fs";
 import { encodedSessionId } from "../../../session-sidecar-store.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
-import { createRestartableCommandHandler } from "./durable-command.ts";
-import { createCheckpointedFileRestoreHandler } from "./durable-file.ts";
 import { createLeaseKeeper, type LeaseKeeper } from "./lease-keeper.ts";
 import {
 	type AcquireTerminalLeaseResult,
@@ -20,10 +18,12 @@ import {
 	releaseTerminalLease,
 	retireLeaseToken,
 } from "./manifest-lease.ts";
+import { sweepMonitorOverflowFiles } from "./monitor-overflow-file.ts";
 import { removeMonitorStateDir, terminalStateDir } from "./monitor-state-dir.ts";
 import { ownProcessStartedAtMs, processBootAtMs } from "./process-identity.ts";
-import { type RestoreDigest, type RestoreHandler, reapplyPersistedMute, restoreTerminalState } from "./restore.ts";
+import { type RestoreDigest, restoreTerminalState } from "./restore.ts";
 import { buildRestoreDigest, createDigestSlot, type DigestSlot, deliverRestoreDigest } from "./restore-digest.ts";
+import { restoreHandlers } from "./restore-handlers.ts";
 import type { TerminalSessionBundle } from "./session-bundle.ts";
 import { createTerminalManifestStore, TerminalManifestWriter } from "./terminal-manifest.ts";
 import { sweepTerminalStateDir } from "./terminal-state-gc.ts";
@@ -91,47 +91,6 @@ function emptyDigest(): RestoreDigest {
 	};
 }
 
-function restoreHandlers(state: PersistenceState, toolCtx: TerminalToolContext, bundle: TerminalSessionBundle) {
-	const writer = state.manifestWriter;
-	if (writer === null) throw new Error("restore handlers need the bound manifest writer");
-	const registry = bundle.monitors;
-	const adopting =
-		(handler: RestoreHandler): RestoreHandler =>
-		async (monitor, context) => {
-			const result = await handler(monitor, context);
-			// Only a LIVE entry is re-adopted, so the next persist keeps it and drops the rest.
-			if (result.outcome === "restored" || result.outcome === "muted") {
-				writer.adoptRestored(result.runtime === undefined ? monitor : { ...monitor, runtime: result.runtime });
-				registry.adoptFireWindow(monitor.monitorId, monitor.fireWindow);
-			}
-			return result;
-		};
-	let freshFileRuntimeId: string | undefined;
-	const checkpointedFile = createCheckpointedFileRestoreHandler({
-		registry,
-		writer,
-		bindMonitorId: (monitorId, runtimeId) => {
-			freshFileRuntimeId = runtimeId;
-			bundle.manager.bindMonitorId(monitorId, runtimeId);
-		},
-	});
-	return {
-		"restartable-command": adopting(
-			createRestartableCommandHandler({
-				ctx: toolCtx,
-				registry,
-				...(restoreSessionTestHooks.graceMs !== undefined ? { graceMs: restoreSessionTestHooks.graceMs } : {}),
-			}),
-		),
-		"checkpointed-file": adopting(async (monitor, context) => {
-			freshFileRuntimeId = undefined;
-			const result = await checkpointedFile(monitor, context);
-			if (result.outcome !== "restored" || freshFileRuntimeId === undefined) return result;
-			return { ...result, outcome: reapplyPersistedMute(registry, monitor, freshFileRuntimeId) };
-		}),
-	};
-}
-
 interface StartOptions {
 	readonly pi: ExtensionAPI;
 	readonly state: PersistenceState;
@@ -164,7 +123,7 @@ export async function startPersistence({ pi, state, toolCtx, sessionKey }: Start
 			try {
 				digest = await restoreTerminalState({
 					manifest: writer.store,
-					handlers: restoreHandlers(state, toolCtx, bundle),
+					handlers: restoreHandlers(writer, toolCtx, bundle, restoreSessionTestHooks.graceMs),
 					sessionFile: sessionManager.getSessionFile?.(),
 					processStartedAtMs: ownProcessStartedAtMs(),
 				});
@@ -200,6 +159,7 @@ export async function startPersistence({ pi, state, toolCtx, sessionKey }: Start
 		void sweepTerminalStateDir(dir, { self, keep: new Set([`${encoded}.lease`, `${encoded}.json`]) }).catch(
 			() => undefined,
 		);
+		void sweepMonitorOverflowFiles(dir).catch(() => undefined);
 		flushRestoreDigest(pi, state);
 		decided();
 	};

@@ -43,7 +43,12 @@ function credentialWith(
 }
 
 const fresh = { access: "new-access", refresh: "new-refresh", expires: Date.now() + 3_600_000 };
-const blockedDefault = slot({ name: "default", blockReason: "auth_error", expires: Date.now() - 1_000 });
+const blockedDefault = slot({
+	name: "default",
+	blockReason: "auth_error",
+	blockedUntil: Date.now() + 60_000,
+	expires: Date.now() - 1_000,
+});
 
 describe("re-login refreshes the dead slot instead of appending (omo#7084)", () => {
 	it("a single auth_error-blocked slot is refreshed in place and selectable again", async () => {
@@ -211,7 +216,18 @@ describe("anthropic import moves the grant instead of forking it (omo#7084)", ()
 });
 
 describe("AllAccountsBlockedError names the dominant block reason (omo#8383)", () => {
-	it("carries auth_error when any slot is auth-blocked", () => {
+	it("carries auth_error when every slot is auth-blocked", () => {
+		let caught: unknown;
+		try {
+			selectAccount([blockedDefault]);
+		} catch (error) {
+			caught = error;
+		}
+		expect((caught as { name?: string }).name).toBe("AllAccountsBlockedError");
+		expect((caught as { blockReason?: string }).blockReason).toBe("auth_error");
+	});
+
+	it("carries no auth reason when another slot only waits on a deadline (senpi#2081)", () => {
 		const rateLimited = slot({ name: "rl", blockedUntil: Date.now() + 60_000, blockReason: "rate_limit" });
 		let caught: unknown;
 		try {
@@ -220,7 +236,7 @@ describe("AllAccountsBlockedError names the dominant block reason (omo#8383)", (
 			caught = error;
 		}
 		expect((caught as { name?: string }).name).toBe("AllAccountsBlockedError");
-		expect((caught as { blockReason?: string }).blockReason).toBe("auth_error");
+		expect((caught as { blockReason?: string }).blockReason).toBeUndefined();
 	});
 
 	it("carries no auth reason for purely timed blocks", () => {

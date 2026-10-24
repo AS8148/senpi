@@ -92,6 +92,63 @@ describe("strict model generation", () => {
 		expect(generated["glm-4.7"]?.compat?.supportsReasoningEffort).toBe(false);
 	});
 
+	// senpi#2892: every Claude Haiku 5.5 row opens with 32K output, even one whose source window is already <=100K.
+	it("caps Claude Haiku 5.5 output at 32K even when the source window is already within the 100K band", () => {
+		const fixtureRoot = mkdtempSync(join(tmpdir(), "pi-generate-models-haiku-5-5-"));
+		temporaryRoots.push(fixtureRoot);
+		const isolatedPackageRoot = join(fixtureRoot, "package");
+		mkdirSync(isolatedPackageRoot);
+		for (const entry of ["package.json", "scripts", "src"]) {
+			cpSync(join(packageRoot, entry), join(isolatedPackageRoot, entry), { recursive: true });
+		}
+		const outputDir = join(fixtureRoot, "output");
+		const preloadPath = join(fixtureRoot, "mock-models.mjs");
+		const catalog = {
+			anthropic: {
+				models: {
+					"claude-haiku-5-5": {
+						id: "claude-haiku-5-5",
+						name: "Claude Haiku 5.5",
+						tool_call: true,
+						reasoning: true,
+						modalities: { input: ["text", "image"], output: ["text"] },
+						cost: { input: 0.1, output: 0.5, cache_read: 0.01, cache_write: 0.125 },
+						limit: { context: 100000, output: 128000 },
+					},
+				},
+			},
+		};
+		writeFileSync(
+			preloadPath,
+			`const modelsDev = ${JSON.stringify(catalog)};\n` +
+				`globalThis.fetch = async (input) => {\n` +
+				`  const url = String(input);\n` +
+				`  if (url === "https://models.dev/api.json") return new Response(JSON.stringify(modelsDev), { status: 200 });\n` +
+				`  if (url === "https://openrouter.ai/api/v1/models") return new Response(JSON.stringify({ data: [] }), { status: 200 });\n` +
+				`  if (url === "https://ai-gateway.vercel.sh/v1/models") return new Response(JSON.stringify({ data: [] }), { status: 200 });\n` +
+				`  if (url === "https://apis.opengateway.ai/v1/models") return new Response(JSON.stringify({ data: [] }), { status: 200 });\n` +
+				`  throw new Error(\`Unexpected fetch: \${url}\`);\n` +
+				`};\n`,
+		);
+
+		const result = spawnSync(
+			process.execPath,
+			[
+				"--import",
+				pathToFileURL(preloadPath).href,
+				"scripts/generate-models.ts",
+				"--json-only",
+				"--json-output",
+				outputDir,
+			],
+			{ cwd: isolatedPackageRoot, encoding: "utf8", timeout: 10_000 },
+		);
+
+		expect(result.status, result.stderr).toBe(0);
+		const generated = JSON.parse(readFileSync(join(outputDir, "providers", "anthropic.json"), "utf8"));
+		expect(generated["claude-haiku-5-5"]).toMatchObject({ contextWindow: 100000, maxTokens: 32000 });
+	});
+
 	it("regenerates selected providers without changing unselected artifacts", () => {
 		const fixtureRoot = mkdtempSync(join(tmpdir(), "pi-generate-models-selected-"));
 		temporaryRoots.push(fixtureRoot);
@@ -126,7 +183,7 @@ describe("strict model generation", () => {
 				`  throw new Error(\`Unexpected fetch: \${url}\`);\n` +
 				`};\n`,
 		);
-		const selected = ["zai", "zai-coding-cn"];
+		const selected = ["zai", "zai-coding-cn", "chatgpt-subscription"];
 		const unselectedPath = join(isolatedPackageRoot, "src/providers/data/openrouter.json");
 		const unselectedBefore = readFileSync(unselectedPath, "utf8");
 		const args = [
@@ -145,7 +202,16 @@ describe("strict model generation", () => {
 		const selectedFirst = selected.map((provider) =>
 			readFileSync(join(isolatedPackageRoot, `src/providers/data/${provider}.json`), "utf8"),
 		);
-		for (const content of selectedFirst) expect(content).toContain('"chat:glm-4.7"');
+		for (const content of selectedFirst.slice(0, 2)) expect(content).toContain('"chat:glm-4.7"');
+		const subscription = JSON.parse(selectedFirst[2])["openai-codex-responses"];
+		expect(subscription["chat:gpt-6.1-sol-ultrafast"]).toEqual({
+			...subscription["chat:gpt-6.1-sol"],
+			id: "gpt-6.1-sol-ultrafast",
+			name: "GPT-6.1 Sol Ultrafast",
+			upstreamModelId: "gpt-6.1-sol",
+			serviceTier: "ultrafast",
+			defaultThinkingLevel: "xhigh",
+		});
 		const manifestFirst = readFileSync(join(isolatedPackageRoot, "src/providers/data/.manifest.json"), "utf8");
 
 		const second = spawnSync(process.execPath, args, { cwd: isolatedPackageRoot, encoding: "utf8", timeout: 10_000 });

@@ -24,11 +24,12 @@ import {
 	processIsLive,
 	processMatchesPidFile,
 	readProcessStartTime,
-} from "../app-server/daemon/process.ts";
+} from "../../utils/process-identity.ts";
 import { type HostDaemonPaths, sameEndpoint } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { probeProtocolInfo, probeSessionCount } from "./host-probe.ts";
+import { logUnknownHostIdentity } from "./host-supervisor-log.ts";
 
 export interface LegacyHost {
 	readonly record: DaemonPidFile;
@@ -51,7 +52,8 @@ const DRAIN_POLL_MS = 50;
 export async function retireIdleLegacyHost(
 	paths: HostDaemonPaths,
 	probe: (pid: number) => Promise<string | undefined>,
-	drainTimeoutMs: number,
+	// A legacy drain has no supervised-child breaker: preserve its existing refusal bound.
+	drainTimeoutMs: number = LEGACY_PROBE_TIMEOUT_MS,
 ): Promise<string | undefined> {
 	const judged = await judgeLegacyHost(paths, probe);
 	if (judged.verdict === "absent") return undefined;
@@ -80,7 +82,11 @@ export async function provenLegacyOwner(
 		return undefined;
 	}
 	const identity = { pid: legacy.record.pid, processStartTime: startTime };
-	return (await processMatchesPidFile(identity, readProcessStartTime).catch(() => false)) ? identity : undefined;
+	const proven = await processMatchesPidFile(identity, readProcessStartTime).catch((error: unknown) => {
+		if (error instanceof ProcessIdentityUnreadableError) logUnknownHostIdentity("legacy_host.pid", identity.pid);
+		return false;
+	});
+	return proven ? identity : undefined;
 }
 
 /**
@@ -108,6 +114,7 @@ async function judgeLegacyHost(
 	if (identity === "gone") return { verdict: "absent" };
 	const where = `pid ${pid} (${host.socket})`;
 	if (identity === "unreadable") {
+		logUnknownHostIdentity("legacy_host.pid", pid);
 		return {
 			verdict: "held",
 			detail: `${where} cannot be proven to be the process its record names; stop it by hand`,

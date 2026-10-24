@@ -71,6 +71,7 @@ export type McpWireStatusServer = {
 	readonly resourceTemplates: readonly McpWireResourceTemplate[];
 	readonly authStatus: McpWireAuthStatus;
 	readonly status?: McpWireServerStatus;
+	readonly lastError?: string;
 };
 
 export type McpWireStatusSnapshot = {
@@ -147,21 +148,33 @@ export interface McpServerCounters {
 export interface McpStartupCatalogClaim {
 	readonly cachedCatalog: McpCachedServerCatalog | undefined;
 	readonly ownsRegistration: () => boolean;
+	readonly settled: () => Promise<void>;
 }
 
 export interface McpConnectionEntry {
 	readonly key: string;
 	readonly name: string;
 	readonly configHash: string;
+	/** The admitted generation's identity; equals `configHash` for a server that declares no reference (senpi#3858). */
+	readonly generationHash?: string;
+	/** Present when the server declares references: whether a fresh snapshot no longer matches the admitted one. */
+	readonly generationChanged?: () => Promise<boolean>;
 	readonly connection: ServerConnection;
 	readonly logger: McpLogger;
 	readonly createdAtMs: number;
 	readonly counters: McpServerCounters;
 	readonly agentDir?: string;
+	/** The env the connection spawned with; with `agentDir`, its credentials resolve against it (senpi#2986). */
+	readonly env?: Record<string, string | undefined>;
 	readonly artifacts?: McpOutputArtifacts;
 	readonly authPlan?: ServerAuthPlan;
+	readonly isCurrent?: () => boolean;
+	readonly credentialIdentity?: string;
+	readonly credentialsCurrent?: () => boolean;
+	readonly onCredentialsChanged?: () => Promise<void>;
 	cachedCatalog?: McpCachedServerCatalog;
 	cacheRefreshedAfterConnect: boolean;
+	catalogGeneration?: number;
 	startupCatalogClaim?: McpStartupCatalogClaim;
 	/** Full mcp tool names last registered for this server (list_changed diffing). */
 	knownToolNames?: string[];

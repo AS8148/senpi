@@ -1,21 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
-import {
-	chmodSync,
-	closeSync,
-	existsSync,
-	mkdirSync,
-	openSync,
-	readFileSync,
-	renameSync,
-	rmSync,
-	statSync,
-	writeFileSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
-import lockfile from "proper-lockfile";
 import { getAgentDir } from "../../../../../config.ts";
+import { type HeldFileLock, lockWithLossHandling } from "../../../../file-lock.ts";
+import { adoptLegacyRecord, type LegacyMigration, readRecordAsync } from "./legacy-migration.ts";
 
 // OAuth credential record of one server, persisted at
 // <agentDir>/mcp-auth/<sha256(serverName \0 serverUrl)>/tokens.json (dir 0700, file 0600).
@@ -29,6 +19,9 @@ export interface McpStoredAuth {
 	resource?: string;
 	// Absolute expiry (epoch ms) derived from tokens.expires_in at save time.
 	expiresAt?: number;
+	// Authorization server that issued accessToken/refreshToken (senpi#2940). The refresh token is only ever
+	// presented to this server; a record without it binds to discoveryState.authorizationServerUrl.
+	issuer?: string;
 }
 
 export interface TokenStoreLockOptions {
@@ -78,6 +71,7 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 	readonly #legacyHash: string;
 	readonly #lock: Required<TokenStoreLockOptions>;
 	readonly #disableLock: boolean;
+	#held: Pick<HeldFileLock, "release" | "assertHeld"> | undefined;
 
 	constructor(options: TokenStoreOptions) {
 		this.serverName = options.serverName;
@@ -113,93 +107,30 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 	read(): TRecord | undefined {
 		const record = readJsonFile<TRecord>(this.tokensPath);
 		if (record !== undefined) return record;
-		return this.#adoptLegacyRecord();
+		return adoptLegacyRecord(this.#migration());
 	}
 
-	// The first server that reads a URL-keyed record takes it over; other servers with the same URL sign in again.
-	// Claiming is serialized on a lock shared by every consumer of the legacy URL (keyed on the
-	// legacy hash, not the per-server destination hash), so two processes cannot both read the
-	// URL-keyed record before either removes it and duplicate a rotating grant across identities.
-	#adoptLegacyRecord(): TRecord | undefined {
-		const release = this.#acquireLegacyLockSync();
-		try {
-			// Recheck under the lock: another process may have already claimed the record.
-			const legacyTokens = join(this.legacyDir, TOKENS_FILE);
-			const legacy = readJsonFile<TRecord>(legacyTokens);
-			if (legacy === undefined) return undefined;
-			// Recheck the destination before writing so a delayed migrator cannot
-			// overwrite a newer same-server record another process already refreshed.
-			const existing = readJsonFile<TRecord>(this.tokensPath);
-			if (existing !== undefined) {
-				rmSync(legacyTokens, { force: true });
-				return existing;
-			}
-			this.#writeAtomic(legacy);
-			this.#writeIndex();
-			rmSync(legacyTokens, { force: true });
-			return legacy;
-		} finally {
-			release();
-		}
+	async readAsync(): Promise<TRecord | undefined> {
+		return readRecordAsync(this.#migration());
 	}
 
-	// The lock is a file created with O_EXCL (atomic create-or-fail), keyed on the
-	// legacy hash so every server of the URL contends on the same path. It is only
-	// ever taken by this migration (never nested under the per-server update lock),
-	// and release removes a plain file, so it cannot linger the way a directory can.
-	#acquireLegacyLockSync(): () => void {
-		if (this.#disableLock) return () => undefined;
-		mkdirSync(this.rootDir, { mode: 0o700, recursive: true });
-		const lockFile = this.#legacyLockFile;
-		const stale = this.#lock.stale;
-		const deadline = Date.now() + stale;
-		for (;;) {
-			let fd: number | undefined;
-			try {
-				fd = openSync(lockFile, "wx", 0o600);
-				const file = fd;
-				return () => {
-					try {
-						closeSync(file);
-					} catch {
-						// already closed
-					}
-					rmSync(lockFile, { force: true });
-				};
-			} catch (cause) {
-				if (fd !== undefined) {
-					try {
-						closeSync(fd);
-					} catch {
-						// ignore
-					}
-				}
-				const code = (cause as NodeJS.ErrnoException).code;
-				if (code !== "EEXIST") throw cause;
-				let age = 0;
-				try {
-					age = Date.now() - statSync(lockFile).mtimeMs;
-				} catch {
-					continue; // lock vanished between attempts; retry
-				}
-				if (age >= stale) {
-					rmSync(lockFile, { force: true });
-					continue;
-				}
-				if (Date.now() >= deadline) {
-					throw new LockAcquireError(lockFile, new Error(`legacy migration lock held for ${age}ms`));
-				}
-				// bounded spin; the claim window is tiny (a read + one write + one delete)
-				const until = Date.now() + 20;
-				while (Date.now() < until) {
-					// spin
-				}
-			}
-		}
+	#migration(): LegacyMigration<TRecord> {
+		return {
+			rootDir: this.rootDir,
+			lockPath: this.#legacyLockFile,
+			legacyTokens: join(this.legacyDir, TOKENS_FILE),
+			tokensPath: this.tokensPath,
+			stale: this.#lock.stale,
+			disableLock: this.#disableLock,
+			read: readJsonFile<TRecord>,
+			write: (record) => this.writeUnlocked(record),
+			lockError: (cause) => new LockAcquireError(this.#legacyLockFile, cause),
+		};
 	}
 
 	async update(mutate: (current: TRecord | undefined) => TRecord | undefined): Promise<TRecord | undefined> {
-		const release = await this.#acquire();
+		const held = await this.#acquire();
+		this.#held = held;
 		try {
 			const next = mutate(this.read());
 			if (next === undefined) {
@@ -210,7 +141,8 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 			}
 			return next;
 		} finally {
-			await release();
+			this.#held = undefined;
+			await held.release();
 		}
 	}
 
@@ -222,11 +154,13 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 	// must use readUnlocked/writeUnlocked (never update/write) to avoid
 	// re-entrant lock acquisition, which proper-lockfile rejects immediately.
 	async withLock<T>(fn: () => Promise<T> | T): Promise<T> {
-		const release = await this.#acquire();
+		const held = await this.#acquire();
+		this.#held = held;
 		try {
 			return await fn();
 		} finally {
-			await release();
+			this.#held = undefined;
+			await held.release();
 		}
 	}
 
@@ -234,6 +168,8 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 		return this.read();
 	}
 
+	// Inside withLock this is the commit step of a read-refresh-write (the OAuth refresh spends a
+	// rotating refresh token over the network first): each write below refuses once the lock was lost.
 	writeUnlocked(record: TRecord | undefined): void {
 		if (record === undefined) {
 			this.#removeRecord();
@@ -244,8 +180,9 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 	}
 
 	async clear(): Promise<void> {
-		const release = await this.#acquire();
+		const { release, assertHeld } = await this.#acquire();
 		try {
+			assertHeld();
 			rmSync(this.dir, { force: true, recursive: true });
 			rmSync(join(this.legacyDir, TOKENS_FILE), { force: true });
 		} finally {
@@ -259,11 +196,11 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 		chmodSync(this.dir, 0o700);
 	}
 
-	async #acquire(): Promise<() => Promise<void>> {
+	async #acquire(): Promise<Pick<HeldFileLock, "release" | "assertHeld">> {
 		this.#ensureDir();
-		if (this.#disableLock) return () => Promise.resolve();
+		if (this.#disableLock) return { release: () => Promise.resolve(), assertHeld: () => {} };
 		try {
-			return await lockfile.lock(this.dir, {
+			return await lockWithLossHandling(this.dir, {
 				lockfilePath: this.lockPath,
 				realpath: false,
 				retries: { retries: this.#lock.retries, factor: 1.2, minTimeout: 20, maxTimeout: 200 },
@@ -279,6 +216,12 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 		const tmp = join(this.dir, `${TOKENS_FILE}.${randomBytes(6).toString("hex")}.tmp`);
 		writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
 		chmodSync(tmp, 0o600);
+		try {
+			this.#held?.assertHeld();
+		} catch (error) {
+			rmSync(tmp, { force: true });
+			throw error;
+		}
 		renameSync(tmp, this.tokensPath);
 		chmodSync(this.tokensPath, 0o600);
 	}
@@ -288,11 +231,13 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 	}
 
 	#removeRecord(): void {
+		this.#held?.assertHeld();
 		this.#removeTokens();
 		removeIndexEntry(this.rootDir, this.serverName, this.#hash);
 	}
 
 	#writeIndex(): void {
+		this.#held?.assertHeld();
 		writeIndexEntry(this.rootDir, this.serverName, this.#hash);
 	}
 }

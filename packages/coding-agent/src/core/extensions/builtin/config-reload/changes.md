@@ -1,5 +1,82 @@
 # config-reload Extension Changes
 
+## 2026-10-19 - Quit does not wait on watch-worker teardown (senpi#3711)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts`: on `reason: "quit"`, `session_shutdown` cancels the watches as before but no longer awaits their disposal; failures that arrive later go to the config-reload log as `watcher_error` with path `shutdown`. Reload, new, resume and fork still join it.
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/watch-event-source.ts`: the last unsubscribe calls `worker.unref()` before `terminate()`.
+
+### Why
+
+- `terminate()` returns only when the worker's current native call returns, so a worker busy in watch setup held quit until the 10 s handler cap (senpi#3711). On Bun 1.4.3 a worker blocked for 4 s made `await terminate()` take 3918 ms, while `unref()` + `terminate()` + `process.exit` took 132 ms, also with a live recursive FSEvents watch in the worker, so the #1656 exit hang does not recur with watches in the worker. On an RPC host that keeps running after closing a session, the watches are already cancelled synchronously and the unref'd worker finishes stopping on its own.
+
+### Why an extension could not handle it
+
+- The event source and its worker lifecycle are internal to this builtin.
+
+### Expected merge conflict zones
+
+- LOW: `index.ts` `session_shutdown` and the helper after it; `watch-event-source.ts` `RecursiveWatchWorker` and the last-unsubscribe branch.
+
+## 2026-10-12 - Routine config keys exclude migrated state (senpi#3178)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/routine-settings.ts` now suppresses only `defaultModel`, `defaultProvider` and `defaultThinkingLevel` changes. Bookkeeping lives in `state.json`, which is outside the builtin config watch allow-list.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/routine-settings.ts`: state writes must not reload settings; manually editing obsolete state keys in settings must no longer be treated as an ordinary model-default save.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/routine-settings.ts` is the builtin extension's own change classifier.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/routine-settings.ts`: `ROUTINE_SETTINGS_KEYS`.
+
+## 2026-10-09 - Concurrent log rotation never disables a log sink (senpi#2976)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/log.ts`: rotates through `rotateLogIfNeeded`; a failed write returns `{ written: false, disabled: true }` and retries after `LOG_SINK_RETRY_MS` instead of disabling the logger for the process lifetime.
+
+### Why
+
+- Several processes share one agent dir (engine host, CLI, desktop host). Rotation was a non-atomic stat, remove `.1`, rename: when two crossed the cap together, the loser's rename threw ENOENT and its sink stayed disabled for the rest of the process, and the remove step could delete a generation another process had just rotated. A four-process burst dropped hundreds of lines per losing process. Rotation now goes through `core/log-file-rotation.ts` (an exclusive lock file and a size re-check under it), a lost race keeps appending, a failed sink retries after `LOG_SINK_RETRY_MS` (5 s), and the mode is set on the open descriptor.
+
+### Why an extension could not handle it
+
+- This is the builtin extension's own log writer.
+
+### Expected merge conflict zones
+
+- LOW: `createConfigReloadLogger` and `writeLine` in `config-reload/log.ts`.
+
+## 2026-10-08 - Stop the post-reload handoff from re-triggering reloads (#2878)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts`: the post-reload handoff comparison (`compareHandoffSnapshots`) no longer counts a path that is missing from the new watcher baseline but still on disk as changed. Such a path belongs to an extension whose watch registration arrives after `session_start`; it is held in `awaitingRegistration` and compared against its pre-reload hash once that registration rebuilds the watchers (`settleAwaitingRegistration`). A deleted path still counts as changed.
+- Reloads triggered only by the handoff comparison carry a chain counter; after `MAX_HANDOFF_RELOADS` (3) consecutive such reloads the chain stops, with no time window, so a slow cycle (for example one held back by running subagents) cannot restart it, logs `reload_loop_stopped` at warn level and shows a notice instead of reloading again. A watcher-detected change resets the chain.
+- The extension-veto recheck keeps its 1 s cadence for the first five attempts, then backs off exponentially to at most 30 s; `agent_end` and `agent_settled` still flush immediately. `reload_deferred` is logged once per veto reason instead of on every recheck.
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/log.ts`: new `reload_loop_stopped` event with `paths` and `reloads`.
+
+### Why
+
+- Extensions (omo) re-register their config-watch targets after the config-reload `session_start` handler. The handoff compared the pre-reload baseline, which held those targets, with a baseline that did not yet, so an untouched extension-only file always looked changed and every reload queued the next one (#2878). One session reloaded every ~14 s for over an hour and reached ~20 GB physical footprint.
+- A session with long-running subagents rechecked a vetoed reload, and logged `reload_deferred`, once per second for as long as the subagents ran (thousands of lines per session in `config-reload.log`).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts` owns the reload handoff, the watcher baseline and the veto recheck clock.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts` `processReloadHandoff`, `handleRegistration`, `flushPending`, `armVetoRecheck`; `log.ts` event union.
+
 ## 2026-10-01 - Ignore runtime-only project directory creation and preserve request admission
 
 ### What changed

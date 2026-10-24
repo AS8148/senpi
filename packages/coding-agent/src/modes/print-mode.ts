@@ -13,7 +13,7 @@ import {
 } from "@earendil-works/pi-ai";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
 import { flushRawStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../core/output-guard.ts";
-import { usageLimitCause } from "../core/retry-fallback/usage-limit.ts";
+import { usageLimitCause, usageLimitScope } from "../core/retry-fallback/usage-limit.ts";
 import { killTrackedDetachedChildren } from "../utils/shell.ts";
 import { toJsonEvent } from "./json-event.ts";
 import { formatProviderNativeBody, formatProviderNativeSummary } from "./provider-native-rendering.ts";
@@ -38,7 +38,6 @@ export interface PrintModeOptions {
  */
 export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: PrintModeOptions): Promise<number> {
 	const { mode, messages = [], initialMessage, initialImages } = options;
-	let exitCode = 0;
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
@@ -50,7 +49,9 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		disposed = true;
 		unsubscribe?.();
 		unsubscribeBackpressure?.();
-		await runtimeHost.dispose();
+		// Print mode ends right after: a signal calls process.exit, and the normal path returns to main, whose
+		// process exits once the loop drains (handles extensions leave open are reclaimed at shutdown, senpi#2292).
+		await runtimeHost.dispose({ processExit: true });
 	};
 
 	const registerSignalHandlers = (): void => {
@@ -171,22 +172,30 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 
 		await session.waitForSettledSessionWork();
 
-		if (mode === "text") {
-			const state = session.state;
-			const lastMessage = state.messages.findLast((message) => message.role === "assistant");
+		const lastMessage = session.state.messages.findLast((message) => message.role === "assistant");
+		const failed =
+			lastMessage?.role === "assistant" &&
+			(lastMessage.stopReason === "error" || lastMessage.stopReason === "aborted");
+		const exitCode = failed ? 1 : 0;
 
+		if (mode === "text") {
 			if (lastMessage?.role === "assistant") {
 				const assistantMsg = lastMessage;
-				if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
+				if (failed) {
 					// A provider-stream stall or transport drop keeps the classifier wording
 					// on the message; stderr gets the plain-language version instead.
-					const described = describeProviderFailureForUser(assistantMsg.errorMessage);
+					const described =
+						assistantMsg.errorCause?.type === "usage_limit" && assistantMsg.errorCause.scope === "account"
+							? assistantMsg.errorMessage
+							: describeProviderFailureForUser(assistantMsg.errorMessage, {
+									model: `${assistantMsg.provider}/${assistantMsg.model}`,
+									usageLimit: usageLimitScope(assistantMsg),
+								});
 					console.error(
 						described ??
 							(stripTurnRetrySuppressionPrefix(assistantMsg.errorMessage ?? "") ||
 								`Request ${assistantMsg.stopReason}`),
 					);
-					exitCode = 1;
 				} else {
 					for (const content of assistantMsg.content) {
 						if (content.type === "text") {

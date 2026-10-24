@@ -12,6 +12,7 @@
 import { createHash } from "node:crypto";
 import { rmSync } from "node:fs";
 import { chmod, lstat, mkdir, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { createDaemonDirectories, createHostDaemonPaths, type HostDaemonPaths } from "../rpc/host-daemon-paths.ts";
@@ -37,7 +38,14 @@ export async function resolveTuiSocket(agentDir: string, instanceId: string): Pr
 		await makePrivateDirectory(dirname(primary));
 		return primary;
 	}
-	const root = join("/tmp", `senpi-rpc-${createHash("sha256").update(agentDir).digest("hex").slice(0, 8)}`);
+	const fallbackName = `senpi-rpc-${createHash("sha256").update(agentDir).digest("hex").slice(0, 8)}`;
+	const scopedRoot = join(tmpdir(), fallbackName);
+	// Test launchers supply a short owned TMPDIR. A normal user's long macOS temp path
+	// still needs the original short system fallback to fit sun_path.
+	const root =
+		Buffer.byteLength(join(scopedRoot, "tui", name)) <= MAX_SOCKET_PATH_BYTES
+			? scopedRoot
+			: join("/tmp", fallbackName);
 	const tuiRoot = join(root, "tui");
 	await makePrivateDirectory(tuiRoot);
 	for (const directory of [root, tuiRoot]) await assertPrivateDirectory(directory);

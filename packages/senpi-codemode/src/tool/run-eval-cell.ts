@@ -9,11 +9,9 @@ import {
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import { resolveSandbox } from "../config/feature-settings.ts";
 import { DEFAULT_FOREGROUND_WINDOW_SECONDS, defaultCodemodeSettings } from "../config/settings.ts";
-import {
-	KERNEL_TOOLS_CAPABILITIES,
-	type KernelToolsCapability,
-	type KernelToolsDescribeResult,
-} from "../kernels/js/kernel-tools-types.ts";
+import type { JsEnvironments } from "../environments/js-environments.ts";
+import type { PackagesInstallEnvironments } from "../environments/packages-install.ts";
+import { KERNEL_TOOLS_CAPABILITIES, type KernelToolsCapability } from "../kernels/js/kernel-tools-types.ts";
 import { sandboxCellExecutor, sandboxRuntimeInfo } from "../kernels/sandbox/sandbox-cell.ts";
 import { TIMEOUT_PAUSE_OP, TIMEOUT_RESUME_OP } from "../timeouts/bridge-timeout.ts";
 import { abortError, CellExecution, defaultTimeoutFactory } from "./cell-execution.ts";
@@ -241,6 +239,7 @@ async function executeCell(
 				...(kernelTools === undefined ? {} : { kernelTools }),
 				...(options.handles === undefined ? {} : { handles: options.handles }),
 				hardDeadlineMs: cell.startedAtMs + cell.hardLimitSeconds * 1_000,
+				...cellEnvironments(invocation.input.language, options),
 			});
 			handler = activeHandler;
 			cellManager.bindKernel(
@@ -353,14 +352,24 @@ async function executeCell(
 }
 
 function kernelToolsFor(kernel: EvalKernel): KernelToolsCapability | undefined {
-	if (!("describeKernelTools" in kernel) || typeof kernel.describeKernelTools !== "function") return undefined;
-	const withTools = kernel as EvalKernel & {
-		describeKernelTools: (names: readonly string[]) => Promise<KernelToolsDescribeResult>;
-		invokeKernelTool: ExtensionKernelTools["invoke"];
-	};
+	if (typeof kernel.describeKernelTools !== "function" || typeof kernel.invokeKernelTool !== "function")
+		return undefined;
+	const describeKernelTools = kernel.describeKernelTools.bind(kernel);
+	const invokeKernelTool = kernel.invokeKernelTool.bind(kernel);
 	return {
 		capabilities: KERNEL_TOOLS_CAPABILITIES,
-		describe: (names) => withTools.describeKernelTools(names),
-		invoke: (request, options) => withTools.invokeKernelTool(request, options),
+		describe: describeKernelTools,
+		invoke: invokeKernelTool,
 	} satisfies ExtensionKernelTools;
+}
+
+// Only JS cells call tools in-process; a Python cell reaches packages.install() over the bridge, whose session manager
+// holds the same Python environment its magics use.
+function cellEnvironments(
+	language: string,
+	options: { readonly jsEnvironments?: JsEnvironments },
+): { readonly environments?: PackagesInstallEnvironments } {
+	if (language === "js" && options.jsEnvironments !== undefined)
+		return { environments: { js: options.jsEnvironments } };
+	return {};
 }

@@ -5,6 +5,7 @@ import { buildPromptBlocks } from "./prompt-bridge.ts";
 import { dedupeUltraworkBlocks, serializedPayloadBytes } from "./prompt-directive-dedupe.ts";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
 import { getSdkBoundary } from "./sdk-boundary.ts";
+import { seatDigest } from "./seat-digest.ts";
 import { reattachRecoveringCheckpoint } from "./session-checkpoint-recovery.ts";
 import { type ContinuityDecision, decideNativeContinuity } from "./session-continuity.ts";
 import {
@@ -93,6 +94,11 @@ async function createResidentAttempt(
 	const fingerprint = configFingerprint(auth.options, input.context, auth.authLane, auth.accountName);
 	const residentHashes = existing ? (sentHashesForEntry(existing) ?? hashes) : hashes;
 	const { binding, transcriptAvailable } = await admitRestoredBinding(sessionId, auth.options.cwd, auth.authLane);
+	const lineageSeat = existing?.accountName ?? getBinding(sessionId)?.accountName ?? binding?.accountName;
+	const seat = {
+		seat: seatDigest(auth.accountName),
+		...(lineageSeat === undefined ? {} : { seatChanged: lineageSeat !== auth.accountName }),
+	};
 	const decision = decideNativeContinuity({
 		entry: existing ? entrySnapshot(existing, residentHashes) : undefined,
 		binding,
@@ -194,17 +200,20 @@ async function createResidentAttempt(
 		: buildDeltaPromptBlocks(messages.slice(from), input.customToolNameToSdk);
 	const payloadBytes = flattenResult ? serializedPayloadBytes(flattenResult.blocks) : undefined;
 	const staged = stageContinuityDecision(
-		observeSessionSyncDecision({
-			kind: observedKind,
-			reason: observedReason,
-			deltaMessages: flatten ? hashes.length : hashes.length - from,
-			firstTurn,
-			senpiSessionId: sessionId,
-			...(payloadBytes !== undefined ? { payloadBytes } : {}),
-			...(flattenResult?.collapsedDirectives !== undefined
-				? { collapsedDirectives: flattenResult.collapsedDirectives }
-				: {}),
-		}),
+		{
+			...observeSessionSyncDecision({
+				kind: observedKind,
+				reason: observedReason,
+				deltaMessages: flatten ? hashes.length : hashes.length - from,
+				firstTurn,
+				senpiSessionId: sessionId,
+				...(payloadBytes !== undefined ? { payloadBytes } : {}),
+				...(flattenResult?.collapsedDirectives !== undefined
+					? { collapsedDirectives: flattenResult.collapsedDirectives }
+					: {}),
+			}),
+			...seat,
+		},
 		sessionId,
 		input.onContinuityDecision,
 		// The pending close cause is consumed only when the staged observation
@@ -231,6 +240,9 @@ export async function* residentSessionMessages(input: ResidentSessionStreamInput
 }
 
 function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncIterable<SDKMessage> {
+	const sessionId = input.streamOptions.sessionId;
+	const preferredAccount =
+		sessionId === undefined ? undefined : (getSession(sessionId)?.accountName ?? getBinding(sessionId)?.accountName);
 	return queryWithAuthLane({
 		prompt: "",
 		query: getSdkBoundary().query,
@@ -240,6 +252,7 @@ function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncItera
 		sessionId: input.streamOptions.affinitySessionId ?? input.streamOptions.sessionId,
 		model: input.model.id,
 		pinnedAccount: input.pinnedAccount,
+		...(preferredAccount === undefined ? {} : { preferredAccount }),
 		buildOptions: input.buildOptions,
 		createAttempt: (auth) => createResidentAttempt(input, auth),
 	});

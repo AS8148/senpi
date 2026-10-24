@@ -1,7 +1,14 @@
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../types.ts";
+import { releaseQuestionInput } from "../../../question-input.ts";
+import type { ExtensionAPI, ExtensionContext, QuestionCancelOrigin, ToolDefinition } from "../../types.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
 import { TOOL_NAMES } from "./family.ts";
-import { formatResultDetails, formatResultText, formatUserMessage } from "./format.ts";
+import {
+	formatGatedCancellation,
+	formatModelAnswer,
+	formatResultDetails,
+	formatUserMessage,
+	showsPartialAnswers,
+} from "./format.ts";
 import {
 	ASK_USER_ASKED_EVENT,
 	ASK_USER_QUESTION_ENTRY,
@@ -34,6 +41,8 @@ export interface AskUserState {
 	unavailable: boolean;
 }
 const REASK = "The user did not answer the previous question this turn; continue without asking again.";
+const REASK_REQUIRED =
+	"The user did not answer the previous question this turn, so this one gets no answer either. No answer: do not take the action it gates. Keep that action pending and end the turn.";
 function result(
 	variant: AskUserVariant,
 	response: QuestionResponse,
@@ -41,17 +50,25 @@ function result(
 	text?: string,
 ): Awaited<ReturnType<ToolDefinition["execute"]>> {
 	return {
-		content: [{ type: "text", text: text ?? formatResultText(variant, response, request.questions) }],
-		details: formatResultDetails(variant, response, request.questions),
+		content: [
+			{
+				type: "text",
+				text:
+					text ??
+					formatModelAnswer(response, request.requestId, request.questions, request.required === true).text,
+			},
+		],
+		details: formatResultDetails(variant, response, request.requestId, request.questions, request.required === true),
 	};
 }
 /**
  * Deliver a settled async answer as one framed user message. The extension owns
- * this so every surface (interactive TUI, RPC, app-server) only has to RESOLVE
+ * this so every surface (interactive TUI, RPC) only has to RESOLVE
  * the question; a surface that delivered on its own would send it twice. It
  * steers into a running turn and follows up when idle - a follow-up always
  * triggers a turn, which is what wakes the model after a timeout. A cancelled
- * question stays silent: it was dismissed, superseded, or aborted.
+ * question stays silent unless `showsPartialAnswers` holds: the user chose the
+ * cancel (or its UI failed) after answering part of it, and those answers go out.
  */
 export function deliverAnswer(
 	pi: Pick<ExtensionAPI, "sendUserMessage" | "events">,
@@ -60,10 +77,12 @@ export function deliverAnswer(
 	response: QuestionResponse,
 	variant: "codex" | "claude",
 ): void {
+	if (response.status === "cancelled" && !showsPartialAnswers(response)) return;
+	const content = formatUserMessage(response, request.requestId, request.questions, request.required === true);
+	const options = { deliverAs: ctx.isIdle() ? ("followUp" as const) : ("steer" as const) };
+	if (response.status === "answered" || response.status === "comment-submitted") releaseQuestionInput(ctx);
+	pi.sendUserMessage(content, options);
 	if (response.status === "cancelled") return;
-	pi.sendUserMessage(formatUserMessage(response, request.requestId, request.questions), {
-		deliverAs: ctx.isIdle() ? "followUp" : "steer",
-	});
 	void emitAskUserNotification(pi, ctx, request, response, variant);
 }
 function emitWake(pi: Pick<ExtensionAPI, "events">, sessionId: string) {
@@ -155,13 +174,17 @@ export function startQuestion(
 		idleTimeoutMs: request.timeoutMs,
 		onTimeout: finish,
 	});
-	const cancel = (message?: string, reportDetachedLoss = false) => {
+	const cancel = (origin: QuestionCancelOrigin, message?: string, reportDetachedLoss = false) => {
 		const lost = !attached && reportDetachedLoss;
 		const response = pending.cancel(lost ? "orphaned-after-restart" : "cancelled");
-		finish(message ? { ...response, comment: message } : response);
+		finish({
+			...response,
+			...(message ? { comment: message } : {}),
+			...(response.status === "cancelled" ? { cancelOrigin: origin } : {}),
+		});
 		if (lost) notify(message ?? "The pending question could not be restored.", "error");
 	};
-	const abort = () => cancel();
+	const abort = () => cancel("turn_abort");
 	unregister = registerPendingQuestion(sessionId, {
 		request,
 		pending,
@@ -197,7 +220,7 @@ export function startQuestion(
 	const first = request.questions[0];
 	pi.events.emit("herdr:blocked", {
 		active: true,
-		label: first ? `${first.header} — ${first.question}` : "Question",
+		label: first ? `${first.header} - ${first.question}` : "Question",
 		id: request.requestId,
 	});
 	signal?.addEventListener("abort", abort, { once: true });
@@ -205,7 +228,8 @@ export function startQuestion(
 	const opts: QuestionDialogOptions = {
 		timeout: request.timeoutMs,
 		signal: controller.signal,
-		deliver: request.waitForAnswer ? "tool-result" : "user-message",
+		// A resumed question delivers its answer as a user message (deliverAnswer), like an async one.
+		deliver: request.waitForAnswer && !resuming ? "tool-result" : "user-message",
 		hardDeadlineAtMs: Date.now() + 7_200_000,
 		getDeadlineAtMs: () => pending.deadlineAtMs,
 		onProgress: (progress) => {
@@ -216,6 +240,19 @@ export function startQuestion(
 	};
 	const accept = (response: QuestionResponse) => {
 		if (settled) return;
+		if (response.status === "cancelled") {
+			// Another client's cancel through a terminal's control endpoint carries no answers: it keeps the
+			// draft the UI reported as progress instead of wiping it. A cancel that carries answers updates it.
+			// This holds for every cancel without answers, lifecycle ones included; `showsPartialAnswers` alone
+			// decides whether the kept draft reaches the model, so a lifecycle cancel stays silent.
+			if (Object.keys(response.answers).length > 0 || response.comment !== undefined)
+				pending.touch({ answers: response.answers, comment: response.comment });
+			const cancelled = pending.cancel("cancelled");
+			finish(
+				response.cancelOrigin !== undefined ? { ...cancelled, cancelOrigin: response.cancelOrigin } : cancelled,
+			);
+			return;
+		}
 		pending.touch({ answers: response.answers, comment: response.comment });
 		if (response.status === "timed_out") {
 			finish(response);
@@ -237,7 +274,7 @@ export function startQuestion(
 			ctx.ui.notify(message, "error");
 			return;
 		}
-		cancel(message);
+		cancel("ui_failure", message);
 		ctx.ui.notify(message, "error");
 	};
 	const attach = () => {
@@ -286,12 +323,13 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 			: "Ask the user one to four concise questions.";
 	return {
 		name: TOOL_NAMES[variant],
+		workspaceEffect: "read",
 		label: "Ask user",
 		exposure: "direct",
 		allowLazyActivation: false,
 		parameters: variant === "codex" ? CODEX_PARAMS : CLAUDE_PARAMS,
 		promptSnippet: "Ask a material question, explicitly choosing whether to wait or receive the answer later.",
-		description: `${opener} Set ${flag} true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes); set ${flag} false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again. Never use it for permission requests; ask those directly in your message. Unavailable to subagents.${variant === "claude" ? " Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option." : ""} Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).`,
+		description: `${opener} Set ${flag} true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes); set ${flag} false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. Unavailable to subagents.${variant === "claude" ? " Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option." : ""} Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).`,
 		prepareArguments(args) {
 			toCanonical(variant, args);
 			return args;
@@ -315,7 +353,7 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 			};
 			if (state.timedOut) {
 				emitAskUserClosed(pi, request.requestId, unavailable);
-				return result(variant, unavailable, request, REASK);
+				return result(variant, unavailable, request, request.required === true ? REASK_REQUIRED : REASK);
 			}
 			if (
 				state.unavailable ||
@@ -344,7 +382,13 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 				variant,
 				response,
 				request,
-				response.status === "cancelled" && response.comment ? response.comment : undefined,
+				response.status === "cancelled" && response.comment
+					? request.required === true
+						? formatGatedCancellation(response.comment, response, request.requestId, request.questions)
+						: showsPartialAnswers(response)
+							? undefined
+							: response.comment
+					: undefined,
 			);
 		},
 		renderCall,

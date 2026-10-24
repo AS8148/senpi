@@ -14,6 +14,8 @@ import type { RpcSessionEntry } from "./session-registry.ts";
 export interface RpcSessionBinding {
 	handle(command: object): Promise<void>;
 	cancelPendingExtensionUiRequests?(): void;
+	/** A connection of the shared host left this session (`close_session`, a dropped or detached connection). */
+	connectionDetached?(connectionId: string): void;
 	/** `prompt` calls this binding started that have not settled, preflight included. */
 	pendingPrompts?(): readonly Promise<unknown>[];
 	dispose(): Promise<void>;
@@ -28,7 +30,7 @@ export async function createRpcSessionBinding(
 	entry: RpcSessionEntry,
 	writer: SessionEventWriter,
 	requestClose: () => void,
-	options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo"> = {},
+	options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo" | "connectionRoles"> = {},
 ): Promise<RpcSessionBinding> {
 	if (entry.worker) return entry.worker.bind(sessionId, writer, requestClose, options);
 	if (!entry.runtime) throw new Error("Session runtime was not created");
@@ -61,9 +63,25 @@ export async function createRpcSessionBinding(
 			return typeof value === "function" ? value.bind(runtime) : value;
 		},
 	});
+	// A reply can be written after its session closed: a prompt's preflight that outlived the client's
+	// deadline answers once the client already discarded the session. That record has no reader left, so it
+	// is dropped with one line naming the session instead of throwing "Provider scope is closed" out of
+	// an unawaited prompt (senpi#2871).
+	let droppedAfterClose = false;
 	const handler: RpcConnectionHandler = await runWithProviderScope(entry.scope, async () => {
+		const writeInScope = bindToProviderScope(enqueueRecords);
 		const taggedSink: RpcConnectionSink = {
-			writeRaw: bindToProviderScope(enqueueRecords),
+			writeRaw: (chunk) => {
+				if (entry.scope.state === "closed") {
+					if (!droppedAfterClose)
+						process.stderr.write(
+							`senpi rpc host: dropped a record for closed session ${sessionId} at ${new Date().toISOString()}\n`,
+						);
+					droppedAfterClose = true;
+					return;
+				}
+				writeInScope(chunk);
+			},
 			waitForBackpressure: bindToProviderScope(async () => {}),
 		};
 		return createRpcConnectionHandler(runtimeHost, taggedSink, {
@@ -71,7 +89,22 @@ export async function createRpcSessionBinding(
 			shutdownHandler: bindToProviderScope(requestClose),
 			disposeRuntime: false,
 			eventFlushScheduler: (flush) => flush(),
+			publishLoadedSurfacesChanged: (previous, digest) => {
+				if (entry.scope.state !== "closed") writer.publishLoadedSurfacesChanged(sessionId, previous, digest);
+			},
 			...options,
+			workerSecurityBridge: writer.workerSecurityBridge,
+			grantDialogSettled: (id) => writer.settleGrantDialog(sessionId, id),
+			bindSecurityPresentation: (session, ui) =>
+				writer.bindSecurityPresentations(sessionId, session.sessionId, session.securityNotices, ui),
+			clientInfo:
+				options.clientInfo === undefined
+					? undefined
+					: {
+							...options.clientInfo,
+							hasCapability: (connection, capability) =>
+								writer.getConnectionCapabilities(connection)?.includes(capability) === true,
+						},
 		});
 	});
 	await handler.ready;
@@ -80,6 +113,8 @@ export async function createRpcSessionBinding(
 		cancelPendingExtensionUiRequests: () =>
 			runWithProviderScope(entry.scope, () => handler.cancelPendingExtensionUiRequests()),
 		pendingPrompts: () => handler.pendingPrompts(),
+		connectionDetached: (connectionId) =>
+			runWithProviderScope(entry.scope, () => handler.connectionDetached(connectionId)),
 		dispose: () => {
 			toolSpans.closeAll();
 			return runWithProviderScope(entry.scope, () => handler.dispose());

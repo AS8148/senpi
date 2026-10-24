@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import type { Credential, CredentialStore, OAuthCredential } from "@earendil-works/pi-ai";
+import { withoutOrderedAccount } from "@earendil-works/pi-ai/auth/pool/select";
 import type { ModelBlocks } from "../../../credential-pool/model-scope.ts";
 
 export type AccountSlot = {
@@ -11,15 +13,28 @@ export type AccountSlot = {
 	source: "login" | "import" | "env";
 	blockedUntil?: number;
 	blockReason?: string;
+	/** When the current block was stored, so a turn that started earlier never clears it (senpi#3462). */
+	blockedAt?: number;
 	/** Rate limits that bind one model family on this account, not the account (senpi#2555). */
 	modelBlocks?: ModelBlocks;
+	/**
+	 * Digest of the grant an auth-block recovery must not redeem again: the grant the token endpoint
+	 * rejected, or the grant a recovery produced, so one auth block gets at most one recovery (senpi#2926).
+	 */
+	authRecoveryGrant?: string;
+	/** Digest of the `anthropic` OAuth grant this account was copied from (senpi#3259), so the copy runs once. */
+	importedFrom?: string;
 };
 
-export type SlotState = Record<string, { blockedUntil?: number; blockReason?: string; modelBlocks?: ModelBlocks }>;
+export type SlotState = Record<
+	string,
+	{ blockedUntil?: number; blockReason?: string; blockedAt?: number; modelBlocks?: ModelBlocks }
+>;
 
 export type AnthropicSubscriptionCredential = OAuthCredential & {
 	accounts?: AccountSlot[];
 	pinned?: string;
+	order?: string[];
 	slotState?: SlotState;
 };
 
@@ -45,6 +60,11 @@ function storedSlots(credential: AnthropicSubscriptionCredential): AccountSlot[]
  */
 export function isSentinelSlot(slot: Pick<AccountSlot, "access" | "refresh">): boolean {
 	return slot.access === SENTINEL_OAUTH_FIELDS.access && slot.refresh === SENTINEL_OAUTH_FIELDS.refresh;
+}
+
+/** A stable, non-reversible name for a refresh token, safe to persist next to it. */
+export function authGrantDigest(refresh: string): string {
+	return createHash("sha256").update(refresh).digest("hex").slice(0, 32);
 }
 
 export function listAccounts(
@@ -95,7 +115,14 @@ export function upsertAccount(
 	assertValidAccountName(slot.name);
 	const existing = storedSlots(credential).find((candidate) => candidate.name === slot.name);
 	if (!existing) return { ...credential, accounts: [...storedSlots(credential), slot] };
-	const { blockedUntil: _blockedUntil, blockReason: _blockReason, modelBlocks: _modelBlocks, ...identity } = existing;
+	const {
+		blockedUntil: _blockedUntil,
+		blockReason: _blockReason,
+		blockedAt: _blockedAt,
+		modelBlocks: _modelBlocks,
+		authRecoveryGrant: _authRecoveryGrant,
+		...identity
+	} = existing;
 	const refreshed: AccountSlot = {
 		...identity,
 		access: slot.access,
@@ -116,7 +143,7 @@ export function removeAccount(
 	const accounts = storedSlots(credential).filter((slot) => slot.name !== name);
 	const next: AnthropicSubscriptionCredential = { ...credential, accounts };
 	if (credential.pinned === name) delete next.pinned;
-	return next;
+	return withoutOrderedAccount(next, name);
 }
 
 export function pinAccount(credential: AnthropicSubscriptionCredential, name: string): AnthropicSubscriptionCredential {

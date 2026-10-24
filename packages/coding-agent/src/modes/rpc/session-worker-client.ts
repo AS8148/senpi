@@ -3,9 +3,12 @@ import { Worker } from "node:worker_threads";
 import { isBunBinary } from "../../config.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
+import { ownProcessStartedAtMs } from "../../core/extensions/builtin/terminal/process-identity.ts";
+import { isSecurityNoticeState } from "../../core/security-notices.ts";
 import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
+import { roleConnection } from "./connection-roles.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
@@ -15,16 +18,16 @@ import type {
 	SessionWriteGrant,
 	WorkerSnapshot,
 } from "./session-worker-protocol.ts";
-
+import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker-requests.ts";
 import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
 
 /** Lifecycle hooks the owning registry installs on every worker it allocates. */
 export interface SessionWorkerCallbacks {
-	reserve: (path: string) => SessionWriteGrant;
+	reserve: (path: string) => SessionWriteGrant | Promise<SessionWriteGrant>;
 	/** Every snapshot republishes which paths this worker still writes. */
-	reconcile: (livePaths: readonly string[]) => void;
-	exit: () => void;
+	reconcile: (livePaths: readonly string[]) => void | Promise<void>;
+	exit: () => void | Promise<void>;
 	failure: (error: string) => void;
 }
 
@@ -42,9 +45,13 @@ export class SessionWorkerClient {
 		isBunBinary
 			? fileURLToPath(new URL(compiledWorkerEntry, import.meta.url)).replaceAll("\\", "/")
 			: new URL(import.meta.url.endsWith(".ts") ? "./session-worker.ts" : "./session-worker.js", import.meta.url),
-		this.webviewBroker
-			? { workerData: { webviewBroker: this.webviewBroker.port }, transferList: [this.webviewBroker.port] }
-			: {},
+		{
+			workerData: {
+				hostProcessStartedAtMs: ownProcessStartedAtMs(),
+				...(this.webviewBroker ? { webviewBroker: this.webviewBroker.port } : {}),
+			},
+			...(this.webviewBroker ? { transferList: [this.webviewBroker.port] } : {}),
+		},
 	);
 	readonly exited: Promise<void>;
 	snapshot?: WorkerSnapshot;
@@ -59,26 +66,35 @@ export class SessionWorkerClient {
 	private writer?: SessionEventWriter;
 	private sessionId?: string;
 	private requestClose?: () => void;
-	private options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo"> = {};
+	private options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo" | "connectionRoles"> = {};
 	private readonly listeners = new Set<() => void>();
 	private cancelUiPending = false;
 	private terminalFailure?: string;
+	private stopLimitMirror: () => void = () => {};
 
 	private readonly callbacks: SessionWorkerCallbacks;
 
 	constructor(callbacks: SessionWorkerCallbacks) {
 		this.callbacks = callbacks;
-		this.exited = new Promise((resolve) => {
+		this.exited = new Promise((resolve, reject) => {
 			this.worker.once("exit", () => {
 				if (!this.stopped && !this.closeTimer) this.fail("session_worker_exited");
 				this.stopped = true;
 				if (this.closeTimer) clearTimeout(this.closeTimer);
 				this.requests.close(new Error("session_worker_exited"));
 				void this.webviewBroker?.dispose();
+				this.stopLimitMirror();
 				this.listeners.clear();
-				callbacks.exit();
-				this.publishTerminalFailure();
-				resolve();
+				const released = callbacks.exit();
+				if (released)
+					void released.then(() => {
+						this.publishTerminalFailure();
+						resolve();
+					}, reject);
+				else {
+					this.publishTerminalFailure();
+					resolve();
+				}
 			});
 		});
 		this.worker.on("message", (message: SessionWorkerToHost) => this.receive(message));
@@ -86,7 +102,19 @@ export class SessionWorkerClient {
 	}
 
 	async prepare(configuration: CliRuntimeConfiguration, profile: RpcSessionLaunchProfile): Promise<string> {
-		const result = await this.request({ type: "prepare", configuration, profile });
+		// The host's poller feeds only the host's store and the isolate reads its own copy, so the isolate starts
+		// from the host's records and then receives each change (senpi#3695). Subscribing before the request is
+		// posted keeps a change that lands in between ordered after the snapshot.
+		this.stopLimitMirror();
+		this.stopLimitMirror = subscriptionLimits.subscribeMirror((limits) =>
+			this.post({ type: "subscription_limits", accounts: [limits] }),
+		);
+		const result = await this.request({
+			type: "prepare",
+			configuration,
+			profile,
+			subscriptionLimits: subscriptionLimits.mirrorSnapshot(),
+		});
 		if (result.type !== "prepared") throw new Error("Invalid worker prepare response");
 		return result.sessionPath;
 	}
@@ -120,7 +148,7 @@ export class SessionWorkerClient {
 		sessionId: string,
 		writer: SessionEventWriter,
 		requestClose: () => void,
-		options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo">,
+		options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo" | "connectionRoles">,
 	): Promise<RpcSessionBinding> {
 		this.sessionId = sessionId;
 		this.writer = writer;
@@ -131,10 +159,25 @@ export class SessionWorkerClient {
 			sessionId,
 			capabilities: options.capabilities ?? [],
 			connection: writer.currentConnection(),
+			roles: options.connectionRoles?.rolesOf(roleConnection(writer.currentConnection())),
 		});
 		return {
 			handle: async (command) => {
-				await this.request({ type: "command", command, connection: writer.currentConnection() });
+				const connection = writer.currentConnection();
+				if (
+					"type" in command &&
+					command.type === "extension_ui_response" &&
+					"id" in command &&
+					typeof command.id === "string" &&
+					writer.acceptWorkerGrantResponse(sessionId, command.id, connection) === false
+				)
+					return;
+				await this.request({
+					type: "command",
+					command,
+					connection,
+					roles: options.connectionRoles?.rolesOf(roleConnection(connection)),
+				});
 			},
 			cancelPendingExtensionUiRequests: () => this.post({ type: "cancel_ui" }),
 			dispose: async () => {
@@ -193,16 +236,30 @@ export class SessionWorkerClient {
 			case "ready":
 			case "result": {
 				this.requests.receive(message);
+				if (this.snapshot)
+					void Promise.resolve(this.callbacks.reconcile(this.snapshot.liveSessionPaths)).catch(() =>
+						this.fail("session_claim_reconcile_failed"),
+					);
 				return;
 			}
 			case "reserve":
-				acknowledgeGrant(message.signal, this.callbacks.reserve(message.path));
+				void Promise.resolve(this.callbacks.reserve(message.path)).then(
+					(grant) => acknowledgeGrant(message.signal, this.stopped ? "conflict" : grant),
+					() => acknowledgeGrant(message.signal, "conflict"),
+				);
 				return;
 			case "snapshot":
 				this.snapshot = message.snapshot;
-				this.callbacks.reconcile(message.snapshot.liveSessionPaths);
-				acknowledge(message.signal, true);
-				if (message.settled) for (const listener of [...this.listeners]) listener();
+				void Promise.resolve(this.callbacks.reconcile(message.snapshot.liveSessionPaths)).then(
+					() => {
+						acknowledge(message.signal, !this.stopped);
+						if (message.settled) for (const listener of [...this.listeners]) listener();
+					},
+					() => {
+						acknowledge(message.signal, false);
+						this.fail("session_claim_reconcile_failed");
+					},
+				);
 				return;
 			case "control_done":
 				this.cancelUiPending = false;
@@ -217,13 +274,58 @@ export class SessionWorkerClient {
 				// Identity and activity commit before publication; clients may attach or disconnect on that event.
 				if (message.snapshot) {
 					this.snapshot = message.snapshot;
-					this.callbacks.reconcile(message.snapshot.liveSessionPaths);
 				} else if (this.snapshot)
 					this.snapshot = {
 						...this.snapshot,
 						...message.activity,
 						state: { ...this.snapshot.state, isStreaming: message.activity.streaming },
 					};
+				const record = message.record;
+				if (
+					"type" in record &&
+					record.type === "security_grant_settled" &&
+					"id" in record &&
+					typeof record.id === "string"
+				) {
+					writer.settleGrantDialog(sessionId, record.id);
+					acknowledge(message.signal, true);
+					return;
+				}
+				if ("type" in record && record.type === "security_notice_snapshot") {
+					if (!("snapshot" in record) || !isSecurityNoticeState(record.snapshot)) {
+						acknowledge(message.signal, false);
+						this.fail("invalid_security_notice_snapshot");
+						return;
+					}
+					writer.acceptWorkerSecuritySnapshot(sessionId, record.snapshot);
+					acknowledge(message.signal, true);
+					return;
+				}
+				let outputConnection = message.connection;
+				if (
+					"type" in record &&
+					record.type === "extension_ui_request" &&
+					"method" in record &&
+					record.method === "select" &&
+					"grantSelect" in record &&
+					record.grantSelect === true &&
+					"id" in record &&
+					typeof record.id === "string"
+				) {
+					const id = record.id;
+					const target = writer.routeWorkerGrant(
+						sessionId,
+						id,
+						message.connection,
+						this.options.capabilities ?? [],
+						() => this.post({ type: "cancel_grant", id }),
+					);
+					if (!target.accepted) {
+						acknowledge(message.signal, true);
+						return;
+					}
+					outputConnection = target.connection;
+				}
 				const enqueue = () => {
 					if (!writer.enqueue(sessionId, message.record)) {
 						acknowledge(message.signal, false);
@@ -232,8 +334,11 @@ export class SessionWorkerClient {
 					}
 					return writer.waitForSessionBackpressure(sessionId);
 				};
-				const consumed =
-					message.connection === undefined ? enqueue() : writer.withConnection(message.connection, enqueue);
+				const consumed = Promise.resolve(
+					message.snapshot ? this.callbacks.reconcile(message.snapshot.liveSessionPaths) : undefined,
+				).then(() =>
+					outputConnection === undefined ? enqueue() : writer.withConnection(outputConnection, enqueue),
+				);
 				void consumed.then(
 					() => acknowledge(message.signal, true),
 					(cause: unknown) => {
@@ -244,11 +349,35 @@ export class SessionWorkerClient {
 				return;
 			}
 			case "capabilities":
+				if (message.connection === undefined)
+					this.options = { ...this.options, capabilities: message.capabilities };
+				// The isolate already refused a changed role; a refusal here means the two registries drifted.
+				if (
+					this.options.connectionRoles?.declare(roleConnection(message.connection), message.capabilities) === false
+				)
+					process.stderr.write(
+						`senpi rpc worker role drift: connection ${roleConnection(message.connection)} declared a changed role\n`,
+					);
 				this.options.clientInfo?.setCapabilities(message.connection, message.capabilities);
 				acknowledge(message.signal, true);
 				return;
+			case "loaded_surfaces": {
+				// The host owns the per-(connection, session) dedupe on both runtimes (#3198 review, L5).
+				const writer = this.writer;
+				const sessionId = this.sessionId;
+				if (!writer || !sessionId || this.stopped) {
+					acknowledge(message.signal, false);
+					return;
+				}
+				writer.publishLoadedSurfacesChanged(sessionId, message.previous, message.digest);
+				acknowledge(message.signal, true);
+				return;
+			}
 			case "request_close":
 				this.requestClose?.();
+				return;
+			case "subscription_limits":
+				subscriptionLimits.adopt(message.limits);
 				return;
 			case "failure":
 				this.fail(message.error);

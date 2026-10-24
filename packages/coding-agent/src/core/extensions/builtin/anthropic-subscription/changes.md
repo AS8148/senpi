@@ -1,3 +1,404 @@
+## 2026-10-22 - All-accounts refusals are pool verdicts, not auth failures (senpi#2081)
+
+### What changed
+
+- `index.ts`: the provider registers with `ownsAccountSelection: true`, so the generic credential pool no longer wraps the lane. This lane is the one owner of account selection, keeping the pin, the resident account, account order, and per-account and per-model limits.
+- `affinity.ts`: `AllAccountsBlockedError.blockReason` is `auth_error` only when every candidate is auth-blocked. A pool where any account waits on a deadline reports that deadline as a temporary block.
+- `guidance.ts`: every all-accounts and single-account refusal ends with the credential pool's `ACCOUNT_POOL_REFUSAL_NOTE`, so the outer pool fails the request instead of blocking the outer slot that ran the attempt.
+- `errors.ts`: an `HTTP 408` or `HTTP 5xx` result is a transient failure even when its text says "unauthorized".
+
+### Why
+
+senpi#2081: a mixed pool (one revoked account, one briefly rate-limited) was reported as an authentication error, persisted as `auth_error` on every outer slot, and refused all requests until a re-login.
+
+### Why an extension could not handle it
+
+This is the bundled Anthropic Subscription extension itself; the outer pool reads its refusal text before any hook runs.
+
+### Expected merge conflict zones
+
+- The `blockReason` argument at the end of `selectAccount`.
+- The closing lines of `allAccountsBlockedGuidance` and `singleAccountUnavailableGuidance`.
+- The transient branches near the end of `classifyErrorKind`.
+
+## 2026-10-22 - A damaged seat-digest salt is replaced (oh-my-openagent#10304 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: a salt file that is not exactly 32 bytes is removed (only if it is still the file that was read, by inode) and recreated through the same link-into-place path, instead of being ignored in favour of a process-only salt. On a filesystem without hard links (`linkSync` fails with EPERM, ENOTSUP or ENOSYS) the salt is created directly with an exclusive write, so restarts there keep matching too.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: a truncated salt left on disk sent every later process to the process-only fallback forever, so seat digests never matched across restarts on that install (review LOW 2 on senpi#3947); and an agent dir on a filesystem without hard links never stored a salt at all (the senpi#3947 delta review's LOW).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: the salt is private state of this extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: `readOrCreateSalt` and the new `removeDamagedSalt`.
+
+## 2026-10-22 - A same-turn retry on another seat is reported as a seat switch, and every continuity decision names its seat (oh-my-openagent#10304)
+
+### What changed
+
+- `session-continuity.ts`: `decideFromBinding` keeps the retry checkpoint's decision (the same fork boundary and offset, senpi#1973 and senpi#1974) but labels it `account_changed` when the attempt runs on a different account than the binding. A same-seat retry keeps `timeout_retry`.
+- `session-observability.ts`: `ContinuityObservation` gains `seat` (the first 8 hex digits of an HMAC-SHA-256 of the account slot name keyed by a per-install salt, never the name) and `seatChanged` (the attempt runs on another account than the lineage's last one). Both reach the `claude_sdk_oauth_session_continuity` session.log line and the continuity diagnostic.
+- `seat-digest.ts` (new): `seatDigest` keys the digest with 32 random bytes created once under the agent dir (`anthropic-subscription/seat-digest-salt`, mode 0600), written whole to a private file and hard-linked into place, so the final name never exists half-written and processes racing on the first use converge on the first salt linked (EEXIST re-reads it), so the same slot name digests differently on two installs and a guessed name (`env`, an email address) cannot be confirmed without the salt. Only decision observations carry a seat; the terminal `failed` observation and the non-resident `disabled` one do not.
+- `session-stream.ts`: `createResidentAttempt` computes both from the live entry, the in-memory binding or the restored binding, in that order.
+- Tests: `test/anthropic-subscription-seat-digest.test.ts` pins the per-install salt; `test/anthropic-subscription-continuity-retry-checkpoint.test.ts` pins both labels at the same boundary; `test/suite/regressions/1432-anthropic-subscription-failover-reattach.test.ts` and `723-anthropic-subscription-timeout-abort-retry-continuity.test.ts` pin `seatChanged: true` on a failover and `false` on a same-seat retry, and that no slot name reaches the observation.
+
+- Supersedes the label in two older entries of this file: the senpi#1432 entry ("same-turn failover forks at the pre-turn boundary with reason `timeout_retry`") and the #723 retry-checkpoint entry. A checkpoint fork on another account is now `account_changed`; the older entries stay as dated history.
+
+### Why
+
+Prompt caches never cross Anthropic organizations, and each subscription seat is its own organization, so the first request on a new seat writes the whole prefix. A same-turn retry that failed over to another seat was labelled `fork / timeout_retry`, the label of a same-seat retry that reads its cache. In the reported incident every such record read only the 29,319-token system and tool prefix and wrote 0.8-0.9M tokens, and nothing in the logs could tell a seat switch from a same-seat retry or say which seat served it.
+
+### Why an extension could not handle it
+
+The continuity decision and its observation are internal to this builtin.
+
+### Expected merge conflict zones
+
+- `session-continuity.ts`: the `retryCheckpointDecision` call in `decideFromBinding`;
+- `session-observability.ts`: `ContinuityObservation` and `emitContinuityObservation`;
+- `session-stream.ts`: the imports, the top of `createResidentAttempt` and the `stageContinuityDecision` call;
+- `seat-digest.ts` is new.
+
+## 2026-10-21 - Launch-gated Fable 5.5 executable floor (senpi#3893)
+
+### What changed
+
+- `executable-model-support.ts`: reads the optional launch model's Claude Code floor from the one `FABLE55_LAUNCH` block. The floor stays unset until observed; no version is guessed.
+- The real-binary regression checks the launch chain key from the moment `released` is flipped, because the key exists only then; before release the default chains contain no 5.5 key at all. Every existing promoted model and every recovery rung remains checked.
+- Existing family-wide adaptive/xhigh markers in `options.ts` already cover Fable/Mythos 5.5; the usage-credit classifier is not a per-version allowlist. Focused tests verify the new model remains a non-retryable entitlement rather than an account-wide rate limit. The broader classification design in #3752 remains separate.
+
+### Why
+
+- Prepare launch support without falsely declaring that today's Claude Code supports an unreleased model.
+
+### Why an extension could not handle it
+
+- This builtin owns its executable support evidence and subscription request policy.
+
+### Expected merge conflict zones
+
+- `executable-model-support.ts`: imports and the optional floor entry.
+
+## 2026-10-21 - Separate request context from query billing (omo#10792)
+
+### What changed
+
+- `stream-protocol.ts`: usage updates distinguish a new request, a request delta, and cumulative query billing. A request start clears omitted counters; request updates set `Usage.contextUsage`, and terminal billing updates leave that measurement intact. Outputs start with an explicitly unknown context measurement.
+- `stream-events.ts`: routes `message_start` and `message_delta` through their respective request scopes.
+- `stream.ts`: SDK assistant snapshots supply request usage only when partial events are absent; their placeholder output counts never overwrite streamed output. Successful and failed terminal results still update all billing counters and costs.
+
+### Why
+
+The SDK may make more than one model request inside one senpi turn. Its terminal `result.usage` sums those requests, so replacing request usage with that sum doubled context and falsely triggered compaction. A result-only stream cannot provide a measured context, so it now falls back to transcript estimation rather than presenting billing as context. First-response identity remains unchanged for downstream transcript deduplication.
+
+The SDK's [cost-tracking contract](https://code.claude.com/docs/en/agent-sdk/cost-tracking) documents that assistant snapshots have accurate input/cache counts but placeholder output counts. Without partial events the snapshot therefore measures prompt context, not a complete output-token count; cumulative terminal output must not be substituted for it.
+
+### Why an extension could not handle it
+
+This is the builtin provider's own SDK boundary. The shared optional usage field is required because billing and context readers must retain different values through the same persisted message.
+
+### Expected merge conflict zones
+
+`stream-protocol.ts` usage mapping, `stream-events.ts` request boundaries, and `stream.ts` assistant/result branches. These are fork-only paths.
+
+## 2026-10-20 - Native-1M models are requested by their plain id; only legacy ids use the [1m] opt-in (senpi#3801)
+
+### What changed
+
+- `context-window.ts` (new): `LEGACY_LONG_CONTEXT_MODEL_IDS` lists the ids whose 1M window is reachable only through Claude Code's `[1m]` opt-in: the rows of the bundled Claude Code catalog with `supports_1m_beta` and without `native_1m` (`claude-3-7-sonnet`, `claude-opus-4-6`, `claude-sonnet-4-0`, `claude-sonnet-4-5`, `claude-sonnet-4-6`), pinned against the installed binary by `test/suite/regressions/3801-subscription-legacy-long-context-catalog.test.ts`. `sdkModelId` (moved here from `options.ts`, with `CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW`) adds `[1m]` only for those ids while the opt-in is available; `plannedContextWindow` caps only those ids at 200k after a refusal; `asksLegacyLongContext` tells whether a built request asked for the opt-in.
+- `options.ts`: while senpi owns compaction, the SDK child gets `CLAUDE_CODE_MAX_CONTEXT_TOKENS=<planned window>` and `DISABLE_COMPACT=1` next to `CLAUDE_CODE_TOTAL_TOKENS_REMINDER=off`. With `DISABLE_COMPACT` set, Claude Code takes that variable over every model rule of its own, so it plans the window senpi plans; its native compaction was already off through `autoCompactEnabled`. `compactionOwner: "sdk"` gets none of the three.
+- `index.ts`: `anthropicSubscriptionModels` plans every model with `plannedContextWindow`, so a native model keeps its catalog window after a refusal.
+- `long-context-retry.ts` (new, moved out of `auth-lane.ts`): `sdkFailure`, `visibleSdkMessage` and `retryAtStandardWindowOnce`, which now takes whether the attempt asked for the opt-in. `classifyForRequest` reads a long-context refusal on any other request as an ordinary non-retryable failure.
+- `auth-lane.ts`: the ambient retry and the failover classifier use the request shape of the attempt they judge, so only a legacy `[1m]` request records a refusal or retries at 200k.
+- `long-context.ts`: the persisted state carries `version: 2`; a state without it (written before this change, possibly by a native-model request) is ignored and removed on first read.
+- `session-sync.ts`: the config fingerprint also hashes the planned window passed to Claude Code, which it reads once at spawn, so a switch to a model planned at another window restarts the resident process at that window.
+- `session-registry-wiring.ts`: imports `sdkModelId` from `context-window.ts`.
+
+### Why
+
+senpi#3408 asked for 1M with `[1m]` on every model above 200k. On Claude Code that suffix sends the legacy `context-1m-2025-08-07` beta, which a subscription without extra usage refuses ("Extra usage is required for long context") even for models whose 1M window is native on every plan. The refusal then capped every model at 200k for 6 hours.
+
+### Why an extension could not handle it
+
+This is the anthropic-subscription builtin's own request options, model registration, refusal state and retry policy.
+
+### Expected merge conflict zones
+
+- `options.ts`: the imports and the compaction-owner env block;
+- `index.ts`: `anthropicSubscriptionModels` and the imports;
+- `auth-lane.ts`: the imports, the ambient branch and the `runFailover` call (`runAttempt`, `classify`);
+- `long-context.ts`: `load` and the persisted write in `markLongContextRefused`;
+- `session-sync.ts`: the fingerprint toolset hash;
+- `session-registry-wiring.ts`: the imports.
+
+## 2026-10-19 - Single-account guidance follows the pin's source and the block's cause (senpi#3672)
+
+### What changed
+
+- `affinity.ts`: `AffinityOptions.pinSource` (`cli` | `settings` | `stored`); with account fallback off, `UnavailableAccount.pinnedBy` records it when the one account is a pin. `auth-lane.ts` passes `cli` for a request pin and `settings` or `stored` from the managed pool; `account-command.ts` passes the source it already computes.
+- `guidance.ts` (`singleAccountUnavailableGuidance`): the switch line depends on the pin's source. A CLI pin says to start a new session with another `--claude-account`; a settings pin names `anthropicSubscriptionProvider.pinnedAccount` (or `SENPI_CLAUDE_SDK_OAUTH_PINNED_ACCOUNT`); a stored pin, the session's own account, or the order head keeps `/claude-account pin`.
+- `guidance.ts`: an auth-blocked account leads with `/login` and calls its time "Next automatic re-check", as the pool-wide guidance does, instead of "Wait until ..., when this account can serve again". A rate-limited account is unchanged.
+- Documented and tested: an account that is not configured carries no cause words, so the credential-pool classifier returns `fail_request` rather than a rate-limit cooldown.
+
+### Why
+
+Review follow-ups to #3473. `/claude-account pin` only writes the stored pin, which a CLI or a settings pin outranks (`resolveClaudeAccountPin`), so that advice did nothing for those users. Waiting never fixes an auth block. A missing account cannot come back on a cooldown, so failing the request is the right verdict; it is now pinned by a test.
+
+### Why an extension could not handle it
+
+This is the builtin extension's own guidance and account selection.
+
+### Expected merge conflict zones
+
+`guidance.ts` `singleAccountUnavailableGuidance`, `affinity.ts` `selectAccount` and `AffinityOptions`, `auth-lane.ts` `managedPool`; fork-only files.
+
+## 2026-10-19 - A reply records its Anthropic message id as responseId (oh-my-openagent#10547)
+
+### What changed
+
+- `stream-events.ts`: `applyStreamEvent` copies `message_start`'s `message.id` to the assistant message's `responseId` when the id is present.
+- `stream.ts`: an SDK `assistant` message sets `responseId` from `message.message.id` when the stream has not set it, so a result-only turn (no stream events) carries it too.
+- Turn identity rule: a senpi assistant message is one Anthropic response (the SDK turn ends at the first `tool_use` through the PreToolUse deny hook; tool-less requests run `maxTurns: 1`). Its `message.id` identifies the turn in both stores, because Claude Code writes the same id as `message.id` on every transcript line of the response. The first id wins on both lanes (`??=` in `applyStreamEvent` and in the `assistant` branch), so they can never record different ids.
+
+### Why
+
+The Claude Agent SDK persists every turn to `~/.claude/projects`, and senpi's resume path needs that transcript, so the copy stays. The OmO desktop Usage page reads both stores and counted each OmO turn twice, once as OmO and once as Claude Code. The Anthropic message id is the only value both records share; with it on the OmO side, a reader drops the Claude Code copy exactly. `entrypoint: "sdk-ts"` cannot be used instead, because other Agent SDK hosts (the desktop's own Claude Code driver) write it too.
+
+### Why an extension could not handle it
+
+This is the builtin extension's own stream mapping.
+
+### Expected merge conflict zones
+
+`stream-events.ts` `applyStreamEvent`, the `message_start` branch; `stream.ts`, the SDK message loop's `assistant` branch. Both fork-only files.
+
+## 2026-10-18 - A compiled build finds Claude Code shipped beside its executable (senpi#3639)
+
+### What changed
+
+- `executable.ts`: `ExecutableDeps.executableDir` (default `dirname(process.execPath)`). When the build is compiled, after the embedded and resolver probes, each platform candidate is also checked under `node_modules` in that directory, and an accepted one is the `bundled` source, so a strictly newer `claude` on PATH still wins (#2033). A build that is not compiled never looks there.
+
+### Why
+
+A compiled build bundles `@anthropic-ai/claude-agent-sdk`, so `import.meta.resolve` of the SDK throws inside the binary and the resolver never reaches a platform package on disk. A distribution that ships Claude Code beside a compiled engine (OmO desktop, sisyphuslabs/omo-desktop-app#3145) had no way to have it found except `CLAUDE_CODE_EXECUTABLE`, which hides a newer user install.
+
+### Why an extension could not handle it
+
+This is the builtin extension's own executable lookup; the resolver order is the contract.
+
+### Expected merge conflict zones
+
+`executable.ts` `acceptBundled` and the `ExecutableDeps` type; fork-only file.
+
+## 2026-10-16 - A transient failure never rotates or blocks an account (senpi#3466)
+
+### What changed
+
+- `failover.ts`: a transient classification (`overloaded`, retryable `other`) is retried on the same account up to `TRANSIENT_RETRIES_PER_TURN` times, then the classified error is thrown. It no longer falls through to `blockedAccount`/`persistBlock`, so no account is blocked and no other account is attempted. A post-delta transient also throws without a block.
+- `failover.ts` + `usage-limit-block.ts` (`isConfirmedAccountUsageLimit`) + `auth-lane.ts`: only a verdict that the account cannot serve anyone is written to the shared credential record: a confirmed account-level usage limit (Claude Code's anchored prose or `blocking_limit`, under no status other than 429), a billing or organization refusal, or a rejected token. Every other session then leaves the spent account, which is right. A plain rate limit and a one-model limit still rotate this turn, but the block is kept in memory for the session that hit it only (`sessionKey`, passed from `auth-lane.ts`; a request with no session id keeps the shared block as before); another session on the account keeps using it and finds out on its own request. A success clears the session's own block. Elapsed session blocks of every session are pruned on each turn.
+- `account-management.ts`: `unblockProviderAccount` also calls `forgetSessionBlocksFor`, so `/claude-account unblock` lifts session-scoped blocks in every session.
+- `usage-limit-block.ts`: `rapid_refill_breaker` is no longer a confirmed account verdict; it keeps the short, session-scoped block.
+- Accepted trade-off: an account that keeps failing transiently never fails over to another account in the pool. The turn fails after the bounded retries and the session's own retry, then model fallback, take over. A session prefers the account its transcript lives under and model fallback stays on that account, so if one account alone keeps failing transiently, the session stays broken until the outage ends or the user switches accounts with `/claude-account`. 529s and network failures are almost always provider-wide or local rather than per account, so this is accepted for the hotfix; rotating after N failed turns on one account is a follow-up.
+
+### Why
+
+- Each rotation made the next request on the new account write the whole conversation to a cold cache (about $4 at 850K on Opus 5.5), and the persisted block moved every other session off a healthy account at its next turn. Offline, four accounts with two overloading gave one turn of max20 x3, max5 x1, proA. Regression: the rewritten cases in `test/suite/regressions/2891-anthropic-subscription-account-stickiness.test.ts` (three fail on `main`).
+
+### Why an extension could not handle it
+
+- This is the extension; account rotation lives in its failover module.
+
+### Expected merge conflict zones
+
+- LOW: the transient branch inside `runFailover`.
+
+## 2026-10-16 - An account usage limit blocks the account until its reset (senpi#3462)
+
+### What changed
+
+- `usage-limit-block.ts` (new) + `failover.ts`: `blockedAccount` blocks a spent account until its limit resets, read from an explicit Retry-After, then the reset the message names, then the latest reset among the account's fully used windows in `subscriptionLimits` (from the SDK's `rate_limit_event`). A long block is taken only for Claude Code's own usage-limit error: the message starts with "You've hit/reached your [session|5-hour|daily|weekly|monthly|usage] limit" or "Claude AI usage limit reached", or carries `blocking_limit`/`rapid_refill_breaker`, and names no status other than 429. It never lasts past the limit's own window (5-hour/session 5 h, daily 24 h, weekly 7 d, monthly 31 d, unnamed 5 h; then the 48 h ceiling). Everything else keeps the `60 s x 2^attempt` block.
+- `failover.ts`: an account that serves a turn has any stored usage or rate-limit block cleared (an auth block keeps its re-probe). The clear is best-effort: a store failure is logged and never fails or replays the finished turn. A block records when it was stored (`blockedAt` on the slot and in `slotState`), and a success clears only a block stored before its attempt started, so a long turn never lifts a newer block another session wrote meanwhile.
+- A `blocking_limit` / `rapid_refill_breaker` reason anywhere in the text takes the long block whatever the prose says: it is Claude Code's structured verdict on a spent subscription, appended by `sdkResultFailure`.
+- `account-management.ts` / `account-command.ts`: `/claude-account unblock <id>` lifts a usage or rate-limit block by hand; auth blocks still need a login or the re-probe.
+
+### Why
+
+- Claude Code's usage-limit prose carries no Retry-After, so every spent account was blocked for 60 s. A pinned account outranks the account the session moved to (`affinity.ts`), so after each 60 s block the session retried the spent account, failed, and fork-resumed its healthy account again. omo#10304 measured that fork at 0.8-0.9M cache-write tokens. Regression: `test/suite/regressions/3462-anthropic-subscription-usage-limit-reset-block.test.ts` (10 of 20 turns retried the spent account on `main`, 0 now).
+
+### Why an extension could not handle it
+
+- This is the extension; the block duration lives in its failover module.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `blockedAccount` and the success return in `runFailover` (`failover.ts`); the `/claude-account` action list.
+
+## 2026-10-15 - Transport image elision is hash-neutral in the sent stream (senpi#2768)
+
+### What changed
+
+- `core/image-elision-placeholder.ts` (new; `IMAGE_ELISION_PLACEHOLDER` moved here and re-exported from `core/messages.ts`): `elideOldImages` now replaces a run of elided images with one placeholder that names each image by a 12-hex digest of its bytes (`[Image elided: ...] (image ids: a, b)`), replacing `dedupeConsecutivePlaceholder` for elision. `BLOCKED_IMAGE_PLACEHOLDER` is unchanged.
+- `sent-image-slots.ts` (new) + `session-sync.ts`: `sentMessageHashes` digests every image as `{type:"image", id}` and every elision placeholder as the ids it names. An elided image therefore hashes exactly like the image it replaced. A different image, a missing image, or a changed text or tool output still diverges.
+
+### Why
+
+- The transport image budget (24 MB) swaps older images for a placeholder as new ones arrive. The resident SDK session already holds every image it was sent, so the swap changes nothing it receives. Hashing it read as `sent_stream_diverged`, flattened the session, and re-sent the whole history with a full prompt-cache miss. Computer use makes this happen on most turns, because a screenshot may carry up to 5 MB inline. Measured over 30 screenshot turns with the real functions: 24 of 29 turns diverged at 4 MB per screenshot on `main`, 8 of 29 with the stepped cutoff alone, 0 with this change. Regression: `test/suite/regressions/2768-anthropic-subscription-elision-hash-neutral.test.ts`, including controls that a rewritten caption, an image replaced by different bytes, and a removed image still report `sent_stream_diverged`.
+- Side effect: the branch-derived hashes recorded for persisted restarts (`session-registry-wiring.ts`, from `convertToLlm`, which never elides) now agree with the transport-derived hashes on image-heavy sessions.
+
+### Why an extension could not handle it
+
+- The sent-stream digest lives in this extension. The placeholder ids have to be written where the elision happens (`core/messages.ts`); without them, a digest cannot tell an elided image from a different one.
+
+### Upgrade note
+
+- Hashes of messages that carry images change format. A resident or persisted binding recorded by an older build sees one `sent_stream_diverged` cold seed on its first image-bearing turn after the upgrade, then continues normally.
+
+### Expected merge conflict zones
+
+- LOW: the two `content:` lines in `sentMessageHashes`; the elided-message `map` in `elideOldImages` (`core/messages.ts`).
+
+## 2026-10-14 - Auth blocks are re-probed on a timer instead of waiting for a token write (senpi#3264)
+
+### What changed
+
+- `failover.ts`: an `auth_error` block now carries `blockedUntil = now + AUTH_BLOCK_REPROBE_MS` (15 min, `credential-pool/auth-reprobe.ts`) instead of no expiry.
+- `affinity.ts`: an account is blocked only while `blockedUntil` is in the future; `clearExpiredBlocks` clears elapsed auth blocks too, and an auth block persisted before this change (no `blockedUntil`) clears at once so the next request probes it.
+- `auth-block-recovery.ts` / `auth-lane.ts`: recovery also runs for a recoverable account whose re-probe is due, even while a sibling can serve, so a probe never re-sends the rejected token when the saved grant can still refresh. With no usable account every recoverable account is recovered, as before.
+- `guidance.ts`, `account-command.ts`, `account-management.ts`: auth blocks show their re-check time instead of "until re-login".
+
+### Why
+
+- A lead session stayed down ~12 h after every account was marked `auth_error` with quota left on all of them: the token was refreshed outside this process (config-dir lane), and an auth block cleared only on a token write. Regressions: `test/suite/regressions/3264-auth-block-reprobe.test.ts`, the new due-refresh case in `2926-anthropic-subscription-auth-block-refresh-recovery.test.ts`.
+
+### Why an extension could not handle it
+
+- This is the extension; the block lifecycle lives in its failover and affinity modules.
+
+### Known trade-off
+
+- This lane has no half-open lease, so every session sees an auth block expire at the same `blockedUntil`; a still-dead token costs about one fast 401 per live session every 15 minutes, each re-blocking. Grant redemption stays once-per-grant because `recoverSlot` re-checks under `store.modify`.
+
+### Expected merge conflict zones
+
+- LOW: `blockedAccount` in `failover.ts`; `isAccountBlocked`/`clearExpiredBlocks` in `affinity.ts`; the candidate filter in `recoverAuthBlockedSlots`.
+
+## 2026-10-14 - Imported accounts remember their source grant (senpi#3259)
+
+- `accounts.ts`: `AccountSlot.importedFrom` (optional) holds the digest of the direct-`anthropic` OAuth grant an account was copied from by the core auth.json migration (`core/anthropic-oauth-migration.ts`). It survives token refresh (slots are rebuilt by spread), so the copy runs once and the source is retired only after the copy is read back. No behaviour in this extension reads it.
+- Expected conflict zones: the `AccountSlot` type only.
+
+## 2026-10-08 - An auth-blocked account recovers once through its saved grant (senpi#2926)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-block-recovery.ts` (new): before account selection, when no account can serve the request, each stored slot blocked with `auth_error` that still holds refresh material redeems that grant once under the auth.json lock. Success stores the new token and clears the block; a grant the token endpoint rejects stays blocked. Either way the slot records `authRecoveryGrant`, a digest of the grant it must not redeem again (the rejected one, or the one the recovery produced), so one auth block gets at most one recovery. A throttled or unavailable token endpoint records nothing and is retried on the next request.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: `queryWithAuthLane` runs that recovery before `runFailover` and takes the re-read pool; when the recovery failed only transiently and still no account is usable, the request fails with the classified refresh error (retryable) instead of "blocked until re-login". A healthy sibling serves the request without any refresh of the blocked slot.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/refresh-failure.ts` (new): the token-endpoint failure classification (`refreshFailure`, `isGrantRejected`) moved out of `auth-lane.ts` unchanged, shared by the lane refresh and the recovery.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/accounts.ts`: `AccountSlot.authRecoveryGrant`, `authGrantDigest`; `upsertAccount` (re-login) clears the recovery marker with the block stamps.
+
+### Why
+
+- An `auth_error` block was kept until re-login (`affinity.ts` `isAccountBlocked` / `clearExpiredBlocks`), and `selectAccount` excluded the slot before `prepareSlot` could refresh it. A slot whose access token failed while its saved refresh token was still accepted therefore dead-ended every request with "All Claude accounts ... are currently blocked (authentication error)" although redeeming its own grant recovered it (senpi#2926).
+
+### Why an extension could not handle it
+
+- Account selection, block state and the refresh lane are owned by this builtin; there is no hook between the stored pool and account selection.
+
+### Expected merge conflict zones
+
+- LOW: `auth-lane.ts` `queryWithAuthLane` (before `runFailover`), `accounts.ts` `AccountSlot` and `upsertAccount`.
+
+## 2026-10-09 - A rebuilt Anthropic Subscription prompt is a cacheable prefix of the next one (senpi#2982, senpi#2891)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-bridge.ts`: `buildPromptBlocks` takes `{ cacheBreakpoint: "5m" | "1h" }`; when set, the last replayed-history TEXT block carries `cache_control: { type: "ephemeral", ttl }`, before `CONVERSATION_HISTORY_CLOSER` (now exported). Claude Code drops a breakpoint on an image, so a history ending in a screenshot still gets one. The closer, recovered tool results, the instruction and the current message stay after it. `buildDeferredPromptStream` builds the prompt each time it is iterated, so a failover retry gets a full prompt for its own lane.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-cache-ttl.ts` (new): `pinOneShotPromptCacheTtl` sets `CLAUDE_CODE_PROMPT_CACHE_TTL` on a one-shot query and returns it for the breakpoint: `FORCE_PROMPT_CACHING_5M` wins and pins `5m` (Claude Code reads it first), then an explicit `CLAUDE_CODE_PROMPT_CACHE_TTL`; the managed lanes (`oauth-slots`, `config-dir`) otherwise pin `1h` (Claude Code's subscription default), and the ambient lane pins nothing, so it gets no breakpoint. Known limits: the ambient lane (a `claude` CLI login with no managed accounts) still re-sends without a cache read; a turn with 10 or more parallel tool calls can push the next breakpoint past the API's ~20-block lookback; and once a session has more than 8 distinct history images, a new image replaces an older one with a note, which changes earlier history for that turn.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-directive-dedupe.ts`: `dedupeUltraworkBlocks` collapses a history directive only when it is byte-identical to the directive just before it, so a changed directive is kept in full and the newest wording is always present; it never collapses after the closer (the current message keeps its directive), and it preserves other block fields (`cache_control`). It used to keep only the LAST copy.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream.ts`: the one-shot path (resume off, or no session) pins the cache lifetime in `buildOptions` for the attempt's lane and builds its prompt with that breakpoint through `buildDeferredPromptStream`; the `disabled`/`resume_mode_off` observation carries `settingSource`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/settings.ts`: `resumeModeSource(settings)` reports which layer set `resumeMode` (`env`, `project`, `global`).
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-observability.ts`: `ContinuityObservation.settingSource`, also written to the session log.
+
+### Why
+
+- With resume off every turn is a fresh query whose prompt replays the whole conversation, and Claude Code's own breakpoints sit after the per-turn tail, so no earlier request ever wrote a cache entry that the next one starts with: a community session wrote ~330K cache tokens on each of 136 turns. The history itself only grows by appending, so a breakpoint at its end makes request k a cache-readable prefix of request k+1. Keeping the last directive copy broke that prefix whenever a new ultrawork prompt arrived, and rebuilding text blocks dropped the breakpoint. Claude Code forwards a `cache_control` set on our user-message block. On subscription auth it marks its own breakpoints 1 hour, and the API rejects a longer lifetime after a shorter one, so ours must match: Claude Code 2.1.292 captured against a local endpoint with senpi's shipped options (string system prompt, a custom tool) sends exactly four breakpoints (two system, ours, its trailing one), all with the pinned lifetime. Four is the API maximum, which the capture test pins. Resume off is only ever set by the user, so the existing once-per-session notice now names where.
+
+### Why an extension could not handle it
+
+- The prompt is assembled inside this builtin lane.
+
+### Expected merge conflict zones
+
+- LOW: `buildPromptBlocks`, `dedupeUltraworkBlocks`, `buildOptions` and the one-shot `queryWithAuthLane` call and the `disabled` observation in `stream.ts`, `loadAnthropicSubscriptionProviderSettings`.
+
+## 2026-10-09 - A session keeps its account through transient errors (senpi#2891)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/failover.ts`: `runFailover` retries a transient failure (`overloaded`, or a retryable `other`: network errors, `server_error`) on the SAME account with a budget of `TRANSIENT_RETRIES_PER_TURN` (2) per turn, not per account, and a doubling delay from `TRANSIENT_RETRY_DELAY_MS` (1 s, abortable), before blocking it and rotating. Usage limits, rate limits, auth and billing failures still rotate at once. New options: `sleep` (injectable wait) and `signal`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts`: `selectAccount` takes `preferredAccount`, the account the session's SDK transcript lives under; it is chosen after a valid pin and before HRW order while it can serve the model.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: `AuthenticatedQueryInput.preferredAccount` is passed to selection, and the request signal to `runFailover`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-stream.ts`: the resident path prefers the live session's or restored binding's account.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-continuity.ts`: on the config-dir lane, a live session whose account differs from the serving account flattens (`cross_root_unsupported`) instead of attempting a reattach that fails with "No conversation found".
+
+### Why
+
+- On the config-dir lane every change of serving account re-sends the whole conversation, because each account has its own `CLAUDE_CONFIG_DIR` transcript root. One transient error rotated the session away (blocking the account for 60 s) and HRW order moved it back on the next turn: two full re-sends per blip. A reporter measured 137-196 such re-seeds per day after one pinned account was hard-limited. A replayed day of 200 turns with 10 overloads and one limit moved accounts 22 times before this change and once after it.
+
+### Why an extension could not handle it
+
+- Account selection, failover and continuity decisions are internal to this builtin lane.
+
+### Expected merge conflict zones
+
+- LOW: `runFailover`'s catch block, `selectUnblocked`, `queryWithAuthLane`'s `selectFn`, `residentAuthLaneMessages`, and the head of `decideFromState`.
+
+## 2026-10-09 - The session stream applies backpressure instead of overflowing (senpi#2822)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/bounded-queue.ts`: `push` no longer throws at capacity; `writable()` resolves once fewer than `capacity` values wait (or the queue ended), and `next`/`close`/`fail` release waiting producers.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-registry-pump.ts`: the pump awaits the active turn's `writable()` before it reads the next SDK message; `SessionTurnRequest` carries it.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-turn-types.ts`: `ActiveTurn.writable`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-turn-attempt.ts`: passes the queue's `writable` and closes the queue when the consumer stops reading, so the pump is never left waiting.
+
+### Why
+
+- A long streamed tool call (a `team_create` spec, a large `write`) produced more than 256 SDK events before the consumer pulled; `push` threw inside the SDK message callback, the query failed after visible output, and failover marked it `no-turn-retry` (a failure after a visible delta is never retried, to avoid duplicating output), so the tool call was lost (senpi#2822). With backpressure the buffer holds at most `capacity` plus one pump step (the pre-replay flush, itself capped at 64), and nothing throws.
+
+### Why an extension could not handle it
+
+- This is the builtin anthropic-subscription extension's own pump and queue.
+
+### Expected merge conflict zones
+
+- LOW: `runPump` loop in `session-registry-pump.ts`; the attempt generator in `session-turn-attempt.ts`.
+
+## 2026-10-07 - A restored binding with no recorded assistant turn is never resumed unchecked (senpi#2858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-reattach.ts`: `verifyRestoredTranscript` returns false for a binding with `lastAssistantUuid: null` instead of true without looking at the transcript. `admitRestoredBinding` then forgets the binding and the session is rebuilt (flatten) instead of plain-reattaching.
+
+### Why
+
+- `lastAssistantUuid` is null when Claude Code rejected the newest assistant's boundary (senpi#1958). The skip let such a binding, restored after a restart or crash, plain-reattach to an SDK session the transcript never proved. The store keeps only the newest boundary (`bindingFromStored` maps none when it is null), so the transcript has nothing to verify such a binding against. Found in the review of #2749 (senpi#2858).
+
+### Why an extension could not handle it
+
+- Restored-binding admission and the SDK transcript lookup are private to this builtin provider.
+
+### Expected merge conflict zones
+
+- LOW: the `lastAssistantUuid === null` line of `verifyRestoredTranscript`.
+
 ## 2026-10-04 - `compactionOwner` provider setting (senpi default, sdk opt-out)
 
 ### What changed
@@ -44,6 +445,26 @@
 
 - LOW: `blockedAccount`/`persistBlock`/`usable` in `failover.ts`, `selectUnblocked`/`clearExpiredBlocks`/`AllAccountsBlockedError` in `affinity.ts`, the `selectAccount`/`runFailover` call in `queryWithAuthLane`, `slotStatus` in `account-command.ts`.
 - All production paths are fork-only.
+
+## 2026-10-13 - Cold seeds stop re-sending answered tool images, and a mid-turn replay says there is no new user message (senpi#2768)
+
+### What changed
+
+- `cold-seed-images.ts`: a tool image that a later assistant message already answered is no longer re-sent in a cold seed; it becomes `coldSeedImageText.answered` (`[image returned earlier by the <tool> tool, id=<id>: already seen earlier in this conversation; run the tool again if you need it]`) in its own turn. Pending tool images are labeled `[image returned by the <tool> tool to your own call (tool output, not a user attachment)]`; the user's own uploads from finished turns are labeled `coldSeedImageText.userHistory`, and an upload in the turn still in progress stays unlabeled. The cap (8) ranks only the images still replayed: user uploads first, then the newest.
+- `prompt-bridge.ts`: a replay with no new user message whose history ends with a tool result (a model switch or fallback in the middle of a turn) closes with `CONTINUE_TURN_INSTRUCTION` instead of "respond to the user message below", and passes `inProgressTurn` to `replayHistoryImages` so that turn's own images count as current work.
+
+### Why
+
+- A cold seed packs the whole history into one user message. With up to 8 earlier tool screenshots in it, the model answered plain questions as if the user had just sent those images ("checking the 8 images you sent"); in a mid-turn replay it read its own just-generated images as a new upload ("the 6 images you newly sent").
+
+### Why an extension could not handle it
+
+- This is the anthropic-subscription lane's own replay builder; nothing outside the lane assembles the cold-seed prompt.
+
+### Expected merge conflict zones
+
+- `cold-seed-images.ts`: `coldSeedImageText`, `collectOccurrences`, `replayHistoryImages`.
+- `prompt-bridge.ts`: the closing instruction in `buildPromptBlocks`.
 
 ## 2026-10-01 - Cold seed replays tool-read images as tool output, deduplicated and capped (senpi#2490)
 
@@ -1744,3 +2165,65 @@ The prompt adapter is the fork's OAuth interaction shim for the subscription pro
 ### Expected merge conflict zones
 
 Upstream edits to the Anthropic subscription login adapter at the next sync.
+
+## 2026-10-15 - The window compaction plans against is the window the request gets (senpi#3408)
+
+### What changed
+- `options.ts`: `sdkModelId(model)` gives Claude Code `<id>[1m]` while the model's window is over 200k and the account has not refused 1M. That suffix is Claude Code's own subscription path to the 1M window: the installed CLI sends `context-1m-2025-08-07` on the wire for it, while `options.betas` is ignored for OAuth ("Custom betas are only available for API key users"). `queryOptions.model` uses it.
+- `session-entry-annotations.ts`, `session-registry.ts`, `session-registry-wiring.ts`: a resident model switch passes the same SDK model id to `setModel`, while the entry keeps senpi's model id for continuity.
+- `session-sync.ts`: the config fingerprint hashes only whether a 1M refusal is active, so a refusal or its expiry restarts the resident process at the matching window, while a live model switch stays in place (it reaches the process through `setModel`).
+- `long-context.ts` (new): records a refused 1M window for 6 hours, with an atomic persisted write under the agent directory. It tells listeners when the state flips, isolating a failing (stale) listener. Expiry is signalled by an unref'd timer, never by reading the state.
+- `errors.ts`: "Extra usage / Usage credits are required for long context" classifies as `long_context_unavailable` (retryable), ahead of the rate-limit codes.
+- `failover.ts`: that refusal retries once on the same account through `onLongContextRefused`, without blocking or rotating it.
+- `auth-lane.ts`: the ambient lane passes SDK messages through unchanged. On a pre-visible refusal it closes the first query, records the refusal and retries once.
+- `index.ts`: each registration is the whole provider config (`providerConfig(longContext)`), with windows capped at 200k while refused. The lane re-registers on every flip and stops following on `session_shutdown`.
+
+### Why
+1M models on this lane advertised 1M, so compaction planned for 1M, but Claude Code ran them in its 200k default. Sessions failed with "Prompt is too long" before compaction. The refusal for an account without 1M uses the `rate_limit` code, so it would also have blocked the account.
+
+### Why an extension could not handle it
+This is the anthropic-subscription builtin's own model ids, error classification, failover and registration.
+
+### Expected merge conflict zones
+- `options.ts`: the query-options model line and the helper above the thinking markers;
+- `errors.ts`: the top of `classifyErrorKind`;
+- `failover.ts`: the catch block after the retryable check;
+- `auth-lane.ts`: the ambient branch;
+- `index.ts`: the registration;
+- `session-sync.ts`: the fingerprint toolset hash;
+- `session-entry-annotations.ts` and `session-registry.ts`: `switchEntryModel` / `switchSessionModel`.
+
+## 2026-10-16 - The host tool handoff never reads as an error (senpi#3417)
+
+### What changed
+- `tools.ts`: `TOOL_EXECUTION_DENIED_MESSAGE` now opens "Not an error: this is the normal host handoff, so ignore the 'hook error' label". It tells the model not to mention the message to the user. `HOST_TOOL_POLICY_FINGERPRINT` moves to `host-tool-denial-v4`, so resident sessions reattach with the new reason.
+
+### Why
+Claude Code turns every PreToolUse deny into the tool_result `PreToolUse:<Tool> hook error: <reason>` with `is_error: true`. Wire captures with the installed CLI confirmed this for the hookSpecificOutput deny, the legacy `decision: "block"`, and with `suppressOutput` or `systemMessage`. The label can't be changed, and a hook that doesn't deny (or a `canUseTool` deny) lets Claude Code execute the tool itself. senpi never shows that SDK tool_result, but the model read it as a failure on every host-run tool and told the user. Only the reason text can carry the correction.
+
+### Why an extension could not handle it
+This is the builtin's own denial reason, which the deny hook hands to Claude Code.
+
+### Expected merge conflict zones
+- `tools.ts`: the denial constant and the fingerprint version.
+
+## 2026-10-16 - Opt out of managed account fallback (senpi#3465)
+
+### What changed
+
+- `settings.ts` parses `anthropicSubscriptionProvider.accountFallback` and `SENPI_CLAUDE_SDK_OAUTH_ACCOUNT_FALLBACK`, defaulting to the existing enabled behavior.
+- `affinity.ts` limits selection to the explicit pin, resident account, or the first account of the user's order (senpi#3591) over the deterministic affinity ranking when disabled, including subsequent requests after that account is blocked.
+- `auth-lane.ts` passes the policy to account selection and `failover.ts`, which limits attempts to one account while preserving same-account retries and refresh recovery. `account-command.ts` uses the same selection policy for the displayed affinity pick.
+- `affinity.ts` attaches `unavailableAccount` (`name`, `configured`) to `AllAccountsBlockedError` when fallback is disabled; the error message keeps its machine-read wording. `guidance.ts` adds `singleAccountUnavailableGuidance`, which `stream-guidance.ts` shows for that case: it names the account, says fallback is off, and lists the remedies that work (wait for the reset, `/claude-account pin`, `accountFallback: true`), or, for a pin or resident account that is no longer configured, says so and points at re-pinning or a new session. The cause words stay, so the credential-pool classifier reads the same verdict.
+
+### Why
+
+- Disabling model fallback does not prevent spending another Claude account's allowance. Users need an opt-out without deleting stored credentials.
+
+### Why an extension could not handle it
+
+- This builtin owns the managed account pool and its internal retry loop; an external extension cannot prevent an account switch inside that loop.
+
+### Expected merge conflict zones
+
+- LOW: provider settings parsing, the candidate list in `selectAccount`, and the attempt bound in `runFailover`, plus `AllAccountsBlockedError` construction and the `AllAccountsBlockedError` branch in `withAuthGuidance`.

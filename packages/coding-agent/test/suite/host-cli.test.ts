@@ -25,12 +25,16 @@ const STATUS_FIELDS = [
 	"generation",
 	"generations",
 	"handover",
+	"host_footprint_mb",
 	"host_rss_mb",
 	"instanceId",
 	"launchProfile",
+	"lifecycle",
 	"memory_pressure",
 	"open_fds",
 	"pid",
+	"pointer",
+	"processStartTime",
 	"reachable",
 	"rss_mb",
 	"runtimeBuildId",
@@ -133,12 +137,15 @@ describe.skipIf(process.platform === "win32")("senpi host status", () => {
 		expect(Object.keys(status).sort()).toEqual(STATUS_FIELDS);
 		expect(status).toMatchObject({
 			reachable: true,
+			lifecycle: "ready",
 			socket: qa.socket,
 			pid: ensured.pid,
 			instanceId: ensured.instanceId,
 			generation: 0,
 		});
 		expect(Object.keys(status.sessions as Record<string, unknown>).sort()).toEqual(SESSION_COUNT_FIELDS);
+		// The host's own footprint, the number its sampler acts on; RSS hides compressed and swapped pages (senpi#3110).
+		expect(status.host_footprint_mb).toBeGreaterThan(0);
 		expect(status.sessions).toEqual({
 			total: 0,
 			interactive: 0,
@@ -187,7 +194,13 @@ describe.skipIf(process.platform === "win32")("senpi host status", () => {
 		expect(result.exitCode).toBe(3);
 		const status = onlyJsonLine(result);
 		expect(Object.keys(status).sort()).toEqual(STATUS_FIELDS);
-		expect(status).toMatchObject({ reachable: false, socket: qa.socket, pid: null, generations: [] });
+		expect(status).toMatchObject({
+			reachable: false,
+			lifecycle: null,
+			socket: qa.socket,
+			pid: null,
+			generations: [],
+		});
 	}, 60_000);
 
 	it("lists every endpoint of the agent directory under --all, ignoring --socket", async () => {
