@@ -12,6 +12,7 @@ export function mrtrTui(
 	enforcement = false,
 ) {
 	const host = Object.create(InteractiveMode.prototype);
+	host.mcpMrtrPresentationLifetime = new AbortController();
 	host.options = { mcpPresenterEnforcement: enforcement };
 	const events: unknown[] = [];
 	Object.defineProperty(host, "session", {

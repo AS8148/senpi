@@ -22,6 +22,7 @@ describe("ephemeral TUI wrappers", () => {
 			let state = initialHerdrState();
 			const reports: unknown[] = [];
 			const mode = Object.create(InteractiveMode.prototype);
+			mode.mcpMrtrPresentationLifetime = new AbortController();
 			Object.defineProperty(mode, "session", {
 				value: {
 					emitExtensionEvent: (_name: string, event: (typeof events)[number]) => {

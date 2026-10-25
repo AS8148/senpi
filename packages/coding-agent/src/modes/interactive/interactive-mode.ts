@@ -2740,7 +2740,7 @@ export class InteractiveMode {
 	private mcpMrtrPresentationLifetime = new AbortController();
 	private mcpLocalPresenter?: McpFormBinding;
 	private async bindCurrentSessionExtensions(): Promise<void> {
-		this.mcpMrtrPresentationLifetime?.abort();
+		this.mcpMrtrPresentationLifetime.abort();
 		this.mcpMrtrPresentationLifetime = new AbortController();
 		this.mcpLocalPresenter = undefined;
 		await this.sessionControlHost?.disposeActive();
@@ -3713,7 +3713,6 @@ export class InteractiveMode {
 	}
 
 	private createExtensionUIContext(): ExtensionUIContext {
-		this.mcpMrtrPresentationLifetime ??= new AbortController();
 		const context: ExtensionUIContext = {
 			select: (title, options, opts) =>
 				this.withBlockedHostDialog(
@@ -6776,7 +6775,7 @@ export class InteractiveMode {
 	private async shutdown(options?: { fromSignal?: boolean }): Promise<void> {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
-		this.mcpMrtrPresentationLifetime?.abort();
+		this.mcpMrtrPresentationLifetime.abort();
 		// Keep signal handlers registered until terminal cleanup has completed.
 		// `signal-exit` checks the listener list during the same SIGTERM/SIGHUP
 		// dispatch and re-sends the signal if only its own listeners remain.

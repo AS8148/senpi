@@ -87,6 +87,7 @@ export function createFakeInteractiveMode(options: { isStreaming?: boolean } = {
 	};
 	const fields = {
 		editorContainer,
+		mcpMrtrPresentationLifetime: new AbortController(),
 		editor,
 		defaultEditor: editor,
 		ui: {
