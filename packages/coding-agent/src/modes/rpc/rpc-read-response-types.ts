@@ -89,7 +89,14 @@ export type RpcReadResponse =
 			type: "response";
 			command: "get_entries";
 			success: true;
-			data: { entries: SessionEntry[]; leafId: string | null; hasMore?: boolean; nextSince?: string };
+			data: {
+				entries: SessionEntry[];
+				leafId: string | null;
+				hasMore?: boolean;
+				nextSince?: string;
+				/** A `tail` page's oldest entry id while older entries remain (senpi#4267). */
+				next_before?: string;
+			};
 	  }
 	| {
 			id?: string;
