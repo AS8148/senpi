@@ -282,12 +282,23 @@ jobs:
     runs-on: ubuntu-latest
     needs: stage-github-release
     if: ${{ inputs.dry_run != true }}
+    # The dispatched run can sit queued for hosted runners for hours (senpi#4173);
+    # the await below keeps its own ceiling (AWAIT_MAX_SECONDS) under this limit.
+    timeout-minutes: 360
     permissions:
       actions: write
+      contents: read
     env:
       GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
+      - name: Checkout release scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+          sparse-checkout-cone-mode: true
+
       - name: Dispatch publish-npm.yml
         id: dispatch
         env:
@@ -306,6 +317,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NOT_BEFORE: ${{ steps.dispatch.outputs.not_before }}
+          AWAIT_MAX_SECONDS: "19800"
+          AWAIT_INTERVAL: "30"
         run: |
           set -euo pipefail
 
@@ -327,10 +340,7 @@ jobs:
           fi
 
           echo "Watching publish-npm.yml run ${run_id}: https://github.com/${GH_REPO}/actions/runs/${run_id}"
-          if ! timeout 3600 gh run watch "${run_id}" --exit-status --interval 20; then
-            echo "::error::publish-npm.yml run ${run_id} failed or exceeded the 60 minute wait budget."
-            exit 1
-          fi
+          RUN_ID="${run_id}" bash scripts/await-dispatched-run.sh
 
   publish-github-release:
     runs-on: ubuntu-latest
@@ -375,13 +385,15 @@ jobs:
       GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
+      - name: Checkout release scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+          sparse-checkout-cone-mode: true
+
+      # Keeps (and fails loudly on) a draft whose version npm already has (senpi#4173).
       - name: Delete draft GitHub Release after failure
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          existing_release="$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft 2>/dev/null || true)"
-          if [[ "${existing_release}" == "true" ]]; then
-            gh release delete "${RELEASE_TAG}" --yes
-          fi
+        run: bash scripts/release-draft-cleanup.sh
