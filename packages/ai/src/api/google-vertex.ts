@@ -10,6 +10,7 @@ import { calculateCost, clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
 	AssistantMessage,
+	AssistantMessageEvent,
 	Model,
 	ModelThinkingLevel,
 	ProviderEnv,
@@ -115,10 +116,13 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 
 			stream.push({ type: "start", partial: output });
 			let currentBlock: TextContent | ThinkingContent | null = null;
+			let currentIndex = 0;
 			let groundingMetadataEmitted = false;
 			let urlContextMetadataEmitted = false;
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
+			// blockIndex() drifts past the open block once a native part is appended; capture keeps the block's own index.
+			const pushOpen = (event: AssistantMessageEvent) => stream.push(event, { contentIndex: currentIndex });
 			for await (const chunk of googleStream) {
 				await options?.onProviderStreamEvent?.(chunk, model);
 				// Vertex uses the same @google/genai GenerateContentResponse type as Gemini.
@@ -138,14 +142,14 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 							) {
 								if (currentBlock) {
 									if (currentBlock.type === "text") {
-										stream.push({
+										pushOpen({
 											type: "text_end",
 											contentIndex: blocks.length - 1,
 											content: currentBlock.text,
 											partial: output,
 										});
 									} else {
-										stream.push({
+										pushOpen({
 											type: "thinking_end",
 											contentIndex: blockIndex(),
 											content: currentBlock.thinking,
@@ -156,21 +160,23 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 								if (isThinking) {
 									currentBlock = { type: "thinking", thinking: "", thinkingSignature: undefined };
 									output.content.push(currentBlock);
+									currentIndex = blockIndex();
 									stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
 								} else {
 									currentBlock = { type: "text", text: "" };
 									output.content.push(currentBlock);
+									currentIndex = blockIndex();
 									stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
 								}
 							}
 							if (currentBlock.type === "thinking") {
 								currentBlock.thinking += part.text;
-								pushAssistantSignature(stream, blockIndex(), currentBlock, part.thoughtSignature);
+								pushAssistantSignature(stream, currentIndex, currentBlock, part.thoughtSignature);
 								currentBlock.thinkingSignature = retainThoughtSignature(
 									currentBlock.thinkingSignature,
 									part.thoughtSignature,
 								);
-								stream.push({
+								pushOpen({
 									type: "thinking_delta",
 									contentIndex: blockIndex(),
 									delta: part.text,
@@ -178,12 +184,12 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 								});
 							} else {
 								currentBlock.text += part.text;
-								pushAssistantSignature(stream, blockIndex(), currentBlock, part.thoughtSignature);
+								pushAssistantSignature(stream, currentIndex, currentBlock, part.thoughtSignature);
 								currentBlock.textSignature = retainThoughtSignature(
 									currentBlock.textSignature,
 									part.thoughtSignature,
 								);
-								stream.push({
+								pushOpen({
 									type: "text_delta",
 									contentIndex: blockIndex(),
 									delta: part.text,
@@ -196,14 +202,14 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 							handledAsKnownPart = true;
 							if (currentBlock) {
 								if (currentBlock.type === "text") {
-									stream.push({
+									pushOpen({
 										type: "text_end",
 										contentIndex: blockIndex(),
 										content: currentBlock.text,
 										partial: output,
 									});
 								} else {
-									stream.push({
+									pushOpen({
 										type: "thinking_end",
 										contentIndex: blockIndex(),
 										content: currentBlock.thinking,
@@ -303,14 +309,14 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 
 			if (currentBlock) {
 				if (currentBlock.type === "text") {
-					stream.push({
+					pushOpen({
 						type: "text_end",
 						contentIndex: blockIndex(),
 						content: currentBlock.text,
 						partial: output,
 					});
 				} else {
-					stream.push({
+					pushOpen({
 						type: "thinking_end",
 						contentIndex: blockIndex(),
 						content: currentBlock.thinking,
