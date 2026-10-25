@@ -17,7 +17,7 @@ export class McpMrtrError extends Error {
 	readonly code: keyof typeof messages;
 	readonly remoteCode?: number;
 	constructor(code: keyof typeof messages, remoteCode?: number) {
-		super(messages[code]);
+		super(remoteCode === undefined ? messages[code] : `${messages[code]} (remote code ${remoteCode})`);
 		this.code = code;
 		this.remoteCode = remoteCode;
 		this.name = "McpMrtrError";

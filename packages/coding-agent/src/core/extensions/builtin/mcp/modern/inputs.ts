@@ -1,4 +1,4 @@
-import { isRecord, validateMrtrForm } from "./elicitation.ts";
+import { isRecord, validateMrtrForm } from "./form-schema.ts";
 import { McpMrtrError } from "./errors.ts";
 
 const own = (value: object, key: string) => Object.hasOwn(value, key);

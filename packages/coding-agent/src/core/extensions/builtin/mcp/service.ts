@@ -1116,7 +1116,8 @@ export class McpService {
 
 	bindMcpMrtrPresentation(pi: object, ui: ExtensionUIContext): void {
 		const binding = this.#bindings.get(pi);
-		if (binding) binding.presentation = getMcpMrtrPresentation(ui);
+		const presentation = getMcpMrtrPresentation(ui);
+		if (binding && presentation) binding.presentation = presentation;
 	}
 
 	#requestOrigin(binding: McpSessionBinding, entry: McpConnectionEntry): McpRequestOrigin {

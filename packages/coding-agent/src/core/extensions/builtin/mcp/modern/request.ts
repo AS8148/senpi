@@ -6,7 +6,8 @@ import { type McpRequestOrigin, physicalMcpClient, takeMcpRequestOrigin } from "
 import { AuthError } from "../errors.ts";
 import { loadMcpSdkTypes, loadMcpSdkZodCompat } from "../sdk.lazy.ts";
 import { type McpClock, mcpElapsedClock } from "../wrap.ts";
-import { collectMrtrForm, isRecord, type MrtrInputResponse } from "./elicitation.ts";
+import { collectMrtrForm, type MrtrInputResponse } from "./elicitation.ts";
+import { isRecord } from "./form-schema.ts";
 import { McpMrtrError } from "./errors.ts";
 import { queuedForm } from "./consent-queue.ts";
 import { parseInputs } from "./inputs.ts";
@@ -173,8 +174,8 @@ export function installModernRequestAdapter(
 				}
 				if (type !== "input_required" || !capableMethods.has(request.method))
 					throw new McpMrtrError("MCP_MRTR_INVALID_RESULT");
-				const inputs = parseInputs(result);
 				if (round >= MAX_MCP_MRTR_ROUNDS) throw new McpMrtrError("MCP_MRTR_ROUND_LIMIT");
+				const inputs = parseInputs(result);
 				continuation = own(result, "requestState") ? { requestState: result.requestState } : {};
 				if (inputs) {
 					const responses: Record<string, MrtrInputResponse> = Object.create(null);
@@ -184,7 +185,8 @@ export function installModernRequestAdapter(
 						if (input.params.mode === "url") {
 							throw new McpMrtrError("MCP_MRTR_UNSUPPORTED_INPUT");
 						} else if (cancelled) {
-							// No fabricated results for inputs that were never presented.
+							// A human stopped this batch, not necessarily the caller's AbortSignal.
+							// Keep the cancellation code; never fabricate results for unshown inputs.
 							throw new McpMrtrError("MCP_MRTR_CANCELLED");
 						} else if (consentSpent >= 300_000 || presentationLost || !origin?.presentation) {
 							throw new McpMrtrError("MCP_MRTR_PROCESSING_UNAVAILABLE");

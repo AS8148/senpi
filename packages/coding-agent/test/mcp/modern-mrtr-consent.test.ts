@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { collectMrtrForm, validateMrtrForm } from "../../src/core/extensions/builtin/mcp/modern/elicitation.ts";
+import { collectMrtrForm } from "../../src/core/extensions/builtin/mcp/modern/elicitation.ts";
+import { validateMrtrForm } from "../../src/core/extensions/builtin/mcp/modern/form-schema.ts";
 import type { ExtensionUIContext } from "../../src/core/extensions/types.ts";
 
 function runElicitationForm(

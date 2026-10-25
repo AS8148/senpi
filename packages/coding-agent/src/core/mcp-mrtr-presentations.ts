@@ -16,3 +16,13 @@ export function getMcpMrtrPresentation(ui: object): McpMrtrPresentation | undefi
 	const presentation = presentations.get(ui);
 	return presentation?.signal.aborted ? undefined : presentation;
 }
+
+/** Preserve host identity across runner wrapping; private dialogs still use the raw host UI. */
+export function inheritMcpMrtrPresentation(
+	source: ExtensionUIContext,
+	wrapper: ExtensionUIContext,
+): ExtensionUIContext {
+	const presentation = getMcpMrtrPresentation(source);
+	if (presentation) presentations.set(wrapper, presentation);
+	return wrapper;
+}

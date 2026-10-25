@@ -1,4 +1,5 @@
 import type { MrtrInputResponse } from "./elicitation.ts";
+import { McpMrtrError } from "./errors.ts";
 
 interface QueueJob {
 	readonly signal: AbortSignal;
@@ -24,7 +25,7 @@ export function queuedForm(binding: object, signal: AbortSignal, run: QueueJob["
 		}
 		next.signal.removeEventListener("abort", next.abort);
 		if (next.signal.aborted) {
-			next.resolve({ action: "cancel" });
+			next.reject(new McpMrtrError("MCP_MRTR_PROCESSING_UNAVAILABLE"));
 			pump();
 			return;
 		}
@@ -43,7 +44,8 @@ export function queuedForm(binding: object, signal: AbortSignal, run: QueueJob["
 			const index = current.jobs.indexOf(job);
 			if (index >= 0) {
 				current.jobs.splice(index, 1);
-				resolve({ action: "cancel" });
+				signal.removeEventListener("abort", job.abort);
+				reject(new McpMrtrError("MCP_MRTR_PROCESSING_UNAVAILABLE"));
 			}
 		};
 		current.jobs.push(job);
