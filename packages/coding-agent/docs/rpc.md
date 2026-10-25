@@ -5447,6 +5447,22 @@ With enforcement, only the authority's winning whole-form action admits once.
 The host advertises `mcp_form_presenter_v1` only when enforcement is enabled;
 the capability reports protocol support, not authority to present or answer a form.
 
+The public `host ensure` and `host handoff` commands accept the same deployment option,
+separately from `--launch-spec`. Add `--mcp-presenter-fd 4` with a live inherited duplex
+channel to enroll the launch owner of a new host. The runtime-selecting CLI re-exec,
+supervisor and host child preserve that channel. The option alone enables enforcement,
+not a presenter; fd 4 alone does not enable enforcement.
+
+An enforcing predecessor keeps enforcement in its successor, including when an older
+handoff caller omits the option. Conditional `handoff --when idle` carries the non-secret
+`mcp_presenter_enforcement` boolean in `begin_handover`, independently of the launch
+specification and environment. It uses only the existing authenticated owner's channel
+for fresh successor enrollment; the CLI cannot enroll itself into the predecessor.
+Reuse and already-current handover answers report the serving host's actual capabilities.
+Neither a successful CLI exit nor an equal `runtimeBuildId` proves enforcement or
+enrollment. A deployment requesting enforcement against an unenforced existing host must
+coordinate a replacement, not force-restart another owner's busy host.
+
 The native launch owner enrolls an Ed25519 public key through an inherited private
 bootstrap channel. Descriptor 4 is reserved for this channel; descriptor 3 remains
 the separate owner-lifetime channel. Enrollment and management proofs sign the
