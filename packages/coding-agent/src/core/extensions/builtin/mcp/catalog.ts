@@ -1,4 +1,6 @@
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import type { McpListedTool as ListedTool } from "./tool-contracts.ts";
+import { listMcpTools } from "./tool-client.ts";
+import { isModernMcpClient } from "./modern/request.ts";
 import type { McpCachedServerCatalog } from "./catalog-cache.ts";
 import type { McpServerDeclaredConfig, McpSettings } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
@@ -8,13 +10,13 @@ import type { McpEnsureFreshAuth } from "./health.ts";
 import type { McpInvocationResolver } from "./invocation.ts";
 import type { McpRequestOrigin } from "./request-origin.ts";
 
-type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
-
 export interface McpToolCatalogEntry {
 	requestOrigin?: () => McpRequestOrigin | undefined;
 	server: string;
 	tool: string;
 	schema: ListedTool["inputSchema"];
+	outputSchema?: ListedTool["outputSchema"];
+	modern?: boolean;
 	description?: string;
 	annotations?: ListedTool["annotations"];
 	requestTimeoutMs: number;
@@ -39,7 +41,7 @@ export async function collectToolCatalog(
 	options: McpToolCatalogOptions = {},
 ): Promise<McpToolCatalogEntry[]> {
 	const result = await collectAllPages<ListedTool>((cursor) =>
-		connection.client.listTools(cursor === undefined ? {} : { cursor }, { timeout: config.requestTimeoutMs }),
+		listMcpTools(connection.client, cursor === undefined ? {} : { cursor }, { timeout: config.requestTimeoutMs }),
 	);
 	return result.items.map((tool) => ({
 		requestOrigin: options.requestOrigin,
@@ -53,6 +55,8 @@ export async function collectToolCatalog(
 		outputGuard: options.outputGuard,
 		requestTimeoutMs: config.requestTimeoutMs,
 		schema: tool.inputSchema,
+		outputSchema: tool.outputSchema,
+		modern: isModernMcpClient(connection.client),
 		server,
 		tool: tool.name,
 	}));
@@ -65,7 +69,14 @@ export function mcpRegistrationIdentity(
 	catalog: McpCachedServerCatalog | undefined,
 ): string {
 	return JSON.stringify([
-		tools.map((entry) => [entry.tool, entry.description, entry.schema, entry.annotations]),
+		tools.map((entry) => [
+			entry.tool,
+			entry.description,
+			entry.schema,
+			entry.outputSchema,
+			entry.modern,
+			entry.annotations,
+		]),
 		catalog?.resources ?? [],
 		catalog?.prompts ?? [],
 	]);
@@ -92,6 +103,8 @@ export function cachedToolsToCatalogEntries(
 		outputGuard: options.outputGuard,
 		requestTimeoutMs,
 		schema: tool.inputSchema,
+		outputSchema: tool.outputSchema,
+		modern: catalog.modern,
 		server,
 		tool: tool.name,
 	}));

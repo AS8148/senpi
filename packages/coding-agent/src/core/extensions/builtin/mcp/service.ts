@@ -62,7 +62,7 @@ import {
 } from "./startup-race.ts";
 import { safeTimer } from "./wrap.ts";
 
-type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
+type ListedTool = import("./tool-contracts.ts").McpListedTool;
 type ListedResource = Awaited<ReturnType<Client["listResources"]>>["resources"][number];
 type ListedResourceTemplate = Awaited<ReturnType<Client["listResourceTemplates"]>>["resourceTemplates"][number];
 type McpElicitationUi = Pick<ExtensionUIContext, "input" | "select" | "confirm"> &

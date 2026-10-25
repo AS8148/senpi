@@ -2,6 +2,9 @@ import { Compile } from "typebox/compile";
 import type { TLocalizedValidationError } from "typebox/error";
 import { Value } from "typebox/value";
 import type { Tool, ToolCall } from "../types.ts";
+import { getToolArgumentValidator } from "./tool-argument-validator.ts";
+import { coercePrimitiveByType } from "./tool-argument-coercion.ts";
+export { registerToolArgumentValidator } from "./tool-argument-validator.ts";
 
 const validatorCache = new WeakMap<object, ReturnType<typeof Compile>>();
 const TYPEBOX_KIND = Symbol.for("TypeBox.Kind");
@@ -53,80 +56,6 @@ function getSubSchemaValidator(schema: JsonSchemaObject): ReturnType<typeof Comp
 		return getValidator(schema as Tool["parameters"]);
 	} catch {
 		return undefined;
-	}
-}
-
-function coercePrimitiveByType(value: unknown, type: string): unknown {
-	switch (type) {
-		case "number": {
-			if (value === null) {
-				return 0;
-			}
-			if (typeof value === "string" && value.trim() !== "") {
-				const parsed = Number(value);
-				if (Number.isFinite(parsed)) {
-					return parsed;
-				}
-			}
-			if (typeof value === "boolean") {
-				return value ? 1 : 0;
-			}
-			return value;
-		}
-		case "integer": {
-			if (value === null) {
-				return 0;
-			}
-			if (typeof value === "string" && value.trim() !== "") {
-				const parsed = Number(value);
-				if (Number.isInteger(parsed)) {
-					return parsed;
-				}
-			}
-			if (typeof value === "boolean") {
-				return value ? 1 : 0;
-			}
-			return value;
-		}
-		case "boolean": {
-			if (value === null) {
-				return false;
-			}
-			if (typeof value === "string") {
-				if (value === "true") {
-					return true;
-				}
-				if (value === "false") {
-					return false;
-				}
-			}
-			if (typeof value === "number") {
-				if (value === 1) {
-					return true;
-				}
-				if (value === 0) {
-					return false;
-				}
-			}
-			return value;
-		}
-		case "string": {
-			if (value === null) {
-				return "";
-			}
-			if (typeof value === "number" || typeof value === "boolean") {
-				return String(value);
-			}
-			return value;
-		}
-		case "null": {
-			if (value === "" || value === 0 || value === false) {
-				return null;
-			}
-			return value;
-		}
-		default:
-			return value;
 	}
 }
 
@@ -316,6 +245,11 @@ export function validateToolCall(tools: Tool[], toolCall: ToolCall): any {
  */
 export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 	const args = structuredClone(toolCall.arguments);
+	const protocolValidator = getToolArgumentValidator(tool.parameters);
+	if (protocolValidator !== undefined) {
+		if (!protocolValidator(args)) throw new Error(`Validation failed for tool "${toolCall.name}".`);
+		return args;
+	}
 	normalizeOptionalNulls(args, tool.parameters as JsonSchemaObject);
 	Value.Convert(tool.parameters, args);
 
