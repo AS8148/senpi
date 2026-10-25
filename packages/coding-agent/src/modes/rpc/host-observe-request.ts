@@ -30,6 +30,7 @@ export const ORIGIN_HOST_INSTANCE_FIELD = "origin_host_instance";
 
 const OBSERVING_COMMANDS: ReadonlySet<unknown> = new Set([
 	"get_protocol_info",
+	"get_snapshot",
 	"list_sessions",
 	"subscribe_sessions",
 	"unsubscribe_sessions",

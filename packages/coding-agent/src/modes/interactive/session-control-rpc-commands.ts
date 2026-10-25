@@ -13,6 +13,7 @@ import type { AgentSession } from "../../core/agent-session.ts";
 import type { ExternalDeliverAs } from "../../core/extensions/session-control-types.ts";
 import { runGetEffectStatus } from "../rpc/effect-commands.ts";
 import { buildRpcSessionState } from "../rpc/rpc-session-state.ts";
+import { getSnapshot } from "../rpc/get-snapshot.ts";
 import type { RpcCommand } from "../rpc/rpc-types.ts";
 import { answerSubscribeSessions, answerUnsubscribeSessions, refusal } from "../rpc/session-status-commands.ts";
 import { type ControlAttachments, keyOf } from "./session-control-attach.ts";
@@ -22,6 +23,7 @@ type Command<T extends RpcCommand["type"]> = Extract<RpcCommand, { type: T }>;
 
 export const TUI_RPC_COMMANDS = [
 	"open_session",
+	"get_snapshot",
 	"subscribe_sessions",
 	"unsubscribe_sessions",
 	"steer",
@@ -42,6 +44,30 @@ export async function runTuiRpcCommand(
 	command: ControlCommand,
 ): Promise<object | null | undefined> {
 	switch (command.type) {
+		case "get_snapshot": {
+			const { attachments, session } = context;
+			if (command.sessionId !== undefined && command.sessionId !== attachments.handle)
+				return {
+					id: command.id,
+					type: "response",
+					command: command.type,
+					success: false,
+					error: "unknown_session",
+				};
+			const snapshot = getSnapshot(
+				session,
+				{ tail: command.tail, maxBytes: command.maxBytes },
+				{
+					enqueue: (markerId) =>
+						attachments.run(connection, () =>
+							attachments.writer.enqueue(attachments.handle, { type: "snapshot_marker", markerId }),
+						),
+				},
+			);
+			return "error" in snapshot
+				? { id: command.id, type: "response", command: command.type, success: false, error: snapshot.error }
+				: answered(idOf(command), command.type, snapshot.data);
+		}
 		case "open_session":
 			return openSession(context, connection, command);
 		case "subscribe_sessions":

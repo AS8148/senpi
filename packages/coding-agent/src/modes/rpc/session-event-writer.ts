@@ -419,6 +419,21 @@ export class SessionEventWriter {
 				["select", "confirm", "input", "editor"].includes(String(record.method)));
 		const tagged = { ...value, sessionId } as RpcRecord;
 		const line = serializeJsonLine(tagged);
+		// Observation records are per-subscription opt-ins on the subscriber's own actor FIFO: never attachments,
+		// the attach replay, response broadcast, or the stdio lane, which cannot subscribe.
+		if (
+			record.type === "snapshot_marker" ||
+			record.type === "ui_request_pending" ||
+			record.type === "ui_request_settled"
+		) {
+			const targets =
+				record.type === "snapshot_marker"
+					? this.status.mirrorTargets(sessionId, "snapshot_marker").filter((id) => id === targetId)
+					: this.status.dialogTargets(sessionId);
+			for (const target of targets) this.fanout.get(target)?.actor.enqueue(line);
+			if (targets.length > 0) this.requestFlush();
+			return true;
+		}
 		if (this.fanout.isEmpty() && this.exceedsStdioCapacity(line)) {
 			this.closeSession(
 				sessionId,
