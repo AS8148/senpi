@@ -68,7 +68,7 @@ describe("headless MCP elicitation (senpi#4185)", () => {
 		}
 	});
 
-	it("reports ambiguous origin for concurrent enforced legacy calls without displaying a form", async () => {
+	it("returns a body-free processing error for concurrent enforced legacy calls without displaying a form", async () => {
 		const select = vi.fn(async () => "No");
 		const tui = mrtrTui(select, undefined, true);
 		const provider = Object.assign(() => tui.ui, { enforced: () => true });
@@ -102,7 +102,7 @@ describe("headless MCP elicitation (senpi#4185)", () => {
 			await entered.promise;
 			await expect(server.elicitInput(booleanForm.params)).rejects.toMatchObject({
 				code: ErrorCode.InternalError,
-				data: { reason: "ambiguous_legacy_origin" },
+				data: undefined,
 			});
 			expect(select).not.toHaveBeenCalled();
 		} finally {
