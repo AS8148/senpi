@@ -5439,6 +5439,10 @@ gateway clients keep their current behavior until they implement the private
 presenter protocol. Without this option, terminal forms retain their existing queue,
 legacy origin rules, and legacy stderr diagnostics. Enforced terminal forms also
 queue, and a collector failure ends only its own form, not the terminal's grant.
+All UI contexts in one terminal session binding share its presenter authority.
+Without enforcement, each real select/input answer retains its existing human
+admission timing; the form collector does not add a second final admission.
+With enforcement, only the authority's winning whole-form action admits once.
 The host advertises `mcp_form_presenter_v1` only when enforcement is enabled;
 the capability reports protocol support, not authority to present or answer a form.
 
@@ -5459,9 +5463,23 @@ bootstrap stream is never serialized into `begin_handover`.
 `mcp_presenter_context` returns the caller's current connection nonce and attachment
 context. These identifiers confer no authority. Acquisition and revocation use the
 separate authenticated management endpoint, with a fresh challenge for each
-`mcp_presenter_acquire` or `mcp_presenter_revoke` command. An acquisition binds the
+`mcp_presenter_assign`, `mcp_presenter_acquire`, or `mcp_presenter_revoke` command.
+Enrollment alone assigns no sessions. Before acquisition, the trusted native
+supervisor signs `mcp_presenter_assign` with `sessionId`, the current `bindingEpoch`,
+and `purpose: "mcp_form"` for a session it opened, or one the user explicitly adopted
+through the trusted host-owner UI. Ordinary RPC attachment cannot assign a session.
+Assignment belongs only to that enrolled principal and live binding; re-enrollment
+or binding replacement requires a new assignment. It is not persisted.
+An acquisition also requires the connection's `interactive_user` and
+`mcp_form_presenter_v1` capabilities, and binds the
 current host, session, binding epoch, connection nonce, attachment ID and epoch, and
 `purpose: "mcp_form"`. Only one holder is active for a session binding.
+Concurrent forms, including worker-origin forms, wait in the host's abort-aware
+FIFO for that holder. Waiting consumes the original deadline; timeout, cancellation,
+or revocation before display never fabricates a human response.
+Under enforcement, server stderr remains available as redacted diagnostic records
+with allowlisted system error codes. Arbitrary text is omitted because a server can
+echo private messages, schema labels, or answers; ordinary legacy stderr is unchanged.
 
 The granted connection receives `mcp_form_request` privately. Its envelope contains
 `sessionId`, `bindingEpoch`, `attachmentEpoch`, `grantId`, `dialogId`, `dialogToken`,

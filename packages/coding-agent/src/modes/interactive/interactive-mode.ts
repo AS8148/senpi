@@ -127,7 +127,7 @@ import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.t
 import { isManualContinueSubmission } from "../../core/manual-continue.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { registerMcpMrtrPresentation } from "../../core/mcp-mrtr-presentations.ts";
-import { markMcpFormPresented } from "../../core/mcp-form-types.ts";
+import { markMcpFormPresented, type McpFormBinding } from "../../core/mcp-form-types.ts";
 import { registerLocalMcpPresenter } from "./mcp-local-presenter.ts";
 import { createCompactionSummaryMessage, createCustomMessage } from "../../core/messages.ts";
 import type { ModelChangeOrigin } from "../../core/model-change-origin.ts";
@@ -2738,9 +2738,11 @@ export class InteractiveMode {
 	private unsubscribeSecurityNotices?: () => void;
 	private detachMcpGrantPresentation?: () => void;
 	private mcpMrtrPresentationLifetime = new AbortController();
+	private mcpLocalPresenter?: McpFormBinding;
 	private async bindCurrentSessionExtensions(): Promise<void> {
 		this.mcpMrtrPresentationLifetime?.abort();
 		this.mcpMrtrPresentationLifetime = new AbortController();
+		this.mcpLocalPresenter = undefined;
 		await this.sessionControlHost?.disposeActive();
 		this.session.setControlEndpointHost?.(this.sessionControlHost);
 		const uiContext = this.createExtensionUIContext();
@@ -3799,19 +3801,14 @@ export class InteractiveMode {
 		const presenterSession = this.session;
 		const privateForms =
 			this.options?.mcpPresenterEnforcement === true
-				? registerLocalMcpPresenter(
+				? (this.mcpLocalPresenter ??= registerLocalMcpPresenter(
 						context,
 						presenterSession.sessionId,
 						this.mcpMrtrPresentationLifetime.signal,
 						() => presenterSession.admitHumanAnswer(),
-					)
+					))
 				: undefined;
-		return registerMcpMrtrPresentation(
-			context,
-			this.mcpMrtrPresentationLifetime.signal,
-			() => presenterSession.admitHumanAnswer(),
-			privateForms,
-		);
+		return registerMcpMrtrPresentation(context, this.mcpMrtrPresentationLifetime.signal, undefined, privateForms);
 	}
 
 	/**
@@ -3838,7 +3835,7 @@ export class InteractiveMode {
 				title,
 				options,
 				(option) => {
-					if (!opts?.ephemeral) this.session.admitHumanAnswer();
+					if (!opts?.ephemeral || !this.options?.mcpPresenterEnforcement) this.session.admitHumanAnswer();
 					opts?.signal?.removeEventListener("abort", onAbort);
 					this.hideExtensionSelector();
 					resolve(option);
@@ -3922,7 +3919,7 @@ export class InteractiveMode {
 				title,
 				placeholder,
 				(value) => {
-					if (!opts?.ephemeral) this.session.admitHumanAnswer();
+					if (!opts?.ephemeral || !this.options?.mcpPresenterEnforcement) this.session.admitHumanAnswer();
 					opts?.signal?.removeEventListener("abort", onAbort);
 					this.hideExtensionInput();
 					resolve(value);

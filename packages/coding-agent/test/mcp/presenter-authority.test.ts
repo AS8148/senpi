@@ -93,6 +93,26 @@ function fixture() {
 }
 
 describe("host-issued MCP presenter authority", () => {
+	it.each(["operation", "presenter", "binding", "timeout"])(
+		"settles queued forms on %s without displaying them",
+		async (cause) => {
+			const f = fixture();
+			const first = f.pending();
+			const second = f.pending();
+			expect(f.frames).toHaveLength(1);
+			if (cause === "operation") f.operation.abort();
+			else if (cause === "presenter") f.authority.detach(f.a);
+			else if (cause === "binding") f.binding.dispose();
+			else f.expire();
+			const expected = cause === "operation" || cause === "binding" ? "operation_aborted" : "processing_failure";
+			expect(await first).toMatchObject({ kind: expected, humanAdmission: false });
+			expect(await second).toMatchObject({ kind: expected, humanAdmission: false });
+			expect(f.frames).toHaveLength(1);
+			expect(f.admission).not.toHaveBeenCalled();
+			expect(f.timers.size).toBe(0);
+			f.authority.dispose();
+		},
+	);
 	it("rejects a second registration without allocating an unowned grant candidate", () => {
 		const f = fixture();
 		expect(() => f.owner.register(f.binding, f.a, { kind: "desktop" })).toThrow("presenter_not_authorized");

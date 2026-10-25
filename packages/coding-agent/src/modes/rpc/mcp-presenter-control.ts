@@ -4,12 +4,14 @@ import { Duplex, PassThrough, Readable, Writable } from "node:stream";
 import { isRecord } from "../../core/extensions/builtin/mcp/modern/form-schema.ts";
 import { attachJsonlLineReader } from "./jsonl.ts";
 import type { McpPresenterAuthority, McpPresenterRegistration } from "./mcp-presenter-authority.ts";
+import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 
 type Owner = ReturnType<McpPresenterAuthority["enroll"]>;
 interface Principal {
 	readonly id: string;
 	readonly key: KeyObject;
+	readonly sessions: WeakSet<McpFormBinding>;
 }
 
 /** Separate authenticated control endpoint. Ordinary RPC credentials cannot enroll or acquire. */
@@ -121,7 +123,7 @@ export class McpPresenterControl {
 				stream.destroy();
 				return;
 			}
-			this.principals.set(id, { id, key });
+			this.principals.set(id, { id, key, sessions: new WeakSet() });
 			send(stream, {
 				type: "enrolled",
 				principalId: id,
@@ -252,6 +254,19 @@ export class McpPresenterControl {
 				const id = typeof command.id === "string" ? command.id : undefined;
 				try {
 					switch (command.type) {
+						case "mcp_presenter_assign": {
+							const binding =
+								typeof command.sessionId === "string"
+									? this.writer.getMcpFormBinding(command.sessionId)
+									: undefined;
+							if (!binding || binding.epoch !== command.bindingEpoch || command.purpose !== "mcp_form")
+								throw new Error("presenter_not_authorized");
+							// Only a signed native-supervisor decision assigns an opened/adopted session.
+							// Enrollment and ordinary RPC attachment do not imply assignment.
+							principal.sessions.add(binding);
+							send(stream, { type: "mcp_presenter_assigned", id, sessionId: command.sessionId });
+							return;
+						}
 						case "mcp_presenter_acquire": {
 							if (
 								command.hostInstance !== this.authority.instance ||
@@ -263,7 +278,15 @@ export class McpPresenterControl {
 								throw new Error("presenter_not_authorized");
 							const binding = this.writer.getMcpFormBinding(command.sessionId);
 							const connection = this.writer.findMcpPresenterConnection(command.connectionNonce);
-							if (!binding || binding.epoch !== command.bindingEpoch || !connection)
+							if (
+								!binding ||
+								!principal.sessions.has(binding) ||
+								binding.epoch !== command.bindingEpoch ||
+								!connection
+							)
+								throw new Error("presenter_not_authorized");
+							const capabilities = this.writer.getConnectionCapabilities(connection.id);
+							if (!capabilities?.includes("interactive_user") || !capabilities.includes("mcp_form_presenter_v1"))
 								throw new Error("presenter_not_authorized");
 							const context = this.authority.connectionContext(connection, command.sessionId);
 							if (

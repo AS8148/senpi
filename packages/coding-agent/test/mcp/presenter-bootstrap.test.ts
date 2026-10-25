@@ -74,6 +74,7 @@ it("only protected enrollment and a scope-bound signature can acquire; replay ca
 	const writer = new SessionEventWriter(() => {});
 	const authority = writer.enableMcpPresenters();
 	writer.registerConnection("human", { writeRaw: () => {}, waitForBackpressure: async () => {} });
+	writer.setConnectionCapabilities("human", ["interactive_user", "mcp_form_presenter_v1"]);
 	writer.bindMcpForms("session", "durable", {}, () => {});
 	writer.attachConnectionToSession("human", "session");
 	const binding = writer.getMcpFormBinding("session");
@@ -108,6 +109,59 @@ it("only protected enrollment and a scope-bound signature can acquire; replay ca
 		expect(binding.capture()).toBeUndefined();
 		management = connect(control.path);
 		let m = records(management);
+		const acquireCommand = {
+			type: "mcp_presenter_acquire",
+			id: "unassigned",
+			...context,
+			sessionId: "session",
+			kind: "desktop",
+			purpose: "mcp_form",
+		};
+		// Attachment to an unrelated gateway/task session does not assign it to this principal.
+		m.send({
+			type: "challenge",
+			principalId: enrolled.principalId,
+			backendGeneration: "backend",
+			command: acquireCommand,
+		});
+		const unassigned = await m.next();
+		if (typeof unassigned.transcript !== "string") throw new Error("Missing unassigned challenge");
+		m.send({
+			type: "proof",
+			signature: sign(null, Buffer.from(unassigned.transcript), privateKey).toString("hex"),
+		});
+		expect(await m.next()).toMatchObject({ type: "mcp_presenter_error", error: "presenter_not_authorized" });
+		expect(binding.capture()).toBeUndefined();
+		m.send({
+			type: "challenge",
+			principalId: enrolled.principalId,
+			backendGeneration: "backend",
+			command: {
+				type: "mcp_presenter_assign",
+				sessionId: "session",
+				bindingEpoch: binding.epoch,
+				purpose: "mcp_form",
+			},
+		});
+		const assignment = await m.next();
+		if (typeof assignment.transcript !== "string") throw new Error("Missing assignment challenge");
+		m.send({
+			type: "proof",
+			signature: sign(null, Buffer.from(assignment.transcript), privateKey).toString("hex"),
+		});
+		expect(await m.next()).toMatchObject({ type: "mcp_presenter_assigned", sessionId: "session" });
+		writer.setConnectionCapabilities("human", ["interactive_user"]);
+		m.send({
+			type: "challenge",
+			principalId: enrolled.principalId,
+			backendGeneration: "backend",
+			command: acquireCommand,
+		});
+		const unsupported = await m.next();
+		if (typeof unsupported.transcript !== "string") throw new Error("Missing capability challenge");
+		m.send({ type: "proof", signature: sign(null, Buffer.from(unsupported.transcript), privateKey).toString("hex") });
+		expect(await m.next()).toMatchObject({ type: "mcp_presenter_error", error: "presenter_not_authorized" });
+		writer.setConnectionCapabilities("human", ["interactive_user", "mcp_form_presenter_v1"]);
 		m.send({
 			type: "challenge",
 			principalId: enrolled.principalId,

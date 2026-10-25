@@ -136,6 +136,7 @@ export class SessionEventWriter {
 
 	/** Private records bypass event queues, snapshots, mirrors, replay, and overflow preview errors. */
 	handleMcpForm(value: unknown): boolean {
+		if (!this.presenterAuthority) return false;
 		if (
 			typeof value !== "object" ||
 			value === null ||
@@ -323,7 +324,7 @@ export class SessionEventWriter {
 	setConnectionCapabilities(id: string, capabilities: readonly string[]): void {
 		this.fanout.setConnectionCapabilities(id, capabilities);
 		this.securityPresentations.capabilitiesChanged(id);
-		if (!capabilities.includes("mcp_form_presenter_v1")) {
+		if (!capabilities.includes("interactive_user") || !capabilities.includes("mcp_form_presenter_v1")) {
 			const sender = this.presenterConnections.get(id);
 			if (sender) this.presenterAuthority?.withdraw(sender);
 		}

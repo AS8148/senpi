@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { queuedForm } from "../../core/extensions/builtin/mcp/modern/consent-queue.ts";
 import { isRecord, validateMrtrForm } from "../../core/extensions/builtin/mcp/modern/form-schema.ts";
 import type {
 	McpFormBinding,
@@ -316,33 +317,60 @@ export class McpPresenterAuthority {
 		};
 		if (
 			!this.current(grant) ||
-			grant.dialogs.size > 0 ||
 			!validateMrtrForm(input.schema) ||
 			Object.keys(input.schema.properties).length > 64 ||
 			Buffer.byteLength(JSON.stringify({ message: input.message, schema: input.schema })) > 512 * 1024
 		)
 			return Promise.resolve(unavailable);
-		const dialogId = randomUUID();
 		const binding = grant.registration.binding;
-		const dialog = new McpFormDialog(input, {
-			clock: this.clock,
-			envelope: {
-				sessionId: binding.sessionId,
-				bindingEpoch: binding.epoch,
-				attachmentEpoch: grant.scope.attachmentEpoch,
-				grantId: grant.id,
-				dialogId,
-				formRevision: randomUUID(),
-			},
-			current: () => this.current(grant),
-			remove: () => {
-				grant.dialogs.delete(dialogId);
-			},
-			admit: binding.admit,
-			send: grant.registration.connection.send,
-		});
-		grant.dialogs.set(dialogId, dialog);
-		dialog.start();
-		return dialog.result;
+		const deadline = this.clock.now() + input.deadlineMs;
+		const expired = new AbortController();
+		const timer = this.clock.schedule(() => expired.abort(), Math.max(0, input.deadlineMs));
+		const signal = AbortSignal.any([
+			input.operationSignal,
+			input.presentationSignal,
+			grant.lifetime.signal,
+			expired.signal,
+		]);
+		return queuedForm(grant, signal, () => {
+			this.clock.cancel(timer);
+			if (!this.current(grant)) return Promise.resolve(unavailable);
+			const dialogId = randomUUID();
+			const dialog = new McpFormDialog(
+				{
+					...input,
+					presentationSignal: signal,
+					deadlineMs: Math.max(0, deadline - this.clock.now()),
+				},
+				{
+					clock: this.clock,
+					envelope: {
+						sessionId: binding.sessionId,
+						bindingEpoch: binding.epoch,
+						attachmentEpoch: grant.scope.attachmentEpoch,
+						grantId: grant.id,
+						dialogId,
+						formRevision: randomUUID(),
+					},
+					current: () => this.current(grant),
+					remove: () => {
+						grant.dialogs.delete(dialogId);
+					},
+					admit: binding.admit,
+					send: grant.registration.connection.send,
+				},
+			);
+			grant.dialogs.set(dialogId, dialog);
+			dialog.start();
+			return dialog.result;
+		})
+			.catch((): McpFormOutcome => ({
+				...unavailable,
+				kind:
+					input.operationSignal.aborted || binding.signal.aborted || input.operationCurrent?.() === false
+						? "operation_aborted"
+						: "processing_failure",
+			}))
+			.finally(() => this.clock.cancel(timer));
 	}
 }

@@ -2,6 +2,17 @@ import { expect, it, vi } from "vitest";
 import { markMcpFormPresented, type McpFormInput } from "../../src/core/mcp-form-types.ts";
 import { registerLocalMcpPresenter } from "../../src/modes/interactive/mcp-local-presenter.ts";
 import { mrtrTui } from "./fixtures/mrtr-presentation.ts";
+import { privateMcpForms } from "../../src/core/mcp-form-types.ts";
+
+it("reuses one local authority across UI contexts in the same session binding", () => {
+	const tui = mrtrTui(undefined, undefined, true);
+	try {
+		const next = tui.host.createExtensionUIContext();
+		expect(privateMcpForms(next)).toBe(privateMcpForms(tui.ui));
+	} finally {
+		tui.lose();
+	}
+});
 
 function input(presentationSignal: AbortSignal): McpFormInput {
 	return {

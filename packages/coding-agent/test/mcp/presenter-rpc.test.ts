@@ -26,6 +26,14 @@ import { createHostCore } from "../../src/modes/rpc/multi-session-host.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import { inputResult, MrtrScript, startMrtrServer } from "./fixtures/mrtr-2026-server.ts";
 
+it.each(["mcp_presenter_context", "mcp_form_sync", "mcp_form_response"])(
+	"leaves %s on the ordinary unknown-command path with enforcement off",
+	(type) => {
+		const writer = new SessionEventWriter(() => {});
+		expect(writer.handleMcpForm({ type, sessionId: "session" })).toBe(false);
+	},
+);
+
 it.each([false, true])("host presenter advertisement follows enforcement (%s)", async (enforced) => {
 	const root = await mkdtemp(join(tmpdir(), "presenter-capability-"));
 	const records: Record<string, unknown>[] = [];
@@ -148,7 +156,7 @@ it.each([false, true])("private MRTR processing failure sends no continuation (r
 	}
 });
 
-it.each(["legacy", "modern"] as const)(
+it.each(["legacy", "modern", "modern-parallel"] as const)(
 	"real host isolates an %s form from an automated first subscriber",
 	async (era) => {
 		const root = await mkdtemp(join(tmpdir(), "presenter-rpc-"));
@@ -179,6 +187,7 @@ it.each(["legacy", "modern"] as const)(
 		const holderRecords: Record<string, unknown>[] = [];
 		const botRecords: Record<string, unknown>[] = [];
 		const formArrived = Promise.withResolvers<Record<string, unknown>>();
+		const secondForm = Promise.withResolvers<Record<string, unknown>>();
 		const writer = new SessionEventWriter((line) => publicRecords.push(JSON.parse(line)));
 		const core = createHostCore({ agentDir: root, cwd: root, createRuntime, mcpPresenterEnforcement: true }, writer);
 		for (const [id, records] of [
@@ -189,7 +198,11 @@ it.each(["legacy", "modern"] as const)(
 				writeRaw: (line) => {
 					const record: Record<string, unknown> = JSON.parse(line);
 					records.push(record);
-					if (id === "human" && record.type === "mcp_form_request") formArrived.resolve(record);
+					if (id === "human" && record.type === "mcp_form_request") {
+						if (records.filter((entry) => entry.type === "mcp_form_request").length === 1)
+							formArrived.resolve(record);
+						else secondForm.resolve(record);
+					}
 				},
 				waitForBackpressure: async () => {},
 			});
@@ -239,18 +252,28 @@ it.each(["legacy", "modern"] as const)(
 			const owner = authority.enroll();
 			owner.acquire(owner.register(binding, holder, { kind: "desktop" }));
 			await connection.connect();
+			const presenter = binding.capture();
+			if (!presenter) throw new Error("Missing presenter");
+			const secondAttempt = Promise.withResolvers<void>();
+			const present = presenter.present.bind(presenter);
+			let attempts = 0;
+			vi.spyOn(presenter, "present").mockImplementation((input) => {
+				const pending = present(input);
+				if (++attempts === 2) secondAttempt.resolve();
+				return pending;
+			});
 			const origin = createMcpRequestOrigin({
 				binding: {},
 				connection,
 				signal: connection.requestLifetimeSignal,
 				privateFormsEnforced: true,
-				privateForm: binding.capture(),
+				privateForm: presenter,
 				serverLabel: "configured-server-canary",
 				isCurrent: () => writer.getMcpFormBinding(sessionId) === binding,
 				resolveAuthority: async () => null,
 			});
 			let result: Promise<unknown>;
-			if (era === "modern") {
+			if (era !== "legacy") {
 				result = connection.client.callTool({ name: "fixture" }, undefined, mcpRequestOptions(origin));
 			} else {
 				await configureMcpElicitation(
@@ -293,7 +316,21 @@ it.each(["legacy", "modern"] as const)(
 			expect(botRecords).toContainEqual(
 				expect.objectContaining({ id: "forged", error: "presenter_not_authorized" }),
 			);
-			if (era === "modern") expect(script.requests).toHaveLength(1);
+			if (era !== "legacy") expect(script.requests).toHaveLength(1);
+			let concurrent: Promise<{ result: unknown } | { error: unknown }> | undefined;
+			if (era === "modern-parallel") {
+				script.results.push(inputResult("second"));
+				const received = script.next("inputResultSent");
+				concurrent = connection.client
+					.callTool({ name: "parallel-fixture" }, undefined, mcpRequestOptions(origin))
+					.then(
+						(result) => ({ result }),
+						(error) => ({ error }),
+					);
+				await received;
+				await secondAttempt.promise;
+				expect(holderRecords.filter((record) => record.type === "mcp_form_request")).toHaveLength(1);
+			}
 			await command("human", { ...envelope, type: "mcp_form_presented" });
 			await command("human", {
 				...envelope,
@@ -303,9 +340,35 @@ it.each(["legacy", "modern"] as const)(
 			});
 			await result;
 			expect(admission).toHaveBeenCalledTimes(1);
-			if (era === "modern") {
-				expect(script.requests).toHaveLength(2);
-				expect(script.requests[1]?.params?.inputResponses).toEqual({
+			if (era !== "legacy") {
+				if (concurrent) {
+					const next = await Promise.race([
+						secondForm.promise,
+						concurrent.then(() => {
+							throw new Error("Queued operation settled before presentation");
+						}),
+					]);
+					const secondEnvelope = {
+						sessionId,
+						bindingEpoch: next.bindingEpoch,
+						attachmentEpoch: next.attachmentEpoch,
+						grantId: next.grantId,
+						dialogId: next.dialogId,
+						dialogToken: next.dialogToken,
+						formRevision: next.formRevision,
+					};
+					await command("human", { ...secondEnvelope, type: "mcp_form_presented" });
+					await command("human", {
+						...secondEnvelope,
+						type: "mcp_form_response",
+						action: "accept",
+						content: { value: "second-answer" },
+					});
+					expect(await concurrent).toHaveProperty("result");
+					expect(admission).toHaveBeenCalledTimes(2);
+				}
+				expect(script.requests).toHaveLength(concurrent ? 4 : 2);
+				expect(script.requests.find((request) => request.params?.inputResponses)?.params?.inputResponses).toEqual({
 					question: { action: "accept", content: { value: "answer-canary" } },
 				});
 			} else expect(await result).toEqual({ action: "accept", content: { value: "answer-canary" } });
