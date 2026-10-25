@@ -144,7 +144,7 @@ function servingQuery(queries: readonly ScriptedResidentQuery[]): ScriptedReside
 
 /** One owner, never zero: native auto-compact is on exactly when senpi stands down. */
 function expectSingleOwner(query: ScriptedResidentQuery | undefined, senpiOwns: boolean): void {
-	expect(query?.options?.settings).toEqual({ autoCompactEnabled: !senpiOwns });
+	expect(query?.options?.settings).toEqual({ autoCompactEnabled: !senpiOwns, autoMemoryEnabled: false });
 }
 
 function lastAssistant(harness: Harness): AssistantMessage | undefined {
