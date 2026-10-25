@@ -497,7 +497,6 @@ describe("InteractiveMode.createExtensionUIContext setTheme", () => {
 		};
 		const fakeThis: any = {
 			session: { settingsManager },
-			mcpMrtrPresentationLifetime: new AbortController(),
 			settingsManager,
 			themeController: {
 				setThemeInstance: vi.fn(() => ({ success: true })),
@@ -528,7 +527,6 @@ describe("InteractiveMode.createExtensionUIContext setTheme", () => {
 		};
 		const fakeThis: any = {
 			session: { settingsManager },
-			mcpMrtrPresentationLifetime: new AbortController(),
 			settingsManager,
 			themeController: {
 				setThemeInstance: vi.fn(() => ({ success: true })),
@@ -625,7 +623,6 @@ describe("InteractiveMode.createExtensionUIContext addAutocompleteProvider", () 
 		const wrapper: AutocompleteProviderFactory = (current) => current;
 		const fakeThis = {
 			autocompleteProviderWrappers: [] as AutocompleteProviderFactory[],
-			mcpMrtrPresentationLifetime: new AbortController(),
 			setupAutocompleteProvider: vi.fn(),
 		};
 

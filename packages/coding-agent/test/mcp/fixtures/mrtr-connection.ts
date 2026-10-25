@@ -71,7 +71,6 @@ export async function connect(results: unknown[], sse: boolean | "stdio" = false
 		await exited?.promise;
 	});
 	const host = Object.create(InteractiveMode.prototype);
-	host.mcpMrtrPresentationLifetime = new AbortController();
 	Object.defineProperty(host, "session", {
 		value: { sessionId: "fixture-session", admitHumanAnswer() {}, emitExtensionEvent() {} },
 	});
