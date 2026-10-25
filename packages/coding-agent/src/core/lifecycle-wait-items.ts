@@ -39,6 +39,11 @@ export function normalizeWaitItems(value: unknown, omitted?: unknown): WaitSourc
 	};
 }
 
+/** The one rule for a wake_source_state producer's item list: `items` when set, else the legacy `monitors`. */
+export function wakeSourceItems(data: object): unknown {
+	return ("items" in data ? data.items : undefined) ?? ("monitors" in data ? data.monitors : undefined);
+}
+
 export function waitItemSignature(detail: WaitSourceItems): string {
 	return JSON.stringify([detail.items?.map((item) => [item.id, item.description]), detail.omittedItems]);
 }

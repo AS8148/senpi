@@ -17,7 +17,7 @@
  * added later cannot be silently missed by one call site.
  */
 
-import { normalizeWaitItems, type WaitSourceItems } from "./lifecycle-wait-items.ts";
+import { normalizeWaitItems, type WaitSourceItems, wakeSourceItems } from "./lifecycle-wait-items.ts";
 
 /** Live counts of extension-published wake sources, keyed by source name. */
 export class WakeSourceTracker {
@@ -40,7 +40,7 @@ export class WakeSourceTracker {
 			this.counts.set(source, {
 				activeCount,
 				kind: "kind" in data && data.kind === "children" ? "children" : "background",
-				...normalizeWaitItems("items" in data ? data.items : "monitors" in data ? data.monitors : undefined),
+				...normalizeWaitItems(wakeSourceItems(data)),
 			});
 		else this.counts.delete(source);
 	}

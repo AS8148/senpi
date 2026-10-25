@@ -1,9 +1,8 @@
 import type { TurnEndLivenessInput } from "./extensions/builtin/goal/turn-end-liveness.ts";
 import { readHumanWait, type SyntheticAttention } from "./lifecycle-attention.ts";
-import { readLifecycleState } from "./lifecycle-children.ts";
+import { readLifecycleState, readWaits } from "./lifecycle-children.ts";
 import { readLastStop } from "./lifecycle-stop.ts";
-import { readWaitItems } from "./lifecycle-wait-items.ts";
-import type { LifecycleHold, LifecycleWaits, SessionLifecycle } from "./session-lifecycle-types.ts";
+import type { LifecycleHold, SessionLifecycle } from "./session-lifecycle-types.ts";
 import { isRecord } from "./work-custody-record.ts";
 
 export interface LifecycleRecord extends SessionLifecycle {
@@ -119,79 +118,6 @@ function readTurnEnd(value: unknown): DurableTurnEnd | undefined {
 		default:
 			return undefined;
 	}
-}
-
-function readWaits(value: unknown): LifecycleWaits | undefined {
-	if (!isRecord(value) || typeof value.children !== "number") return undefined;
-	const background: LifecycleWaits["background"][number][] = [];
-	if (Array.isArray(value.background)) {
-		for (const source of value.background) {
-			if (!isRecord(source) || typeof source.source !== "string" || typeof source.activeCount !== "number") continue;
-			background.push({
-				source: source.source,
-				activeCount: source.activeCount,
-				...readWaitItems(source.items, source.omittedItems),
-				...(typeof source.retryAtMs === "number" ? { retryAtMs: source.retryAtMs } : {}),
-			});
-		}
-	}
-	const human = Array.isArray(value.human)
-		? value.human.flatMap((request) => {
-				const wait = readHumanWait(request);
-				return wait ? [wait] : [];
-			})
-		: [];
-	const childSources: NonNullable<LifecycleWaits["childSources"]>[number][] = [];
-	if (Array.isArray(value.childSources))
-		for (const source of value.childSources) {
-			if (!isRecord(source) || typeof source.source !== "string" || typeof source.activeCount !== "number") continue;
-			childSources.push({
-				source: source.source,
-				activeCount: source.activeCount,
-				...readWaitItems(source.items, source.omittedItems),
-			});
-		}
-	const reports: NonNullable<LifecycleWaits["childReports"]>[number][] = [];
-	if (Array.isArray(value.childReports))
-		for (const report of value.childReports) {
-			if (!isRecord(report)) continue;
-			const state = readLifecycleState(report.state);
-			if (
-				!state ||
-				typeof report.taskId !== "string" ||
-				typeof report.childSessionId !== "string" ||
-				typeof report.runEpoch !== "number" ||
-				!Number.isSafeInteger(report.runEpoch) ||
-				report.runEpoch < 0
-			)
-				continue;
-			reports.push({
-				taskId: report.taskId,
-				childSessionId: report.childSessionId,
-				runEpoch: report.runEpoch,
-				state,
-				...(typeof report.label === "string" ? { label: report.label } : {}),
-				...(typeof report.since === "string" && Number.isFinite(Date.parse(report.since))
-					? { since: report.since }
-					: {}),
-			});
-		}
-	reports.sort((a, b) => (a.taskId < b.taskId ? -1 : a.taskId > b.taskId ? 1 : 0));
-	const childReportsOmitted =
-		Math.max(0, reports.length - 32) +
-		(typeof value.childReportsOmitted === "number" &&
-		Number.isSafeInteger(value.childReportsOmitted) &&
-		value.childReportsOmitted > 0
-			? value.childReportsOmitted
-			: 0);
-	return {
-		children: value.children,
-		background,
-		human,
-		...(childSources.length ? { childSources } : {}),
-		...(reports.length ? { childReports: reports.slice(0, 32) } : {}),
-		...(childReportsOmitted ? { childReportsOmitted } : {}),
-	};
 }
 
 function readHolds(value: unknown): readonly LifecycleHold[] | undefined {
