@@ -7,6 +7,7 @@ import type { Goal } from "./extensions/builtin/goal/types.ts";
 import type { ExtensionRunner } from "./extensions/runner.ts";
 import { StaleExtensionContextError } from "./extensions/stale-context-error.ts";
 import type { AgentEndEvent } from "./extensions/types.ts";
+import { deliveryIdOf } from "./external-admission.ts";
 import { consumeLifecycleDelivery, lifecycleDeliveryEntries, messageTicket } from "./lifecycle-delivery.ts";
 import { readLifecycleGoal } from "./lifecycle-goal.ts";
 import { lifecycleHistory } from "./lifecycle-history.ts";
@@ -38,6 +39,8 @@ export class LifecycleSessionBinding {
 	private nextRunOrigin: "human" | "automatic" | undefined;
 	private restoring: Promise<void> | undefined;
 	private retireFactEvents: (() => void) | undefined;
+	/** After dispose() nothing the controller decides is written or emitted: the session file is no longer this session's. */
+	private disposed = false;
 
 	constructor(session: AgentSession, host: LifecycleBindingHost) {
 		this.session = session;
@@ -55,17 +58,44 @@ export class LifecycleSessionBinding {
 						(isRecord(entry.data) && entry.data.sessionId === session.sessionId),
 				),
 			append: (record: LifecycleRecord) => {
-				host.append("session-lifecycle", record);
+				this.write(() => host.append("session-lifecycle", record));
 			},
 			appendChild: (report) => {
-				host.append("child-lifecycle", { ...report, sessionId: session.sessionId });
+				this.write(() => host.append("child-lifecycle", { ...report, sessionId: session.sessionId }));
 			},
 			appendCustody: (record) => {
-				host.append("work-custody", { ...record, sessionId: session.sessionId });
+				this.write(() => host.append("work-custody", { ...record, sessionId: session.sessionId }));
 			},
-			emit: (event) => host.emit(event),
+			emit: (event) => {
+				this.write(() => host.emit(event));
+			},
 			readRuntime: () => readLifecycleRuntimeFacts(session),
 		});
+		// A crashed receiver may have durable custody but no transcript entry yet. Recovery owns that
+		// delivery already; register it before session_start can let the gateway enqueue a second carrier.
+		const deliveries = session.sessionManager.reduceHistory(lifecycleDeliveryEntries);
+		for (const record of this.controller.obligations.active) {
+			// Discover consumed work before session_start can queue another automatic turn. The later
+			// recovery pass still writes interruption/tool records, but must not be the first to close admission.
+			if (record.ticketId && (record.state === "consumed" || deliveries.has(record.ticketId)))
+				this.controller.ledger.interrupted = true;
+			if (record.state !== "queued" || !record.payload || !record.ticketId) continue;
+			const ticketId = record.ticketId;
+			const message = { role: "custom" as const, ...record.payload.message, timestamp: 0 };
+			const deliveryId = deliveryIdOf(message);
+			if (deliveryId === undefined) continue;
+			if (deliveries.has(ticketId)) session.externalAdmission.observePersisted(message);
+			else
+				session.externalAdmission.restoreQueued(
+					deliveryId,
+					() =>
+						// Consumption writes the entry before message_end observes it in external admission.
+						session.sessionManager.reduceHistory(lifecycleDeliveryEntries).has(ticketId) ||
+						this.controller.obligations.active.some(
+							(current) => current.ticketId === ticketId && current.state === "queued",
+						),
+				);
+		}
 		this.unsubscribeHuman = bindLifecycleHumanInput(session, (event) => this.controller.humanInput(event.at));
 		this.unsubscribeAdmission = session.externalAdmission.onInputsSettled(() => this.controller.admissionSettled());
 		this.unsubscribeGoal = onGoalLifecycleChange(session.sessionManager, (goal) => {
@@ -111,7 +141,7 @@ export class LifecycleSessionBinding {
 	}
 
 	consume(message: AgentMessage): string | undefined {
-		return consumeLifecycleDelivery(this.session, this.controller, message);
+		return this.write(() => consumeLifecycleDelivery(this.session, this.controller, message));
 	}
 
 	consumedEntry(message: AgentMessage): string | undefined {
@@ -185,6 +215,8 @@ export class LifecycleSessionBinding {
 
 	private async recover(): Promise<void> {
 		await this.refreshFacts();
+		// dispose() may land while the facts are read; a disposed binding restores nothing.
+		if (this.disposed) return;
 		const entries = this.session.sessionManager.reduceHistory(lifecycleHistory);
 		const active = this.controller.obligations.active;
 		for (const record of active) {
@@ -216,6 +248,7 @@ export class LifecycleSessionBinding {
 		this.controller.restoreComplete();
 		for (const record of this.controller.obligations.active) {
 			if (record.state !== "queued" || !record.payload || !record.ticketId) continue;
+			if (this.disposed) return;
 			await this.session.sendCustomMessage(record.payload.message, {
 				triggerTurn: true,
 				deliverAs: record.payload.deliverAs,
@@ -237,32 +270,47 @@ export class LifecycleSessionBinding {
 			} else if (entry.message.role === "toolResult") pending.delete(entry.message.toolCallId);
 		}
 		for (const call of pending.values())
-			this.session.sessionManager.appendMessage({
-				role: "toolResult",
-				toolCallId: call.id,
-				toolName: call.name,
-				content: [
-					{
-						type: "text",
-						text: "INTERRUPTED: the consuming run ended before this tool result was recorded. Side effects may be partial. The tool was not re-run.",
-					},
-				],
-				details: { interrupted: { reason: "host_restart" } },
-				isError: true,
-				timestamp: Date.now(),
-			});
+			this.write(() =>
+				this.session.sessionManager.appendMessage({
+					role: "toolResult",
+					toolCallId: call.id,
+					toolName: call.name,
+					content: [
+						{
+							type: "text",
+							text: "INTERRUPTED: the consuming run ended before this tool result was recorded. Side effects may be partial. The tool was not re-run.",
+						},
+					],
+					details: { interrupted: { reason: "host_restart" } },
+					isError: true,
+					timestamp: Date.now(),
+				}),
+			);
 		if (pending.size > 0)
 			this.session.agent.state.messages = this.session.sessionManager.buildSessionContext().messages;
 	}
 
 	private hostAppendInterruption(ticketId: string, runId: string | undefined): void {
-		this.session.sessionManager.appendCustomEntry("interrupted-run", {
-			ticketId,
-			runId,
-			status: "INTERRUPTED",
-			reason: "host_restart",
-			at: new Date().toISOString(),
-		});
+		this.write(() =>
+			this.session.sessionManager.appendCustomEntry("interrupted-run", {
+				ticketId,
+				runId,
+				status: "INTERRUPTED",
+				reason: "host_restart",
+				at: new Date().toISOString(),
+			}),
+		);
+	}
+
+	/**
+	 * The single sink every write this binding makes goes through: the controller's records, custody and child
+	 * reports, its events, the consumed delivery's transcript entry, and the restore-time interruption records.
+	 * After dispose() nothing is written or emitted, because the session file is no longer this session's
+	 * (senpi#4120 review, senpi#4149).
+	 */
+	private write<T>(record: () => T): T | undefined {
+		if (this.disposed) return undefined;
+		return record();
 	}
 
 	private observeWakeSource(data: unknown): void {
@@ -276,6 +324,7 @@ export class LifecycleSessionBinding {
 	}
 
 	dispose(): void {
+		this.disposed = true;
 		this.refreshGeneration++;
 		this.retireFactEvents?.();
 		this.unsubscribeHuman();

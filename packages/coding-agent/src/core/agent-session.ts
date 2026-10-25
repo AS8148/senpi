@@ -177,6 +177,7 @@ import {
 	engineTurnLimitNotice,
 	engineTurnStop,
 	isUserDirectedTurn,
+	resetsEngineTurnHistory,
 } from "./engine-turn-limit.ts";
 import { EngineTurnRelease } from "./engine-turn-release.ts";
 import {
@@ -367,7 +368,11 @@ import { type InheritResult, type ReleaseInheritedResult, RunHolds, type RunRef 
 import { startRunResumeTurn } from "./run-resume-turn.ts";
 import { SecurityNoticeSnapshot } from "./security-notices.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
-import { type ControlEndpointHost, createSessionControlActions } from "./session-control-actions.ts";
+import {
+	type ControlEndpointHost,
+	createSessionControlActions,
+	type GenerationSessionControlActions,
+} from "./session-control-actions.ts";
 import { computeSessionFailureReport, type SessionFailureReport } from "./session-failure-report.ts";
 import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { ChildLifecycleReport, LifecycleApi, SessionLifecycleEvent } from "./session-lifecycle-types.ts";
@@ -1439,6 +1444,8 @@ export class AgentSession {
 			}),
 	});
 	private _controlEndpointHost: ControlEndpointHost | undefined;
+	/** The current extension generation's `pi.session`; a reload retires it with its runner. */
+	private _sessionControl: GenerationSessionControlActions | undefined;
 	private _relocationHost: SessionRelocationHost | undefined;
 	// Queues held while the first post-compaction response is classified. Agent
 	// core otherwise drains steering immediately before AgentSession can consume
@@ -1447,11 +1454,29 @@ export class AgentSession {
 	private _postCompactionDeferredFollowUpMessages: AgentMessage[] = [];
 
 	// Compaction state
-	private _compactionAbortController: AbortController | undefined = undefined;
-	private _autoCompactionAbortController: AbortController | undefined = undefined;
+	// Each abort controller below is an isCompacting fact; setting or clearing one is a lifecycle edge (senpi#3980).
+	private _compactionAbortControllerValue: AbortController | undefined = undefined;
+	private _autoCompactionAbortControllerValue: AbortController | undefined = undefined;
+	private get _compactionAbortController(): AbortController | undefined {
+		return this._compactionAbortControllerValue;
+	}
+	private set _compactionAbortController(controller: AbortController | undefined) {
+		if (this._compactionAbortControllerValue === controller) return;
+		this._compactionAbortControllerValue = controller;
+		this.refreshLifecycle();
+	}
+	private get _autoCompactionAbortController(): AbortController | undefined {
+		return this._autoCompactionAbortControllerValue;
+	}
+	private set _autoCompactionAbortController(controller: AbortController | undefined) {
+		if (this._autoCompactionAbortControllerValue === controller) return;
+		this._autoCompactionAbortControllerValue = controller;
+		this.refreshLifecycle();
+	}
 	private _pendingCompactionAdmission: PendingCompactionAdmission | undefined = undefined;
 	private readonly _compactionLifecycle = new CompactionLifecycleCoordinator();
-	private readonly _sessionWorkBarrier = new SessionWorkBarrier();
+	// Work held by the barrier is a lifecycle fact: its release is an edge (senpi#3980).
+	private readonly _sessionWorkBarrier = new SessionWorkBarrier(() => this.refreshLifecycle());
 	/**
 	 * Extension-published activity that outlives a turn (background terminal
 	 * jobs, terminal monitors, loop-guard holds). Counts persist across extension
@@ -1495,7 +1520,19 @@ export class AgentSession {
 	private _messageRevision = 0;
 
 	// Branch summarization state
-	private _branchSummaryAbortController: AbortController | undefined = undefined;
+	// Only the end of a tree navigation is a lifecycle edge. Its start is not: a lifecycle record written while the
+	// navigation runs would become the session leaf under it, so the navigation would land on, or cancel to, the
+	// wrong entry. The navigation is the person's own foreground action, so the session keeps its settled state
+	// until it ends (senpi#4120).
+	private _branchSummaryAbortControllerValue: AbortController | undefined = undefined;
+	private get _branchSummaryAbortController(): AbortController | undefined {
+		return this._branchSummaryAbortControllerValue;
+	}
+	private set _branchSummaryAbortController(controller: AbortController | undefined) {
+		if (this._branchSummaryAbortControllerValue === controller) return;
+		this._branchSummaryAbortControllerValue = controller;
+		if (controller === undefined) this.refreshLifecycle();
+	}
 
 	private _sessionTitleAbortController: AbortController | undefined = undefined;
 	private _sessionTitlePromise: Promise<void> | undefined = undefined;
@@ -2800,7 +2837,13 @@ export class AgentSession {
 	}
 
 	private _emit(event: AgentSessionEvent): void {
-		if (event.type === "session_paused" || event.type === "session_resumed") this.refreshLifecycle();
+		if (
+			event.type === "session_paused" ||
+			event.type === "session_resumed" ||
+			event.type === "compaction_start" ||
+			event.type === "compaction_end"
+		)
+			this.refreshLifecycle();
 		this._logSessionEvent(event);
 		if (event.type === "entry_appended") {
 			event = { ...event, entry: describeUsageLimitEntry(event.entry) };
@@ -4278,7 +4321,7 @@ export class AgentSession {
 								},
 							],
 						},
-						{ maxTokens: 1, signal },
+						{ maxTokens: 1, signal, cwd: this._cwd },
 					);
 					const ok = result.stopReason !== "error" && result.stopReason !== "aborted";
 					if (!ok && result.stopReason === "error" && admission.kind === "probe") {
@@ -6140,7 +6183,7 @@ export class AgentSession {
 				this._baseSystemPrompt,
 				this._baseSystemPromptOptions,
 			);
-			this._applyBeforeAgentStartResult(messages, result);
+			this._applyBeforeAgentStartResult(messages, result, userMessage);
 
 			// The preflight above only sees persisted session context. These prompt,
 			// next-turn, and before_agent_start additions are also provider-visible,
@@ -6179,17 +6222,24 @@ export class AgentSession {
 		}
 
 		if (options?.toolBarrier) this._toolBarrier.arm(options.toolBarrier);
-		promptDisposition?.("started");
-		emitPendingCommandInvocation();
-		preflightResult?.(true);
-		if (options?.thinkingLevel !== undefined) {
-			this.setSessionThinkingLevel(options.thinkingLevel);
+		// Everything after arm() sits inside the try: a caller callback that throws must not leave the barrier armed.
+		try {
+			promptDisposition?.("started");
+			emitPendingCommandInvocation();
+			preflightResult?.(true);
+			if (options?.thinkingLevel !== undefined) {
+				this.setSessionThinkingLevel(options.thinkingLevel);
+			}
+			await this._promptAgent(messages, {
+				inputOrigin: originOf(options),
+				onQueuedInput: options?.onQueuedInput,
+				onTurnAdmitted: options?.onTurnAdmitted,
+			});
+		} catch (error) {
+			// A turn the engine refused never ran, so it releases the barrier it armed (senpi#4106).
+			if (options?.toolBarrier && !this._isAgentRunActive) this._toolBarrier.release(options.toolBarrier.id);
+			throw error;
 		}
-		await this._promptAgent(messages, {
-			inputOrigin: originOf(options),
-			onQueuedInput: options?.onQueuedInput,
-			onTurnAdmitted: options?.onTurnAdmitted,
-		});
 		await this.waitForRetry();
 		await this.waitForIdle();
 		if (options?.onSessionWorkReady) {
@@ -6212,10 +6262,12 @@ export class AgentSession {
 	private _applyBeforeAgentStartResult(
 		messages: AgentMessage[],
 		result: Awaited<ReturnType<ExtensionRunner["emitBeforeAgentStart"]>>,
+		prompt: AgentMessage,
 	): void {
 		if (result?.messages) {
 			for (const msg of result.messages) {
-				messages.push({
+				const index = msg.placement === "before-prompt" ? messages.indexOf(prompt) : messages.length;
+				messages.splice(index, 0, {
 					role: "custom",
 					customType: msg.customType,
 					// Untyped extensions can pass null/missing content; normalize at ingestion.
@@ -7215,7 +7267,7 @@ export class AgentSession {
 						queueTriggerForLater();
 						return;
 					}
-					this._applyBeforeAgentStartResult(messages, result);
+					this._applyBeforeAgentStartResult(messages, result, appMessage);
 					await this._enforceFinalProviderAdmission(messages);
 					if (userAbortGeneration !== this._userAbortGeneration) {
 						queueTriggerForLater();
@@ -7363,7 +7415,12 @@ export class AgentSession {
 			});
 		const deliveredNotices = this._engineTurnHold.noticeCount;
 		const deliveredHeldInputs = this._heldInputs.pending().length;
-		if (this._stopHoldLive() || this._engineTurnHold.fences.length > 0 || deliveredHeldInputs > 0) {
+		// Payload-free notices (including goals) revalidate through their producer after release.
+		// An interruption must not add a directive-only turn when that work has already completed.
+		const resumeHeldTurn =
+			this._stopHoldLive() &&
+			(this._resumeCause() === "stop" || deliveredNotices === 0 || this._engineTurnHold.messages().length > 0);
+		if (resumeHeldTurn || this._engineTurnHold.fences.length > 0 || deliveredHeldInputs > 0) {
 			const { turnStarted, settled } = await this._resumeAfterStop(onQueued);
 			return {
 				answer: { resumed: true, pauseSeq, turnStarted, deliveredNotices, deliveredHeldInputs },
@@ -7406,8 +7463,9 @@ export class AgentSession {
 	 * resume settlement delivered the turn.
 	 */
 	private async _resumeAfterStop(onQueued?: () => void): Promise<{ turnStarted: boolean; settled: Promise<void> }> {
+		const resumeCause = this._resumeCause();
 		const sources = this._engineTurnHold.releaseAll("resume_session");
-		const { turnId, delivered } = await this._startResumeTurn(onQueued);
+		const { turnId, delivered } = await this._startResumeTurn(onQueued, resumeCause);
 		const settled = (async () => {
 			if (!(await delivered)) {
 				this._engineTurnHold.rejectInput();
@@ -7431,7 +7489,10 @@ export class AgentSession {
 	}
 
 	/** The resume turn both resume paths start; held input and notices are consumed only if no newer Stop aborted it. */
-	private async _startResumeTurn(onQueued?: () => void): ReturnType<typeof startRunResumeTurn> {
+	private async _startResumeTurn(
+		onQueued?: () => void,
+		resumeCause: "stop" | "interrupted" = "stop",
+	): ReturnType<typeof startRunResumeTurn> {
 		const settlement = Promise.withResolvers<void>();
 		this._resumeSettlement = settlement.promise;
 		try {
@@ -7464,7 +7525,7 @@ export class AgentSession {
 				);
 				// The hold is already released: include new or re-held input before sending, and omit withdrawals.
 			}
-			const started = await this._startResumeTurnWith(generation, continues, heldInputs, onQueued);
+			const started = await this._startResumeTurnWith(generation, continues, heldInputs, onQueued, resumeCause);
 			started.delivered.then(
 				() => settlement.resolve(),
 				() => settlement.resolve(),
@@ -7481,8 +7542,10 @@ export class AgentSession {
 		continues: ReadonlySet<string>,
 		heldInputs: HeldInput[],
 		onQueued?: () => void,
+		resumeCause: "stop" | "interrupted" = "stop",
 	): ReturnType<typeof startRunResumeTurn> {
 		return startRunResumeTurn({
+			resumeCause,
 			heldInputs: () => heldInputs,
 			continueInputs: () => [...continues],
 			heldWakes: () => this._engineTurnHold.messages(),
@@ -7517,7 +7580,7 @@ export class AgentSession {
 		if (!this._engineTurnHold.held || this._engineTurnHold.releasing || this._releaseExtras.length > 0) return;
 		this._releaseExtrasGeneration = this._userAbortGeneration;
 		if (this._stopHoldLive())
-			this._releaseExtras.push({ role: "custom", ...stopResumeDirective(), timestamp: Date.now() });
+			this._releaseExtras.push({ role: "custom", ...stopResumeDirective(this._resumeCause()), timestamp: Date.now() });
 		const { messages, commands } = this._takeHeldInputs();
 		this._releaseExtras.push(...messages);
 		// A later capture that finds no commands keeps the run an earlier one (a question answer's) still owes.
@@ -7644,7 +7707,8 @@ export class AgentSession {
 
 	noteAutomaticInput(text: string): boolean {
 		const userHold = this._engineTurnHold.holds.some(
-			(hold) => hold.kind === "session_hold" || hold.kind === "inherited_hold",
+			(hold) =>
+				(hold.kind === "session_hold" && hold.key !== "interrupted-run") || hold.kind === "inherited_hold",
 		);
 		if (!userHold) return false;
 		const message: CustomMessage = {
@@ -7668,6 +7732,14 @@ export class AgentSession {
 
 	private _stopHoldLive(): boolean {
 		return this._engineTurnHold.holds.some((hold) => hold.kind === "session_hold");
+	}
+
+	private _resumeCause(): "stop" | "interrupted" {
+		const holds = this._engineTurnHold.holds;
+		return holds.some((hold) => hold.kind === "session_hold" && hold.key === "interrupted-run") &&
+			!holds.some((hold) => hold.kind === "session_hold" && hold.key !== "interrupted-run")
+			? "interrupted"
+			: "stop";
 	}
 
 	get pauseView(): {
@@ -7718,8 +7790,8 @@ export class AgentSession {
 		});
 	}
 
+	/** Reads the lifecycle; every fact that feeds it raises its own change edge, so a read never writes (senpi#3980). */
 	get lifecycle() {
-		this._lifecycleBinding.controller.recompute();
 		return this._lifecycleBinding.controller.ledger.snapshot;
 	}
 
@@ -7744,6 +7816,8 @@ export class AgentSession {
 	}
 
 	refreshLifecycle(): void {
+		// Work aborted by dispose() still unwinds afterwards; its edges must not write to the released session file.
+		if (this._disposed) return;
 		this._lifecycleBinding.controller.recompute();
 	}
 
@@ -7793,7 +7867,10 @@ export class AgentSession {
 
 	/** Keeps this process's engine-turn record: a user message clears it, a tool call marks the running engine turn. */
 	private _observeEngineTurnMessage(message: AgentMessage): void {
-		if (message.role === "user" || (message.role === "custom" && isUserDirectedTurn(message.customType))) {
+		if (
+			message.role === "user" ||
+			(message.role === "custom" && resetsEngineTurnHistory(message.customType, message.details))
+		) {
 			this._engineTurnStarts = [];
 			this._engineResumeWindow = false;
 			this._engineTurnPauseRecorded = false;
@@ -8306,6 +8383,7 @@ export class AgentSession {
 	/** A user Stop: hold automatic turns until human input or resume_session, then stop the running turn (senpi#3811). */
 	async stop(): Promise<void> {
 		this._runHolds.stamp();
+		this.refreshLifecycle();
 		this._stopInterrupt = { pauseSeq: this._engineTurnHold.currentPauseSeq, at: new Date().toISOString() };
 		try {
 			await this.abort();
@@ -11326,6 +11404,10 @@ export class AgentSession {
 			}
 
 			this._applyExtensionBindings(this._extensionRunner);
+			// Opening a session is not explicit Resume. Install the same hold used by Stop before
+			// session_start producers run, so automatic work waits quietly in notice custody.
+			if (this._lifecycleBinding.controller.requiresHumanContinuation)
+				this._engineTurnHold.addHold("session_hold", { key: "interrupted-run" });
 			this._engineTurnHold.start();
 			this.syncPromptCacheSafeWaitEnv();
 			await this._extensionRunner.emit({
@@ -11468,6 +11550,14 @@ export class AgentSession {
 			return [...extensionCommands, ...templates, ...skills];
 		};
 
+		// This generation's `pi.session`: it owns the control endpoints this generation registers (senpi#3246).
+		const sessionControl = createSessionControlActions({
+			admission: this.externalAdmission,
+			sessionManager: this.sessionManager,
+			host: () => this._controlEndpointHost,
+			relocationHost: () => this._relocationHost,
+		});
+		this._sessionControl = sessionControl;
 		runner.bindCore(
 			{
 				sendMessage: (message, options) => {
@@ -11564,12 +11654,7 @@ export class AgentSession {
 				},
 				setSessionThinkingLevel: (level) => this.setSessionThinkingLevel(level),
 				setSessionFastMode: (enabled) => this.setSessionFastMode(enabled),
-				sessionControl: createSessionControlActions({
-					admission: this.externalAdmission,
-					sessionManager: this.sessionManager,
-					host: () => this._controlEndpointHost,
-					relocationHost: () => this._relocationHost,
-				}),
+				sessionControl,
 				lifecycle: this.lifecycleApi,
 			},
 			{
@@ -12145,6 +12230,7 @@ export class AgentSession {
 	}): Promise<{ cancelled: false }> {
 		resetTimings("reload");
 		const oldExtensionRunner = this._extensionRunner;
+		const oldSessionControl = this._sessionControl;
 		const oldExtensionIdentities = oldExtensionRunner.getExtensionIdentities();
 		const previousActiveToolRegistrationIds = new Map<string, string>();
 		// Cover withheld eval-only tools too: the rebuild drops any seeded name missing from this
@@ -12246,6 +12332,15 @@ export class AgentSession {
 					});
 				}
 			} finally {
+				// The control endpoints the retiring generation registered drain through its closures:
+				// they go with it, before anything can wake them on the retired runner (senpi#3246).
+				await oldSessionControl?.retire().catch((error: unknown) => {
+					this._extensionRunner.emitError({
+						extensionPath: "<session-control>",
+						event: "reload",
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
 				oldExtensionRunner.invalidate("stale extension generation after reload");
 			}
 			time("runtime", "reload");
@@ -13177,6 +13272,7 @@ export class AgentSession {
 	): Promise<BashResult> {
 		const abortController = new AbortController();
 		this._bashAbortControllers.add(abortController);
+		this.refreshLifecycle();
 
 		// Apply command prefix if configured (e.g., "shopt -s expand_aliases" for alias support)
 		const prefix = this.settingsManager.getShellCommandPrefix();
@@ -13206,6 +13302,7 @@ export class AgentSession {
 			return result;
 		} finally {
 			this._bashAbortControllers.delete(abortController);
+			this.refreshLifecycle();
 		}
 	}
 
@@ -13490,6 +13587,9 @@ export class AgentSession {
 
 		// Set up abort controller for summarization
 		this._branchSummaryAbortController = new AbortController();
+		// The navigation is session work: a prompt, a scheduled tick or a triggered delivery that arrives while it runs
+		// (a branch summary is a model call) waits for it, instead of starting a run on the leaf it is moving (senpi#4154).
+		const finishSessionWork = this._sessionWorkBarrier.begin();
 
 		try {
 			let extensionSummary: { summary: string; details?: unknown; usage?: Usage } | undefined;
@@ -13660,7 +13760,12 @@ export class AgentSession {
 
 			return { editorText, cancelled: false, summaryEntry, entryId: editedEntryId };
 		} finally {
-			this._branchSummaryAbortController = undefined;
+			// The navigation's two busy facts end together. Clearing the controller through its setter would recompute
+			// while the barrier is still held and record a busy state after the navigation has already moved the leaf;
+			// release both, then raise the one edge (senpi#4154 on top of #3980).
+			this._branchSummaryAbortControllerValue = undefined;
+			finishSessionWork();
+			this.refreshLifecycle();
 		}
 	}
 

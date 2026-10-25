@@ -1,3 +1,95 @@
+## 2026-10-24 - Fresh standalone CLI sessions accept task ancestry (oh-my-openagent#10782)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: passes ancestry to fresh session creation and warns when session selection ignores it, preserving existing headers and ordinary fork identity.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: lifecycle role is derived from the header before the first prompt.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts`: the session header is created before runtime construction.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: `createSessionManager`.
+
+## 2026-10-24 - Host commands select endpoint credentials without changing the profile (senpi#3815)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-command.ts` and `packages/coding-agent/src/cli/host-session-command.ts`: accept `--rpc-key-root <dir>` and run the host request inside that credential root, so nested probes and ensures authenticate against it. `SENPI_RPC_KEY_ROOT` is the environment default, then the agent dir. Settings, skills, MCP configuration and every other profile input stay the caller's.
+- `packages/coding-agent/src/cli/host-command-args.ts` (new, fork-only): the host argument parser, moved out of `host-command.ts` (which re-exports `parseHostArgs`), with the new flag.
+
+### Why
+
+- `packages/coding-agent/src/cli/host-command.ts`, `packages/coding-agent/src/cli/host-session-command.ts`: a client running under a separate profile must still prove the key of the endpoint it dials.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/cli/host-command.ts`, `packages/coding-agent/src/cli/host-session-command.ts`: host CLI parsing and endpoint startup run before any session extension loads.
+
+### Expected merge conflict zones
+
+- LOW: option parsing, usage text and the runner call in `packages/coding-agent/src/cli/host-command.ts` and `packages/coding-agent/src/cli/host-session-command.ts`.
+
+## 2026-10-23 - Print formats share the final failure exit status (senpi#4061)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: after settlement, select the last assistant once and use one `error`/`aborted` decision for both formats' exit status and text diagnostics. This supersedes the JSON compaction-only exception recorded below.
+
+### Why
+
+- JSON output reported provider failures but returned success to scripts. Only the final settled response decides the status, so a recovered retry remains successful.
+
+### Why an extension could not handle it
+
+- Print mode owns the process exit status after extensions and retries finish.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/print-mode.ts`: the block after `waitForSettledSessionWork()` and the text diagnostic branch.
+
+## 2026-10-22 - Export the reserved custody key error (senpi#3986)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `ReservedCustodyKey`, the error `pi.lifecycle.obligations` throws for a key under an engine prefix.
+
+### Why
+
+- `packages/coding-agent/src/index.ts`: extensions need the class to catch the refusal by type.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/index.ts`: an extension can only import what the package exports.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/index.ts`: the export line after the `session-lifecycle-types.ts` export block.
+
+## 2026-10-20 - Internal RPC stdin bootstrap precedes the CLI graph (senpi#3795)
+
+### What changed
+
+- `packages/coding-agent/src/cli-main.ts`: imports the POSIX internal-host bootstrap before any CLI module can touch stdin.
+- `packages/coding-agent/src/bun/cli.ts`: imports the same bootstrap after sandbox env restoration and before runtime setup.
+
+### Why
+
+- `packages/coding-agent/src/cli-main.ts` and `packages/coding-agent/src/bun/cli.ts`: the internal key must be consumed synchronously before the runtime instantiates `process.stdin`, then fd 0 must become `/dev/null` for descendants. Launchers keep forwarding stdin unchanged.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/cli-main.ts` and `packages/coding-agent/src/bun/cli.ts`: extensions load after the CLI graph and cannot own the first stdin read.
+
+### Expected merge conflict zones
+
+- LOW: the initial side-effect import order in `packages/coding-agent/src/cli-main.ts` and `packages/coding-agent/src/bun/cli.ts`.
+
 ## 2026-10-22 - `--rebind` reads the session's recorded cwd asynchronously (senpi#3676)
 
 ### What changed

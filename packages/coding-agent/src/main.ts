@@ -526,8 +526,11 @@ export async function createSessionManager(
 	settingsManager: SettingsManager,
 	appMode: AppMode,
 ): Promise<SessionManager> {
+	if (parsed.spawnedBy && (parsed.session || parsed.resume || parsed.continue || parsed.fork || parsed.rebind)) {
+		console.error(chalk.yellow("Warning: --spawned-by is ignored when resuming or forking a session."));
+	}
 	if (parsed.noSession || parsed.help || parsed.listModels !== undefined || parsed.listTips) {
-		return SessionManager.inMemory(cwd, parsed.sessionId !== undefined ? { id: parsed.sessionId } : undefined);
+		return SessionManager.inMemory(cwd, { id: parsed.sessionId, spawnedBy: parsed.spawnedBy });
 	}
 
 	if (parsed.fork) {
@@ -671,6 +674,8 @@ export async function createSessionManager(
 	if (parsed.sessionId) {
 		const existingSession = await findLocalSessionByExactId(parsed.sessionId, cwd, sessionDir);
 		if (existingSession) {
+			if (parsed.spawnedBy)
+				console.error(chalk.yellow("Warning: --spawned-by is ignored when resuming an existing session."));
 			return SessionManager.open(existingSession.path, sessionDir);
 		}
 		console.error(
@@ -680,7 +685,7 @@ export async function createSessionManager(
 		);
 	}
 
-	return SessionManager.create(cwd, sessionDir, { id: parsed.sessionId });
+	return SessionManager.create(cwd, sessionDir, { id: parsed.sessionId, spawnedBy: parsed.spawnedBy });
 }
 
 function buildSessionOptions(

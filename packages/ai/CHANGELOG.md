@@ -12,6 +12,60 @@
 
 ### Removed
 
+## [2026.10.25-1] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-4] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+- Provider request options carry the originating session's working directory for subprocess-backed adapters ([#4181](https://github.com/code-yeongyu/senpi/pull/4181)).
+- Kimi Code (`kimi-coding`) serves Kimi K3.1 Pro as `k3.1-pro` and K3.1 Pro Highspeed as `k3.1-pro-highspeed`: thinking only (low / high / max), up to 1M context, image and video input ([#4183](https://github.com/code-yeongyu/senpi/pull/4183))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-3] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-2] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+- `CredentialStore.readSlot` (optional) lets a store resolve one pooled account for a slot-scoped request. `resolveProviderAuth` uses it, and refuses a projected key that is still an unresolved reference object with a named `ConfigReferenceError` ([#3858](https://github.com/code-yeongyu/senpi/issues/3858)).
+- Shared configuration-value schemas and runtime validation recognize exact `$file`, `$env`, and flat `$concat` objects, with named errors for malformed references ([#3858](https://github.com/code-yeongyu/senpi/issues/3858)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.10.24-1] - 2026-10-24
 
 ### Breaking Changes

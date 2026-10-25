@@ -14,6 +14,7 @@ import type {
 import { RpcSecurityPresentations } from "./security-presentations.ts";
 import { SessionEventFanout, type SessionEventWriterConnection } from "./session-event-fanout.ts";
 import { SessionOpenTurns } from "./session-open-turns.ts";
+import { type QueueNode, type RecordQueue, SessionRecordAccounting } from "./session-record-accounting.ts";
 import { causeOfRecord, type SessionStatusActor, terminalOfLifecycle } from "./session-status.ts";
 import { type SessionOpenedRecord, sessionOpenedLines } from "./session-status-opened.ts";
 import { SessionStatusStream } from "./session-status-stream.ts";
@@ -36,24 +37,6 @@ type BackpressureWaiter = () => Promise<void>;
 type FlushScheduler = (flush: () => Promise<void>) => void;
 type RpcRecord = Record<string, unknown>;
 type CompactDeltaType = "text_delta" | "thinking_delta" | "toolcall_delta";
-
-type QueueNode = {
-	value: RpcRecord;
-	key?: string;
-	previous?: QueueNode;
-	next?: QueueNode;
-	resolve?: () => void;
-	reject?: (cause: unknown) => void;
-};
-
-type RecordQueue = {
-	sessionId?: string;
-	targetId?: string;
-	head?: QueueNode;
-	tail?: QueueNode;
-	latestByKey: Map<string, QueueNode>;
-	ready: boolean;
-};
 
 export const MAX_SHARED_STDIO_QUEUE_BYTES = 64 * 1024 * 1024;
 export const MAX_SHARED_STDIO_QUEUE_RECORDS = 4096;
@@ -103,6 +86,7 @@ function toolUpdateKey(value: RpcRecord): string | undefined {
  * scheduling boundary and violate D9.
  */
 export class SessionEventWriter {
+	private readonly records = new SessionRecordAccounting();
 	private readonly queues = new Map<string, RecordQueue>();
 	private readonly fanout = new SessionEventFanout();
 	private readonly connectionContext = new AsyncLocalStorage<string>();
@@ -177,21 +161,15 @@ export class SessionEventWriter {
 	}
 
 	get bufferedRecordCount(): number {
-		let count = this.inFlight ? 1 : 0;
-		for (const queue of this.allQueues()) {
-			for (let node = queue.head; node; node = node.next) count++;
-		}
-		return count;
+		return this.records.count + (this.inFlight ? 1 : 0);
 	}
 
 	get bufferedByteLength(): number {
-		let bytes = this.inFlight ? Buffer.byteLength(serializeJsonLine(this.inFlight.node.value)) : 0;
-		for (const queue of this.allQueues()) {
-			for (let node = queue.head; node; node = node.next) {
-				bytes += Buffer.byteLength(serializeJsonLine(node.value));
-			}
-		}
-		return bytes;
+		return this.records.bytes + (this.inFlight?.node.byteLength ?? 0);
+	}
+
+	isSessionSealed(sessionId: string): boolean {
+		return this.sealedSessions.has(sessionId);
 	}
 
 	registerConnection(
@@ -452,7 +430,10 @@ export class SessionEventWriter {
 		if (this.exceedsStdioCapacity(serializeJsonLine(value))) {
 			if (!this.controlOverflowReported) {
 				this.controlOverflowReported = true;
-				this.append(this.controlQueue, { type: "overflow", error: "rpc_control_output_overflow, resync required" });
+				this.records.append(this.controlQueue, {
+					type: "overflow",
+					error: "rpc_control_output_overflow, resync required",
+				});
 				this.markReady(this.controlQueue);
 				this.requestFlush();
 			}
@@ -460,7 +441,7 @@ export class SessionEventWriter {
 		}
 		const queue = targetId === undefined ? this.controlQueue : this.connectionQueue(targetId);
 		const completion = new Promise<void>((resolve, reject) => {
-			this.append(queue, { ...value }, undefined, resolve, reject);
+			this.records.append(queue, { ...value }, undefined, resolve, reject);
 		});
 		this.markReady(queue);
 		this.requestFlush();
@@ -553,7 +534,7 @@ export class SessionEventWriter {
 			}
 		}
 		if (this.fanout.isEmpty()) {
-			this.append(this.controlQueue, wire);
+			this.records.append(this.controlQueue, wire);
 			this.markReady(this.controlQueue);
 		} else this.fanout.broadcast(serializeJsonLine(wire));
 		this.requestFlush();
@@ -610,7 +591,7 @@ export class SessionEventWriter {
 	 * no close response to answer.
 	 */
 	parkSession(sessionId: string, sessionPath: string, reason: "idle" | "unloaded"): void {
-		this.sealWithLifecycle(sessionId, { type: "session_parked", sessionId, sessionPath, reason });
+		this.sealLifecycle(sessionId, { type: "session_parked", sessionId, sessionPath, reason });
 	}
 
 	/**
@@ -620,7 +601,7 @@ export class SessionEventWriter {
 	 * the `release_session` response, so there is no close response either.
 	 */
 	releaseSession(sessionId: string, sessionPath: string): void {
-		this.sealWithLifecycle(sessionId, { type: "session_closed", sessionId, reason: "released", sessionPath });
+		this.sealLifecycle(sessionId, { type: "session_closed", sessionId, reason: "released", sessionPath });
 	}
 
 	/**
@@ -629,7 +610,7 @@ export class SessionEventWriter {
 	 * response is owed to anyone.
 	 */
 	sealRolledBackOpen(sessionId: string, sessionPath: string | undefined): void {
-		this.sealWithLifecycle(sessionId, {
+		this.sealLifecycle(sessionId, {
 			type: "session_closed",
 			sessionId,
 			reason: "error",
@@ -637,14 +618,18 @@ export class SessionEventWriter {
 		});
 	}
 
-	private sealWithLifecycle(sessionId: string, lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent): void {
+	sealLifecycle(
+		sessionId: string,
+		lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent,
+		attachedOnly = false,
+	): void {
 		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.securityPresentations.dropSession(sessionId);
 		this.fanout.forgetSession(sessionId);
 		this.mediaPersisters.delete(sessionId);
 		if (this.fanout.isEmpty()) this.appendSessionRecord(sessionId, lifecycle);
-		else if (this.workerSessions.has(sessionId))
+		else if (attachedOnly || this.workerSessions.has(sessionId))
 			this.fanout.deliverToSession(sessionId, serializeJsonLine(lifecycle));
 		else this.fanout.broadcast(serializeJsonLine(lifecycle));
 		this.sealStatus(sessionId, lifecycle);
@@ -693,7 +678,7 @@ export class SessionEventWriter {
 				}
 			} else if (!this.closeOverflowReported) {
 				this.closeOverflowReported = true;
-				this.append(this.controlQueue, overflow);
+				this.records.append(this.controlQueue, overflow);
 				this.markReady(this.controlQueue);
 				this.requestFlush();
 			}
@@ -713,7 +698,7 @@ export class SessionEventWriter {
 			complete: (terminal, reason) => {
 				if (!active) return;
 				release();
-				if (terminal) this.closeSession(sessionId, response, reason);
+				if (terminal && !this.sealedSessions.has(sessionId)) this.closeSession(sessionId, response, reason);
 				else this.appendClosedResponse(sessionId, response);
 			},
 		};
@@ -813,7 +798,7 @@ export class SessionEventWriter {
 			const node = queue.head;
 			if (!node) continue;
 
-			this.unlink(queue, node);
+			this.records.unlink(queue, node);
 			this.inFlight = { queue, node };
 			try {
 				// D9: exactly one complete record per raw write. The next lane is not
@@ -824,7 +809,7 @@ export class SessionEventWriter {
 				if (!connection && queue.targetId) {
 					node.resolve?.();
 				} else {
-					writeRaw(serializeJsonLine(node.value));
+					writeRaw(node.line);
 					if (waitForBackpressure) await waitForBackpressure();
 					node.resolve?.();
 				}
@@ -874,7 +859,7 @@ export class SessionEventWriter {
 		if (delta) {
 			const previousFull = queue.latestByKey.get(MESSAGE_KEY);
 			if (previousFull) this.demoteAndMerge(queue, previousFull);
-			const node = this.append(queue, value, MESSAGE_KEY);
+			const node = this.records.append(queue, value, MESSAGE_KEY);
 			queue.latestByKey.set(MESSAGE_KEY, node);
 			this.markReady(queue);
 			return;
@@ -883,8 +868,8 @@ export class SessionEventWriter {
 		const toolKey = toolUpdateKey(value);
 		if (toolKey) {
 			const previous = queue.latestByKey.get(toolKey);
-			if (previous) this.unlink(queue, previous);
-			const node = this.append(queue, value, toolKey);
+			if (previous) this.records.unlink(queue, previous);
+			const node = this.records.append(queue, value, toolKey);
 			queue.latestByKey.set(toolKey, node);
 			this.markReady(queue);
 			return;
@@ -894,12 +879,12 @@ export class SessionEventWriter {
 		// includes delta-only/full non-delta message updates, protocol responses,
 		// extension UI requests, errors, retries, lifecycle, and unknown records.
 		queue.latestByKey.clear();
-		this.append(queue, value);
+		this.records.append(queue, value);
 		this.markReady(queue);
 	}
 
 	private demoteAndMerge(queue: RecordQueue, node: QueueNode): void {
-		node.value = demoteToDeltaOnly(node.value);
+		this.records.replace(node, demoteToDeltaOnly(node.value));
 		const current = compactDelta(node.value);
 		const preceding = node.previous;
 		const previous = preceding ? compactDelta(preceding.value) : undefined;
@@ -912,36 +897,12 @@ export class SessionEventWriter {
 			previous.contentIndex === current.contentIndex
 		) {
 			const precedingEvent = preceding.value.assistantMessageEvent as Record<string, unknown>;
-			preceding.value = {
+			this.records.replace(preceding, {
 				...preceding.value,
 				assistantMessageEvent: { ...precedingEvent, delta: previous.delta + current.delta },
-			};
-			this.unlink(queue, node);
+			});
+			this.records.unlink(queue, node);
 		}
-	}
-
-	private append(
-		queue: RecordQueue,
-		value: RpcRecord,
-		key?: string,
-		resolve?: () => void,
-		reject?: (cause: unknown) => void,
-	): QueueNode {
-		const node: QueueNode = { value, key, previous: queue.tail, resolve, reject };
-		if (queue.tail) queue.tail.next = node;
-		else queue.head = node;
-		queue.tail = node;
-		return node;
-	}
-
-	private unlink(queue: RecordQueue, node: QueueNode): void {
-		if (node.previous) node.previous.next = node.next;
-		else queue.head = node.next;
-		if (node.next) node.next.previous = node.previous;
-		else queue.tail = node.previous;
-		if (node.key && queue.latestByKey.get(node.key) === node) queue.latestByKey.delete(node.key);
-		node.previous = undefined;
-		node.next = undefined;
 	}
 
 	private markReady(queue: RecordQueue): void {
