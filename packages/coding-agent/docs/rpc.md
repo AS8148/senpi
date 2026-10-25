@@ -5500,9 +5500,9 @@ reconnect for this purpose because their capability metadata is per request.
 
 Legacy elicitation has no reliable parent tool-call identifier in the received SDK
 handler metadata. With multiple `tools/call` operations in flight on one physical
-legacy client, enforced elicitation fails closed with JSON-RPC `-32603` and
-`data.reason: "ambiguous_legacy_origin"`. The error explains that concurrent legacy
-calls make the origin ambiguous and recommends sequential calls or an MRTR server.
+legacy client, enforced elicitation fails closed with the same fixed JSON-RPC
+processing error as an unavailable presenter: code `-32603`, message
+`Elicitation processing unavailable`, and no `data`.
 No form is displayed and no human answer is admitted. Without enforcement, legacy
 clients keep the SDK request method, origin handling, and concurrent-call behavior.
 
