@@ -79,6 +79,7 @@ import {
 	DEFAULT_CUSTOM_EXTENSION_LABEL,
 	EVAL_CELLS_CAPABILITY,
 	EXTENSION_EVENTS_CAPABILITY,
+	ENTRIES_TAIL_CAPABILITY,
 	INTERACTIVE_USER_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	QUESTION_CAPABILITY,
@@ -101,13 +102,7 @@ import { EffectLedger } from "./effect-ledger.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
 import { settleExtensionUiResponse } from "./extension-ui-response.ts";
-import {
-	currentResponseByteBudget,
-	endEntryWalk,
-	entryPageBounds,
-	holdEntryWalk,
-	pageEntries,
-} from "./get-entries-page.ts";
+import { answerGetEntries } from "./get-entries-command.ts";
 import { runHoldInput } from "./held-input-commands.ts";
 import { HostSessionControl } from "./host-session-control.ts";
 import { createRpcLoginPromptCallbacks } from "./login-prompts.ts";
@@ -135,14 +130,12 @@ import type {
 	RpcSessionReplacedEvent,
 } from "./rpc-types.ts";
 import {
-	RPC_ERROR_ENTRY_NOT_FOUND,
 	RPC_ERROR_EVAL_CELL_NOT_FOUND,
 	RPC_ERROR_EVAL_CELLS_UNAVAILABLE,
 	RPC_ERROR_INVALID_ARGUMENT,
 	RPC_ERROR_INVALID_EVAL_CELL_REQUEST,
 	RPC_ERROR_MEDIA_NOT_FOUND,
 	RPC_ERROR_MODEL_NOT_FOUND,
-	RPC_ERROR_RESPONSE_TOO_LARGE,
 	STEER_WHEN_IDLE_CAPABILITY,
 	USER_ACTIVITY_CAPABILITY,
 } from "./rpc-types.ts";
@@ -193,6 +186,10 @@ export interface RpcConnectionOptions {
 		session: AgentSessionRuntime["session"],
 		ui: ExtensionUIContext,
 	) => (() => void) | undefined;
+	bindMcpForms?: (
+		session: AgentSessionRuntime["session"],
+		ui: ExtensionUIContext,
+	) => (() => void) | undefined | Promise<(() => void) | undefined>;
 	/** A worker's internal bridge is gated by its host's actual socket capabilities. */
 	workerSecurityBridge?: boolean;
 	grantDialogSettled?: (id: string) => void;
@@ -866,6 +863,8 @@ export function createRpcConnectionHandler(
 	};
 
 	const rebindSession = async (deferRefresh = false): Promise<void> => {
+		unbindMcpForms?.();
+		unbindMcpForms = undefined;
 		unsubscribeSecurityNotices?.();
 		unsubscribeLoadedSurfaces?.();
 		unsubscribeExtensionEvents?.();
@@ -944,10 +943,12 @@ export function createRpcConnectionHandler(
 		// reconstruct the session it is bound to. Installing here also drops the
 		// previous session's subscription immediately instead of after the bind.
 		installSessionSubscriptions();
+		const extensionUi = createExtensionUIContext();
+		unbindMcpForms = await options.bindMcpForms?.(session, extensionUi);
 		const refresh = refreshLoadedSurfacesAfter(
 			() =>
 				session.bindExtensions({
-					uiContext: createExtensionUIContext(),
+					uiContext: extensionUi,
 					mode: "rpc",
 					commandContextActions: {
 						waitForIdle: () => session.agent.waitForIdle(),
@@ -1145,6 +1146,7 @@ export function createRpcConnectionHandler(
 								TOOL_BARRIER_CAPABILITY,
 								USER_ACTIVITY_CAPABILITY,
 								RESUME_SESSION_CAPABILITY,
+								ENTRIES_TAIL_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
 								...(options.toolRuntime ? toolRuntimeCapabilities(options.toolRuntime) : []),
 								// Client flags cannot advertise a host guard this classic binding does not run, nor a tool runtime.
@@ -1845,51 +1847,8 @@ export function createRpcConnectionHandler(
 				return success(id, "get_fork_messages", { messages });
 			}
 
-			case "get_entries": {
-				const sessionManager = session.sessionManager;
-				let entries = sessionManager.getEntries();
-				if (command.since !== undefined) {
-					const sinceIndex = entries.findIndex((e) => e.id === command.since);
-					if (sinceIndex === -1) {
-						return error(id, "get_entries", `Entry not found: ${command.since}`, RPC_ERROR_ENTRY_NOT_FOUND);
-					}
-					entries = entries.slice(sinceIndex + 1);
-				}
-				const bounds = entryPageBounds(command);
-				if (!bounds.ok) return error(id, "get_entries", bounds.message, RPC_ERROR_INVALID_ARGUMENT);
-				const page = pageEntries(entries, describeUsageLimitEntry, bounds);
-				// A client walking pages asks again at once; holding the view until the last page spares each page a
-				// full re-read of the file. The hold expires on its own, so a walk the client abandons on an idle
-				// session does not pin the whole history; any other answer lets the view go now.
-				if (bounds.paged && page.hasMore) holdEntryWalk(session, () => session.releaseFullHistoryView());
-				else {
-					endEntryWalk(session);
-					session.releaseFullHistoryView();
-				}
-				const budget = currentResponseByteBudget();
-				if (page.firstEntryBytes > budget) {
-					return error(
-						id,
-						"get_entries",
-						`Entry ${entries[0]?.id ?? ""} alone is larger than one answer can carry (${budget} bytes), so it cannot be sent over RPC.`,
-						RPC_ERROR_RESPONSE_TOO_LARGE,
-					);
-				}
-				if (!bounds.paged && page.hasMore) {
-					return error(
-						id,
-						"get_entries",
-						`The session history is larger than one answer can carry (${budget} bytes). Read it in pages: pass limit or maxBytes, then since: nextSince until hasMore is false.`,
-						RPC_ERROR_RESPONSE_TOO_LARGE,
-					);
-				}
-				return success(id, "get_entries", {
-					entries: page.entries,
-					leafId: sessionManager.getLeafId(),
-					...(bounds.paged ? { hasMore: page.hasMore } : {}),
-					...(page.nextSince === undefined ? {} : { nextSince: page.nextSince }),
-				});
-			}
+			case "get_entries":
+				return answerGetEntries(session, command);
 
 			case "get_tree": {
 				const sessionManager = session.sessionManager;
@@ -2221,6 +2180,7 @@ export function createRpcConnectionHandler(
 				)
 			: () => {};
 	const dispose = async (disposeOptions: { readonly processExit?: boolean } = {}): Promise<void> => {
+		unbindMcpForms?.();
 		grantPresentationAbort.abort();
 		detachGrantPresentation?.();
 		unsubscribeSecurityNotices?.();
@@ -2247,6 +2207,7 @@ export function createRpcConnectionHandler(
 
 	// Perform the initial bind synchronously-scheduled so the handler is ready
 	// as soon as the caller awaits `ready`.
+	let unbindMcpForms: (() => void) | undefined;
 	const ready = rebindSession();
 
 	return {

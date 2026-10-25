@@ -12,6 +12,26 @@
 
 ### Removed
 
+## [2026.10.25-3] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+- Handle modern MCP multi-round-trip form input in the interactive terminal with private review, editing, explicit submission, and bounded continuation requests ([#4207](https://github.com/code-yeongyu/senpi/pull/4207)).
+- Add opt-in host-issued MCP presenter grants, private form delivery, and authenticated consent settlement. RPC and terminal enforcement remain off by default while clients adopt the protected presenter channel; ordinary terminal queuing, legacy forms, and stderr diagnostics are preserved ([#4197](https://github.com/code-yeongyu/senpi/issues/4197)).
+- `SessionLifecycle` carries an optional, persisted `lastStop` that says why the last run stopped (deadline, goal guard, todo cap, abort, or no wake) and names only that run ([#4224](https://github.com/code-yeongyu/senpi/pull/4224)).
+
+### Changed
+
+### Fixed
+
+- Preserve the terminal's private MCP presenter through real extension-session UI wrapping without publishing form titles or values as ordinary prompt events ([#4207](https://github.com/code-yeongyu/senpi/pull/4207)).
+- Keep a live session's shared MCP tools available after the original declaring session exits, including calls already in flight ([#4210](https://github.com/code-yeongyu/senpi/pull/4210)).
+- Send declared MCP tool parameter headers over modern HTTP, encode routing names and values using the protocol's Base64 sentinel, and exclude tools with invalid header annotations ([#4229](https://github.com/code-yeongyu/senpi/pull/4229)).
+
+### Removed
+
 ## [2026.10.25-2] - 2026-10-25
 
 ### Breaking Changes

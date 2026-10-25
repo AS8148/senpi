@@ -2,12 +2,17 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { AnySchema, SchemaOutput } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { Request } from "@modelcontextprotocol/sdk/types.js";
-import { type McpRequestOrigin, physicalMcpClient, takeMcpRequestOrigin } from "../request-origin.ts";
+import {
+	beginLegacyMcpOperation,
+	type McpRequestOrigin,
+	physicalMcpClient,
+	takeMcpRequestOrigin,
+} from "../request-origin.ts";
 import { AuthError } from "../errors.ts";
 import { loadMcpSdkTypes, loadMcpSdkZodCompat } from "../sdk.lazy.ts";
 import { type McpClock, mcpElapsedClock } from "../wrap.ts";
 import { collectMrtrForm, type MrtrInputResponse } from "./elicitation.ts";
-import { isRecord } from "./form-schema.ts";
+import { isRecord, validateMrtrForm } from "./form-schema.ts";
 import { McpMrtrError } from "./errors.ts";
 import { queuedForm } from "./consent-queue.ts";
 import { parseInputs } from "./inputs.ts";
@@ -18,6 +23,8 @@ const capabilitiesKey = "io.modelcontextprotocol/clientCapabilities";
 /** Local dispatch guard survives SDK object spreads but is never JSON serialized. */
 export const modernDispatchGuard = Symbol("mcp-modern-dispatch");
 export interface ModernProtocolState {
+	privateForms?: boolean;
+	legacyFormEligible?: boolean;
 	version?: string;
 	legacy?: boolean;
 	resolveStdioDiagnostics?: (modern: boolean) => void;
@@ -26,6 +33,7 @@ export interface ModernProtocolState {
 export type MrtrClock = McpClock;
 const states = new WeakMap<Client, ModernProtocolState>();
 export const isModernMcpClient = (client: Client) => states.get(physicalMcpClient(client))?.version !== undefined;
+export const legacyMcpFormsAdvertised = (client: Client) => states.get(physicalMcpClient(client))?.legacyFormEligible;
 const own = (value: object, key: string) => Object.hasOwn(value, key);
 const byteSize = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
 
@@ -49,9 +57,19 @@ export function installModernRequestAdapter(
 		schema: T,
 		options?: RequestOptions,
 	): Promise<SchemaOutput<T>> => {
-		if (protocol.version === undefined || request.method === "initialize")
-			return sdkRequest(request, schema, options);
+		if (request.method === "initialize") return sdkRequest(request, schema, options);
 		const { origin, sdkOptions } = takeMcpRequestOrigin(options, client);
+		if (protocol.version === undefined) {
+			const end =
+				request.method === "tools/call" && origin
+					? beginLegacyMcpOperation(client, origin, sdkOptions.signal)
+					: undefined;
+			try {
+				return await sdkRequest(request, schema, sdkOptions);
+			} finally {
+				end?.();
+			}
+		}
 		if (own(request.params ?? {}, "requestState") || own(request.params ?? {}, "inputResponses") || options?.task)
 			throw new McpMrtrError("MCP_MRTR_INVALID_INPUT");
 		const params = structuredClone(request.params ?? {});
@@ -93,6 +111,7 @@ export function installModernRequestAdapter(
 		const resolveAuthority = async () => {
 			check();
 			if (origin) {
+				await origin.privateForm?.synchronize?.();
 				const snapshot = JSON.stringify(
 					await interrupted(origin.resolveAuthority(operation.signal), operation.signal),
 				);
@@ -127,7 +146,13 @@ export function installModernRequestAdapter(
 				const forward = () => attempt.abort("MCP request canceled");
 				operation.signal.addEventListener("abort", forward, { once: true });
 				const metadata = isRecord(params._meta) ? params._meta : {};
-				const capabilities = !presentationLost && origin?.presentation ? { elicitation: {} } : {};
+				const capabilities = origin?.privateFormsEnforced
+					? origin.privateForm?.ready()
+						? { elicitation: {} }
+						: {}
+					: !presentationLost && origin?.presentation
+						? { elicitation: {} }
+						: {};
 				const outgoing = {
 					...params,
 					...continuation,
@@ -188,7 +213,36 @@ export function installModernRequestAdapter(
 							// A human stopped this batch, not necessarily the caller's AbortSignal.
 							// Keep the cancellation code; never fabricate results for unshown inputs.
 							throw new McpMrtrError("MCP_MRTR_CANCELLED");
-						} else if (consentSpent >= 300_000 || presentationLost || !origin?.presentation) {
+						} else if (consentSpent >= 300_000) {
+							throw new McpMrtrError("MCP_MRTR_PROCESSING_UNAVAILABLE");
+						} else if (origin?.privateFormsEnforced) {
+							const presenter = origin.privateForm;
+							const schema = input.params.requestedSchema;
+							if (!presenter?.ready() || !validateMrtrForm(schema))
+								throw new McpMrtrError("MCP_MRTR_PROCESSING_UNAVAILABLE");
+							const began = clock.now();
+							const outcome = await presenter.present({
+								operationId: String(start),
+								inputId: key,
+								round,
+								server: { label: origin.serverLabel, source: origin.serverSource ?? "user" },
+								message: input.params.message,
+								schema,
+								operationSignal: operation.signal,
+								presentationSignal: presenter.signal,
+								deadlineMs: Math.max(0, 300_000 - consentSpent),
+							});
+							consentSpent += clock.now() - began;
+							check();
+							if (outcome.kind !== "result")
+								throw new McpMrtrError(
+									outcome.kind === "operation_aborted"
+										? "MCP_MRTR_CANCELLED"
+										: "MCP_MRTR_PROCESSING_UNAVAILABLE",
+								);
+							responses[key] = outcome.result;
+							cancelled = outcome.result.action !== "accept";
+						} else if (presentationLost || !origin?.presentation) {
 							throw new McpMrtrError("MCP_MRTR_PROCESSING_UNAVAILABLE");
 						} else {
 							const consent = new AbortController();
@@ -243,7 +297,9 @@ export function installModernRequestAdapter(
 	protocol.activateRequests = () => {
 		client.request = requestWithMrtr;
 	};
-	if (protocol.version !== undefined) protocol.activateRequests();
+	// Default legacy clients retain the SDK method and its original admission behavior.
+	// Enforced legacy calls need private operation ownership before the first tools/call.
+	if (protocol.privateForms || protocol.version !== undefined) protocol.activateRequests();
 }
 
 function interrupted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
