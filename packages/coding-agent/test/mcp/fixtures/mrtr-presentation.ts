@@ -9,8 +9,10 @@ export function mrtrTui(
 		return choices.includes("Submit") ? "Submit" : choices[0];
 	},
 	input: ExtensionUIContext["input"] = async () => "answer",
+	enforcement = false,
 ) {
 	const host = Object.create(InteractiveMode.prototype);
+	host.options = { mcpPresenterEnforcement: enforcement };
 	const events: unknown[] = [];
 	Object.defineProperty(host, "session", {
 		configurable: true,

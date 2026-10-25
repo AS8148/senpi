@@ -1599,6 +1599,7 @@ export async function main(args: string[], options?: MainOptions) {
 		// mode seam: interactive startup still loads the same module before first use.
 		const { InteractiveMode } = await import("./modes/interactive/interactive-mode.ts");
 		const interactiveMode = new InteractiveMode(runtime, {
+			mcpPresenterEnforcement: parsed.mcpPresenterEnforcement,
 			migratedProviders,
 			authNotices: interactiveAuthNotices(services.authStorage),
 			legacyPiEditNotice: legacyPiEditStartupNotice(),

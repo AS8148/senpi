@@ -15,7 +15,7 @@ afterEach(async () => {
 	for (const stop of cleanup.splice(0).reverse()) await stop();
 });
 
-async function realSession(host = true) {
+async function realSession(host = true, enforcement = true) {
 	const script = new MrtrScript([inputResult("state", { question: formInput("SERVER_TEXT_CANARY") })]);
 	const server = await startMrtrServer(script);
 	cleanup.push(server.close);
@@ -33,7 +33,7 @@ async function realSession(host = true) {
 		}
 		return choices.includes("Submit") ? "Submit" : choices[0];
 	});
-	const raw = mrtrTui(select, input);
+	const raw = mrtrTui(select, input, enforcement);
 	let owner: ExtensionAPI | undefined;
 	const harness = await createHarness({
 		extensionFactories: [
@@ -75,6 +75,33 @@ async function realSession(host = true) {
 }
 
 describe("MRTR real session presenter binding", () => {
+	it("queues concurrent terminal forms with enforcement off", async () => {
+		const f = await realSession(true, false);
+		f.script.results.push(inputResult("second"));
+		const shown = Promise.withResolvers<void>();
+		const submit = Promise.withResolvers<string>();
+		let forms = 0;
+		f.select.mockImplementation(async (_title, choices, options) => {
+			markMcpFormPresented(options);
+			if (choices.includes("Submit") && ++forms === 1) {
+				shown.resolve();
+				return submit.promise;
+			}
+			return choices.includes("Submit") ? "Submit" : choices[0];
+		});
+		const first = f.call();
+		await shown.promise;
+		const received = f.script.next("inputResultSent");
+		const second = f.call();
+		await received;
+		expect(forms).toBe(1);
+		submit.resolve("Submit");
+		const results = await Promise.all([first, second]);
+		expect(results.map(getMessageText)).toEqual(["final tool", "final tool"]);
+		expect(forms).toBe(2);
+		expect(f.script.requests).toHaveLength(4);
+		expect(f.raw.presentation.privateForms).toBeUndefined();
+	});
 	it("declares form capability and presents a form through AgentSession and ExtensionRunner", async () => {
 		const f = await realSession();
 		expect(f.harness.getExtensionRunner().getUIContext()).not.toBe(f.raw.ui);

@@ -1,4 +1,5 @@
 import { collectMrtrForm } from "../../core/extensions/builtin/mcp/modern/elicitation.ts";
+import { queuedForm } from "../../core/extensions/builtin/mcp/modern/consent-queue.ts";
 import type { ExtensionUIContext } from "../../core/extensions/types.ts";
 import type { McpFormBinding, McpFormInput } from "../../core/mcp-form-types.ts";
 import { McpPresenterAuthority } from "../rpc/mcp-presenter-authority.ts";
@@ -12,7 +13,7 @@ export function registerLocalMcpPresenter(
 ): McpFormBinding {
 	const authority = new McpPresenterAuthority();
 	const binding = authority.bind(sessionId, sessionId, admit);
-	let activeInput: McpFormInput | undefined;
+	let activeInput: { input: McpFormInput; fail: () => void } | undefined;
 	const drafts = new Map<string, AbortController>();
 	const sender = authority.connect("local_tui", (frame) => {
 		if (frame.type !== "mcp_form_request") {
@@ -20,8 +21,9 @@ export function registerLocalMcpPresenter(
 			drafts.delete(frame.dialogId);
 			return true;
 		}
-		const input = activeInput;
-		if (!input) return false;
+		const active = activeInput;
+		if (!active) return false;
+		const { input } = active;
 		const draft = new AbortController();
 		drafts.set(frame.dialogId, draft);
 		const signal = AbortSignal.any([input.operationSignal, input.presentationSignal, lifetime, draft.signal]);
@@ -41,7 +43,7 @@ export function registerLocalMcpPresenter(
 				(result) => {
 					if (!signal.aborted) authority.receive(sender, { ...envelope, type: "mcp_form_response", ...result });
 				},
-				() => authority.withdraw(sender),
+				() => active.fail(),
 			)
 			.finally(() => drafts.delete(frame.dialogId));
 		return true;
@@ -63,11 +65,47 @@ export function registerLocalMcpPresenter(
 			if (!presentation) return undefined;
 			return {
 				...presentation,
-				present: (input) => {
-					activeInput = input;
-					return presentation.present(input).finally(() => {
-						if (activeInput === input) activeInput = undefined;
-					});
+				present: async (input) => {
+					const deadline = performance.now() + input.deadlineMs;
+					const timeout = new AbortController();
+					const timer = setTimeout(() => timeout.abort(), Math.max(0, input.deadlineMs));
+					const signal = AbortSignal.any([
+						input.operationSignal,
+						input.presentationSignal,
+						presentation.signal,
+						lifetime,
+						timeout.signal,
+					]);
+					try {
+						return await queuedForm(binding, signal, async () => {
+							const failure = new AbortController();
+							const current = {
+								input: {
+									...input,
+									presentationSignal: AbortSignal.any([signal, failure.signal]),
+									deadlineMs: Math.max(0, deadline - performance.now()),
+								},
+								fail: () => failure.abort(),
+							};
+							activeInput = current;
+							try {
+								return await presentation.present(current.input);
+							} finally {
+								if (activeInput === current) activeInput = undefined;
+							}
+						});
+					} catch {
+						return {
+							kind:
+								input.operationSignal.aborted || binding.signal.aborted || input.operationCurrent?.() === false
+									? "operation_aborted"
+									: "processing_failure",
+							source: "host_termination",
+							humanAdmission: false,
+						};
+					} finally {
+						clearTimeout(timer);
+					}
 				},
 			};
 		},

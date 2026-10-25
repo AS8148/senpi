@@ -307,12 +307,15 @@ export function spawnHostChild(options: {
 	});
 	if (launch.presenterBootstrapFd !== undefined) {
 		const fd = launch.presenterBootstrapFd;
-		// Lazy boundary: ordinary supervisors must not load the opt-in presenter channel.
-		void import("./mcp-presenter-bootstrap.ts").then(({ presenterBootstrapStream, relayPresenterBootstrap }) => {
-			const upstream = presenterBootstrapStream(fd);
-			if (bootstrap) return relayPresenterBootstrap(upstream, child);
-			upstream.destroy();
-		});
+		// The opt-in helper stays outside the supervisor's fixed startup import budget.
+		void import("./mcp-presenter-bootstrap.ts")
+			.then(({ presenterBootstrapStream, relayPresenterBootstrap }) => {
+				const upstream = presenterBootstrapStream(fd);
+				if (upstream && bootstrap) return relayPresenterBootstrap(upstream, child);
+				upstream?.destroy();
+				child.stdio[4]?.destroy();
+			})
+			.catch(() => child.stdio[4]?.destroy());
 	}
 	if (options.internalKey) {
 		child.stdin?.on("error", () => {});

@@ -870,6 +870,8 @@ async function attachClipboardImage(
  * Options for InteractiveMode initialization.
  */
 export interface InteractiveModeOptions {
+	/** Opt in to host-issued MCP form authority; ordinary terminal forms remain the default. */
+	mcpPresenterEnforcement?: boolean;
 	/** Renderer mode for the interactive terminal. */
 	uiMode?: TuiMode;
 	/** Providers that were migrated to auth.json (shows warning) */
@@ -3795,12 +3797,15 @@ export class InteractiveMode {
 			setToolsExpanded: (expanded) => this.setToolsExpanded(expanded),
 		};
 		const presenterSession = this.session;
-		const privateForms = registerLocalMcpPresenter(
-			context,
-			presenterSession.sessionId,
-			this.mcpMrtrPresentationLifetime.signal,
-			() => presenterSession.admitHumanAnswer(),
-		);
+		const privateForms =
+			this.options?.mcpPresenterEnforcement === true
+				? registerLocalMcpPresenter(
+						context,
+						presenterSession.sessionId,
+						this.mcpMrtrPresentationLifetime.signal,
+						() => presenterSession.admitHumanAnswer(),
+					)
+				: undefined;
 		return registerMcpMrtrPresentation(
 			context,
 			this.mcpMrtrPresentationLifetime.signal,

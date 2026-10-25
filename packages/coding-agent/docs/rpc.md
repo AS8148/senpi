@@ -5433,11 +5433,14 @@ Existing legacy MCP dialogs and their RPC request/response shapes remain unchang
 
 ### Opt-in private MCP forms
 
-A multi-session RPC host can opt in with `--mcp-presenter-enforcement`. This is a
+A multi-session RPC host or interactive terminal can opt in with `--mcp-presenter-enforcement`. This is a
 deployment option, not a project setting. It defaults to off; existing desktop and
 gateway clients keep their current behavior until they implement the private
-presenter protocol. The `mcp_form_presenter_v1` capability reports protocol support,
-not authority to present or answer a form.
+presenter protocol. Without this option, terminal forms retain their existing queue,
+legacy origin rules, and legacy stderr diagnostics. Enforced terminal forms also
+queue, and a collector failure ends only its own form, not the terminal's grant.
+The host advertises `mcp_form_presenter_v1` only when enforcement is enabled;
+the capability reports protocol support, not authority to present or answer a form.
 
 The native launch owner enrolls an Ed25519 public key through an inherited private
 bootstrap channel. Descriptor 4 is reserved for this channel; descriptor 3 remains
@@ -5445,8 +5448,13 @@ the separate owner-lifetime channel. Enrollment and management proofs sign the
 host's exact returned transcript. No secret is passed in an argument, environment
 variable, launch specification, or session state. Reusing a host does not enroll the
 caller, and a successor requires fresh enrollment and fresh grants.
-The lifecycle supervisor loads the bootstrap helper only when the reserved
-descriptor is supplied, keeping ordinary supervisors within their import budget.
+An invalid or lost bootstrap channel leaves the host without a presenter; it does
+not terminate the shared daemon or its lifetime channel. The helper remains lazy
+to preserve the supervisor's startup import budget, with import and relay failures
+contained at that boundary. Conditional idle handover
+is owned by the running host after the CLI returns: that host relays the successor's
+fresh challenge over the existing authenticated launch-owner channel. The CLI's
+bootstrap stream is never serialized into `begin_handover`.
 
 `mcp_presenter_context` returns the caller's current connection nonce and attachment
 context. These identifiers confer no authority. Acquisition and revocation use the

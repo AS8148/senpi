@@ -274,20 +274,12 @@ export class SessionEventWriter {
 		if (previousPresenter) this.presenterAuthority?.detach(previousPresenter);
 		this.fanout.registerConnection(id, connection, options);
 		if (this.presenterAuthority) {
-			let sending = false;
 			const sender = this.presenterAuthority.connect(id, (frame) => {
-				if (sending || !this.fanout.get(id)) return false;
-				sending = true;
+				if (!this.fanout.get(id)) return false;
 				try {
 					connection.writeRaw(serializeJsonLine(frame));
-					void connection.waitForBackpressure().then(
-						() => {
-							sending = false;
-						},
-						() => {
-							this.presenterAuthority?.detach(sender);
-						},
-					);
+					// A pending drain does not undo an accepted write or drop the next resolution.
+					void connection.waitForBackpressure().catch(() => this.presenterAuthority?.detach(sender));
 					return true;
 				} catch {
 					this.presenterAuthority?.detach(sender);

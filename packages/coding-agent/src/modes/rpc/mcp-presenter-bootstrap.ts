@@ -7,10 +7,15 @@ import { attachJsonlLineReader } from "./jsonl.ts";
 export const MCP_PRESENTER_BOOTSTRAP_FD = 4;
 
 /** The descriptor is not authority: only this live channel's enrollment transcript can issue grants. */
-export function presenterBootstrapStream(fd: number): Duplex {
-	if (fd !== MCP_PRESENTER_BOOTSTRAP_FD) throw new Error("presenter_bootstrap_invalid");
-	const stat = fstatSync(fd);
-	if (!stat.isSocket() && !stat.isFIFO()) throw new Error("presenter_bootstrap_invalid");
+export function presenterBootstrapStream(fd: number): Duplex | undefined {
+	if (fd !== MCP_PRESENTER_BOOTSTRAP_FD) return undefined;
+	try {
+		const stat = fstatSync(fd);
+		if (!stat.isSocket() && !stat.isFIFO()) return undefined;
+	} catch {
+		// Bootstrap is optional authority, never a reason to terminate the shared host.
+		return undefined;
+	}
 	// One stream owns the descriptor. Separate read/write stream destructors can close it twice.
 	const input = createReadStream("", { fd, autoClose: true });
 	const stream = new Duplex({

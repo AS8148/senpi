@@ -356,27 +356,27 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			}),
 		},
 	);
-	const presenterDir =
-		options.presenterBootstrapFd !== undefined &&
-		options.mcpPresenterEnforcement === true &&
-		process.platform !== "win32"
-			? await mkdtemp(join(tmpdir(), "senpi-presenter-"))
-			: undefined;
-	const presenterControl =
-		options.presenterBootstrapFd !== undefined && options.mcpPresenterEnforcement === true
-			? new McpPresenterControl(
+	let presenterDir: string | undefined;
+	let presenterControl: McpPresenterControl | undefined;
+	if (options.presenterBootstrapFd !== undefined) {
+		const bootstrap = presenterBootstrapStream(options.presenterBootstrapFd);
+		try {
+			if (bootstrap && options.mcpPresenterEnforcement === true) {
+				if (process.platform !== "win32") presenterDir = await mkdtemp(join(tmpdir(), "senpi-presenter-"));
+				presenterControl = new McpPresenterControl(
 					writer,
 					presenterDir
 						? join(presenterDir, "control.sock")
 						: `\\\\.\\pipe\\senpi-presenter-${writer.mcpPresenters?.instance}`,
-				)
-			: undefined;
-	if (options.presenterBootstrapFd !== undefined) {
-		const bootstrap = presenterBootstrapStream(options.presenterBootstrapFd);
-		if (presenterControl) {
-			await presenterControl.listen();
-			presenterControl.bootstrap(bootstrap);
-		} else bootstrap.destroy();
+				);
+				await presenterControl.listen();
+				presenterControl.bootstrap(bootstrap);
+			} else bootstrap?.destroy();
+		} catch {
+			bootstrap?.destroy();
+			presenterControl?.dispose();
+			presenterControl = undefined;
+		}
 	}
 	const observers = startHostObservers(router, writer, {
 		trim,

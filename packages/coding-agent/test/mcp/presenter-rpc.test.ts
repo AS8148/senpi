@@ -10,7 +10,7 @@ import {
 	createAgentSessionFromServices,
 	createAgentSessionServices,
 } from "../../src/core/agent-session-runtime.ts";
-import { privateMcpForms } from "../../src/core/mcp-form-types.ts";
+import { privateMcpForms, type McpFormRequest } from "../../src/core/mcp-form-types.ts";
 import type { ExtensionUIContext } from "../../src/core/extensions/types.ts";
 import { normalizeServer } from "../../src/core/extensions/builtin/mcp/config.ts";
 import { ServerConnection } from "../../src/core/extensions/builtin/mcp/connection.ts";
@@ -25,6 +25,82 @@ import {
 import { createHostCore } from "../../src/modes/rpc/multi-session-host.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import { inputResult, MrtrScript, startMrtrServer } from "./fixtures/mrtr-2026-server.ts";
+
+it.each([false, true])("host presenter advertisement follows enforcement (%s)", async (enforced) => {
+	const root = await mkdtemp(join(tmpdir(), "presenter-capability-"));
+	const records: Record<string, unknown>[] = [];
+	const writer = new SessionEventWriter((line) => records.push(JSON.parse(line)));
+	const core = createHostCore(
+		{
+			agentDir: root,
+			cwd: root,
+			createRuntime: async () => {
+				throw new Error("Protocol query must not open a session");
+			},
+			mcpPresenterEnforcement: enforced,
+		},
+		writer,
+	);
+	try {
+		await core.handle(JSON.stringify({ type: "get_protocol_info", id: "protocol" }));
+		await writer.flush();
+		const data = records.find((record) => record.id === "protocol")?.data;
+		if (!isRecord(data) || !Array.isArray(data.capabilities)) throw new Error("Missing protocol information");
+		expect(data.capabilities.includes("mcp_form_presenter_v1")).toBe(enforced);
+	} finally {
+		await core.router.dispose();
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+it("private resolution and the next form survive an outstanding socket drain", async () => {
+	const writer = new SessionEventWriter(() => {});
+	const authority = writer.enableMcpPresenters();
+	const frames: Array<McpFormRequest | { type: string }> = [];
+	const drain = Promise.withResolvers<void>();
+	writer.registerConnection("human", {
+		writeRaw: (line) => frames.push(JSON.parse(line)),
+		waitForBackpressure: () => drain.promise,
+	});
+	writer.bindMcpForms("session", "durable", {}, () => {});
+	writer.attachConnectionToSession("human", "session");
+	const binding = writer.getMcpFormBinding("session");
+	const sender = writer.getMcpPresenterConnection("human");
+	if (!binding || !sender) throw new Error("Missing presenter");
+	const owner = authority.enroll();
+	owner.acquire(owner.register(binding, sender, { kind: "desktop" }));
+	const presentation = binding.capture();
+	if (!presentation) throw new Error("Missing grant");
+	const input = {
+		operationId: "operation",
+		inputId: "input",
+		round: 0,
+		server: { label: "fixture", source: "user" as const },
+		message: "fixture",
+		schema: { type: "object" as const, properties: {} },
+		operationSignal: new AbortController().signal,
+		presentationSignal: presentation.signal,
+		deadlineMs: 1000,
+	};
+	try {
+		const first = presentation.present(input);
+		const frame = frames[0] as McpFormRequest;
+		const { sessionId, bindingEpoch, attachmentEpoch, grantId, dialogId, dialogToken, formRevision } = frame;
+		const envelope = { sessionId, bindingEpoch, attachmentEpoch, grantId, dialogId, dialogToken, formRevision };
+		authority.receive(sender, { ...envelope, type: "mcp_form_presented" });
+		authority.receive(sender, { ...envelope, type: "mcp_form_response", action: "accept", content: {} });
+		await first;
+		expect(frames.map((value) => value.type)).toEqual(["mcp_form_request", "mcp_form_resolved"]);
+		const second = presentation.present({ ...input, operationId: "second" });
+		expect(frames.map((value) => value.type)).toEqual(["mcp_form_request", "mcp_form_resolved", "mcp_form_request"]);
+		binding.dispose();
+		expect(await second).toMatchObject({ kind: "operation_aborted" });
+	} finally {
+		drain.resolve();
+		writer.unregisterConnection("human");
+		authority.dispose();
+	}
+});
 
 it.each([false, true])("private MRTR processing failure sends no continuation (ready=%s)", async (ready) => {
 	const root = await mkdtemp(join(tmpdir(), "presenter-unavailable-"));

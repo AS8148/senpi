@@ -1,14 +1,42 @@
 import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { closeSync, openSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { connect, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { isRecord } from "../../src/core/extensions/builtin/mcp/modern/form-schema.ts";
 import { McpPresenterControl } from "../../src/modes/rpc/mcp-presenter-control.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import { bootstrapRelayProbe } from "./fixtures/presenter-bootstrap-relay.ts";
+
+it("an invalid bootstrap descriptor neither rejects nor crashes the supervisor", async () => {
+	const descriptor = openSync(process.platform === "win32" ? "NUL" : "/dev/null", "r");
+	const child = spawn(
+		process.execPath,
+		["--import", "tsx", fileURLToPath(new URL("./fixtures/presenter-invalid-bootstrap.ts", import.meta.url))],
+		{ stdio: ["ignore", "pipe", "pipe", "ignore", descriptor] },
+	);
+	closeSync(descriptor);
+	let stdout = "";
+	let stderr = "";
+	child.stdout?.on("data", (chunk) => {
+		stdout += String(chunk);
+	});
+	child.stderr?.on("data", (chunk) => {
+		stderr += String(chunk);
+	});
+	try {
+		const [code, signal] = await once(child, "close", { signal: AbortSignal.timeout(60_000) });
+		expect({ code, signal, stderr }).toEqual({ code: 0, signal: null, stderr: "" });
+		expect(stdout).toBe("ordinary-child-survived\n");
+	} finally {
+		if (child.exitCode === null) child.kill();
+	}
+}, 65_000);
 
 it.each(["node", "bun"])(
 	"the %s child keeps bootstrap fd 4 separate from owner fd 3",
