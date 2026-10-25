@@ -379,13 +379,14 @@ export class SessionLifecycleController {
 
 	/**
 	 * Derived only from the current run's own end, bound when its agent_end was emitted: an end processed after a
-	 * later run started sets nothing. An unchanged stop keeps its first `at`.
+	 * later run started sets nothing, and so does a fact refresh that carries no bound turn end, even when the goal
+	 * collector still returns the previous run's end. An unchanged stop keeps its first `at`.
 	 */
 	private lastStop(input: TurnEndLivenessInput | undefined, stalled: boolean): SessionLifecycle["lastStop"] {
 		const existing = this.ledger.snapshot.lastStop;
 		const runId = this.ledger.runId;
 		if (!runId || runId === this.restoredRunId) return existing;
-		if (this.stopFacts && this.stopFacts.runId !== runId) return existing;
+		if (this.stopFacts?.runId !== runId) return existing;
 		const deadline = input && this.deadlineStop?.runId === runId ? this.deadlineStop : undefined;
 		const detail = stopDetail(input, this.stopFacts, deadline, stalled);
 		if (!detail) return existing;

@@ -167,6 +167,20 @@ it("sets nothing when a run's turn end arrives after the next run started", asyn
 		expect(record.lastStop).toBeUndefined();
 });
 
+it("sets nothing from a fact refresh that carries no bound turn end", async () => {
+	// Given a running run and a refresh whose goal collector still returns the previous run's aborted end.
+	const { manager, controller, runId } = await startedRun();
+
+	// When the refresh arrives with no bound turn end (a wake, timer, goal-store or idle refresh).
+	controller.goalFacts(null, input({ endedBy: "unknown-abort" }));
+	controller.idle();
+
+	// Then it sets no stop on the current run.
+	expect(controller.snapshot.lastStop).toBeUndefined();
+	for (const record of records(manager).filter((entry) => entry.runId === runId))
+		expect(record.lastStop).toBeUndefined();
+});
+
 it.each([
 	{ endedBy: "system-abort", abortSource: "system" },
 	{ endedBy: "provider-abort", abortSource: "provider" },
@@ -174,7 +188,7 @@ it.each([
 	{ endedBy: "unknown-abort", abortSource: undefined },
 ] as const)("names a $endedBy end as an abort with its source", async ({ endedBy, abortSource }) => {
 	const { controller, runId } = await startedRun();
-	controller.goalFacts(null, input({ endedBy }));
+	controller.goalFacts(null, input({ endedBy }), { runId });
 	controller.idle();
 	expect(controller.snapshot.lastStop).toMatchObject({ cause: "aborted", runId, epoch: 1 });
 	expect(controller.snapshot.lastStop?.abortSource).toBe(abortSource);
@@ -182,7 +196,7 @@ it.each([
 
 it("names an open-work end nothing will continue as no_wake", async () => {
 	const { controller, runId } = await startedRun();
-	controller.goalFacts(null, input({ openWork: { kind: "open-todos", count: 1 } }));
+	controller.goalFacts(null, input({ openWork: { kind: "open-todos", count: 1 } }), { runId });
 	controller.idle();
 	expect(controller.snapshot.state).toBe("waiting_human");
 	expect(controller.snapshot.lastStop).toMatchObject({ cause: "no_wake", runId });
@@ -191,8 +205,8 @@ it("names an open-work end nothing will continue as no_wake", async () => {
 it.each(["provider-error", "policy-rejection"] as const)(
 	"keeps a %s on the failed path with no stop",
 	async (endedBy) => {
-		const { controller } = await startedRun();
-		controller.goalFacts(null, input({ endedBy }));
+		const { controller, runId } = await startedRun();
+		controller.goalFacts(null, input({ endedBy }), { runId });
 		controller.idle();
 		expect(controller.snapshot).toMatchObject({ state: "failed", failure: { reason: "provider_error" } });
 		expect(controller.snapshot.lastStop).toBeUndefined();
@@ -207,7 +221,7 @@ it("keeps a deadline stop while live child work keeps the session waiting", asyn
 	controller.deadlineStopped("max_runtime", at);
 
 	// When its turn end arrives.
-	controller.goalFacts(null, input({ endedBy: "system-abort", deadlineStop: true }));
+	controller.goalFacts(null, input({ endedBy: "system-abort", deadlineStop: true }), { runId });
 	controller.idle();
 
 	// Then the state still names the child, and the stop names the deadline that ended this run.

@@ -147,7 +147,9 @@ describe("lastStop run correlation for a turn deadline (senpi#3864)", () => {
 				epoch: 1,
 				...(write === "fails" ? { persisted: false } : {}),
 			};
-			expect(h.session.lifecycle.persisted).toBe(true);
+			// The snapshot-level `persisted` and `selfSettleEligible` read the same whether the entry write succeeded or not.
+			expect(h.session.lifecycle.lastStop?.persisted).toBe(write === "fails" ? false : undefined);
+			expect(h.session.lifecycle).toMatchObject({ persisted: true, selfSettleEligible: true });
 			expect(h.session.lifecycle.lastStop).toEqual(expectedStop);
 
 			// And a reload before run B restores exactly the stop its record carries.
