@@ -1,3 +1,28 @@
+## 2026-10-24 - Hold interrupted reopen continuations until human recovery (senpi#4204)
+
+### What changed
+
+- `agent-session.ts` establishes an interrupted session hold before session-start hooks run.
+- `agent-session.ts` refreshes lifecycle facts on each explicit Stop, including a Stop added while interrupted recovery already holds the session.
+- `lifecycle-session-binding.ts` recognizes consumed delivery custody before session-start admission, while leaving interruption record recovery in its existing pass.
+- `lifecycle-runtime-facts.ts` reports the interruption gate as a human wait, preserving attended `waiting_human`, unattended `held`, and genuine Stop precedence without changing lifecycle state names.
+- `stop-resume-directive.ts` and `run-resume-turn.ts` distinguish interrupted recovery from a user Stop while retaining the partial-side-effect advice for Resume and first input.
+- `agent-session.ts` leaves payload-free held notices to their existing producer revalidation, avoiding an extra recovery-only turn for a goal completed while held.
+- `engine-turn-limit.ts` and `agent-session.ts` preserve the unattended resume-window budget across an interrupted recovery directive; genuine user input and user Stop recovery keep their existing reset behavior.
+- `agent-session.ts` does not impose user Stop authority on ordinary RPC input after an interruption, preserving input recovery and admission retry receipts.
+
+### Why
+
+- Reopening a crashed run could attempt automatic continuation before human input, reject the turn, and fail the session switch.
+
+### Why an extension could not handle it
+
+- Lifecycle restoration and extension startup ordering belong to the session core.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: extension binding startup; `lifecycle-session-binding.ts`: restored custody registration.
+
 ## 2026-10-25 - Scan each selected skill root once per load (senpi#4213)
 
 ### What changed
