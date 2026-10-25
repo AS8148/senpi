@@ -39,6 +39,7 @@ export function stopDetail(
 	deadline: DeadlineStopCapture | undefined,
 	stalled: boolean,
 ): StopDetail | undefined {
+	if (input?.endedBy === "provider-error" || input?.endedBy === "policy-rejection") return undefined;
 	if (deadline)
 		return {
 			cause: "deadline",
@@ -46,7 +47,6 @@ export function stopDetail(
 			at: deadline.at,
 			...(deadline.persisted === false ? { persisted: false as const } : {}),
 		};
-	if (input?.endedBy === "provider-error" || input?.endedBy === "policy-rejection") return undefined;
 	if (facts?.guard)
 		return { cause: "goal_guard", guard: facts.guard.reason, at: new Date(facts.guard.at).toISOString() };
 	if (facts?.todo === "capped" || facts?.todo === "cap") return { cause: "todo_guard", todo: "cap" };
@@ -67,7 +67,7 @@ export function sameStop(stop: LifecycleStop, detail: StopDetail): boolean {
 	);
 }
 
-/** The latest goal guard stop appended after `runStartLeafId`, the branch leaf when the stopping run started. */
+/** The latest guard appended within one bound end's extension-processing window, including legacy entries. */
 export function goalGuardAfter(
 	branch: readonly {
 		readonly id: string;
@@ -75,10 +75,10 @@ export function goalGuardAfter(
 		readonly customType?: string;
 		readonly data?: unknown;
 	}[],
-	runStartLeafId: string | null,
+	guardStartLeafId: string | null,
 ): RunStopFacts["guard"] {
-	const start = runStartLeafId === null ? -1 : branch.findIndex((entry) => entry.id === runStartLeafId);
-	if (runStartLeafId !== null && start < 0) return undefined;
+	const start = guardStartLeafId === null ? -1 : branch.findIndex((entry) => entry.id === guardStartLeafId);
+	if (guardStartLeafId !== null && start < 0) return undefined;
 	for (let index = branch.length - 1; index > start; index--) {
 		const entry = branch[index];
 		if (entry?.type !== "custom" || entry.customType !== "goal-continuation-stopped" || !isRecord(entry.data))

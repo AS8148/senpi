@@ -4465,8 +4465,9 @@ export class AgentSession {
 				this._findLastAssistantInMessages(event.messages)?.stopReason === "aborted",
 			);
 			try {
+				const guardStartLeafId = this.sessionManager.getLeafId();
 				await this._extensionRunner.emit(extensionEvent);
-				await this._lifecycleBinding.turnEnded(extensionEvent, event);
+				await this._lifecycleBinding.turnEnded(extensionEvent, event, guardStartLeafId);
 			} finally {
 				this._abortProvenance.endAgentEnd(extensionEvent);
 			}

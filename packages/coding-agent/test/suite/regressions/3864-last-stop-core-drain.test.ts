@@ -5,6 +5,9 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
 import goalExtension from "../../../src/core/extensions/builtin/goal/index.ts";
+import { admitAndQueueGoalContinuation } from "../../../src/core/extensions/builtin/goal/lifecycle-helpers.ts";
+import { createGoal } from "../../../src/core/extensions/builtin/goal/store.ts";
+import { goalStoreRef } from "../../../src/core/extensions/builtin/goal/store-ref.ts";
 import {
 	TODO_OWED_REMINDER_EVENT,
 	type TodoOwedReminderEvent,
@@ -161,4 +164,93 @@ it("keeps a run's late todo cap off the run the core drained before that end was
 	});
 	reloaded.restoreComplete();
 	expect(reloaded.snapshot.lastStop).toEqual(stopB);
+});
+
+it.each([
+	{ drain: false, aborted: false },
+	{ drain: true, aborted: false },
+	{ drain: true, aborted: true },
+])("keeps A's goal guard on its own end with drain=$drain and B aborted=$aborted", async ({ drain, aborted }) => {
+	// senpi#3864 review r1: the goal handler appends A's guard after B's run-start leaf.
+	let coreStarts = 0;
+	let processedEnds = 0;
+	let startsAtAEnd = 0;
+	const h = await createHarness({
+		settings: { retry: { enabled: false } },
+		extensionFactories: [
+			(pi) => {
+				pi.on("agent_end", async (_event, ctx) => {
+					if (++processedEnds !== 1) return;
+					const ref = goalStoreRef(ctx.sessionManager, ctx.cwd);
+					const goal = await createGoal(ref, "Finish the parser");
+					// Admission facts describe A's completed turn, not B's live streaming state.
+					await admitAndQueueGoalContinuation(pi, ctx, goal, {
+						input: {
+							isIdle: true,
+							hasPendingMessages: false,
+							path: "immediate",
+							lastStopReason: "stop",
+							lastTurnWasMalformedToolUse: false,
+							consecutiveContinuations: 8,
+							lastContinuationSignature: undefined,
+							currentSignature: "A",
+							consecutiveLengthRecoveries: 0,
+							recentNormalizedOutputHashes: [],
+							toollessContinuationStreak: 0,
+							continuationPending: false,
+							lastTurnStuckOnContextOverflow: false,
+						},
+						content: () => "Continue",
+						markContinuationPending: () => {},
+					});
+					startsAtAEnd = coreStarts;
+				});
+			},
+			goalExtension,
+		],
+	});
+	harnesses.push(h);
+	await h.session.bindExtensions({ mode: "rpc" });
+	h.session.agent.subscribe((event) => {
+		if (event.type === "agent_start") coreStarts++;
+		if (event.type !== "agent_end" || coreStarts !== 1 || !drain) return;
+		h.session.agent.followUp({
+			role: "custom",
+			customType: "test-follow-up",
+			content: [{ type: "text", text: "A watched job finished." }],
+			display: false,
+			timestamp: Date.now(),
+		});
+	});
+	h.setResponses([
+		fauxAssistantMessage("Pausing the parser."),
+		{
+			...fauxAssistantMessage("Noted the watched job.", { stopReason: aborted ? "aborted" : "stop" }),
+			...(aborted ? { abortSource: "provider" as const } : {}),
+		},
+	]);
+	await h.session.prompt("Work on the parser.");
+	await h.session.waitForSettledSessionWork();
+
+	expect(coreStarts).toBe(drain ? 2 : 1);
+	expect(startsAtAEnd).toBe(drain ? 2 : 1);
+	const guards = h.sessionManager
+		.getBranch()
+		.filter((entry) => entry.type === "custom" && entry.customType === "goal-continuation-stopped");
+	expect(guards).toHaveLength(1);
+	expect(guards[0]).toMatchObject({ data: { reason: "cap" } });
+	const records = lifecycleRecords(h);
+	const [runA, runB] = [...new Set(records.map((record) => record.runId))];
+	if (!drain) {
+		expect(h.session.lifecycle.lastStop).toMatchObject({ cause: "goal_guard", guard: "cap", runId: runA });
+		return;
+	}
+	// A's late end cannot publish a stop once B is current. B must never inherit A's guard, including on refresh.
+	for (const record of records) {
+		expect(record.lastStop?.runId).not.toBe(runA);
+		if (record.runId === runB) expect(record.lastStop?.cause).not.toBe("goal_guard");
+	}
+	if (aborted)
+		expect(h.session.lifecycle.lastStop).toMatchObject({ cause: "aborted", abortSource: "provider", runId: runB });
+	else expect(h.session.lifecycle.lastStop?.cause).not.toBe("goal_guard");
 });

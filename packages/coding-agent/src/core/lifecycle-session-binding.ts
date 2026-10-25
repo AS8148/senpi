@@ -14,7 +14,7 @@ import { lifecycleHistory } from "./lifecycle-history.ts";
 import { bindLifecycleHumanInput } from "./lifecycle-human-input.ts";
 import type { LifecycleRecord } from "./lifecycle-record.ts";
 import { readLifecycleRuntimeFacts } from "./lifecycle-runtime-facts.ts";
-import { goalGuardAfter } from "./lifecycle-stop.ts";
+import { goalGuardAfter, type RunStopFacts } from "./lifecycle-stop.ts";
 import { SessionLifecycleController } from "./session-lifecycle.ts";
 import type { SessionLifecycleEvent } from "./session-lifecycle-types.ts";
 import type { TurnDeadlineKind } from "./turn-deadline.ts";
@@ -39,8 +39,8 @@ export class LifecycleSessionBinding {
 	/** The run each emitted agent_end belonged to, read when it was emitted, not when its queue reaches it. */
 	private readonly boundEnds = new WeakMap<object, string | undefined>();
 	private lastEndRunId: string | undefined;
-	/** The branch leaf when this process started the current run; undefined before any live run. */
-	private runStartLeafId: string | null | undefined;
+	/** Captured once inside the bound end's own extension-processing window, never re-scanned by a later run. */
+	private lastEndGuard: RunStopFacts["guard"];
 	private refreshGeneration = 0;
 	private restored = false;
 	private nextRunOrigin: "human" | "automatic" | undefined;
@@ -142,7 +142,7 @@ export class LifecycleSessionBinding {
 
 	startRun(): void {
 		this.lastEnd = undefined;
-		this.runStartLeafId = this.session.sessionManager.getLeafId();
+		this.lastEndGuard = undefined;
 		const origin = this.nextRunOrigin;
 		this.nextRunOrigin = undefined;
 		this.controller.startRun(origin);
@@ -171,9 +171,13 @@ export class LifecycleSessionBinding {
 	}
 
 	/** `event` is the extension agent_end, never the session-level stamp; `end` is the core event bound at emission. */
-	async turnEnded(event: AgentEndEvent, end: object): Promise<void> {
+	async turnEnded(event: AgentEndEvent, end: object, guardStartLeafId?: string | null): Promise<void> {
 		this.lastEnd = event;
 		this.lastEndRunId = this.boundEnds.get(end);
+		this.lastEndGuard =
+			guardStartLeafId === undefined
+				? undefined
+				: goalGuardAfter(this.session.sessionManager.getBranch(), guardStartLeafId);
 		await this.refreshFacts();
 	}
 
@@ -222,14 +226,13 @@ export class LifecycleSessionBinding {
 				providerRetryAtMs: input.providerRetryAtMs ?? saved.providerRetryAtMs,
 			};
 		// Stop facts belong to the run that just ended in this process; a restored end carries its recorded stop.
-		const stop =
-			this.lastEnd && this.runStartLeafId !== undefined
-				? {
-						runId: this.lastEndRunId,
-						guard: goalGuardAfter(this.session.sessionManager.getBranch(), this.runStartLeafId),
-						todo: collected?.todoOutcome,
-					}
-				: undefined;
+		const stop = this.lastEnd
+			? {
+					runId: this.lastEndRunId,
+					guard: this.lastEndGuard,
+					todo: collected?.todoOutcome,
+				}
+			: undefined;
 		this.controller.goalFacts(goal, input, stop);
 	}
 

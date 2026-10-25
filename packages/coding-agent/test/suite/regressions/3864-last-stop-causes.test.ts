@@ -206,6 +206,7 @@ it.each(["provider-error", "policy-rejection"] as const)(
 	"keeps a %s on the failed path with no stop",
 	async (endedBy) => {
 		const { controller, runId } = await startedRun();
+		controller.deadlineStopped("inactivity", Date.UTC(2026, 9, 25));
 		controller.goalFacts(null, input({ endedBy }), { runId });
 		controller.idle();
 		expect(controller.snapshot).toMatchObject({ state: "failed", failure: { reason: "provider_error" } });
