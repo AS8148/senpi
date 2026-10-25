@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import { mcpElapsedClock } from "../wrap.ts";
 import type { DiscoveryResult } from "./era.ts";
 import { isRecord } from "./form-schema.ts";
 
@@ -138,7 +139,7 @@ export class ModernSubscriptions {
 	}
 
 	#cancel(): void {
-		if (this.#timer) clearTimeout(this.#timer);
+		if (this.#timer) mcpElapsedClock.cancel(this.#timer);
 		this.#timer = undefined;
 		const active = this.#active;
 		this.#active = undefined;
@@ -176,7 +177,7 @@ export class ModernSubscriptions {
 	#failed(active: { id: string }): void {
 		if (this.#closed || this.#active !== active) return;
 		this.#active = undefined;
-		this.#timer = setTimeout(
+		this.#timer = mcpElapsedClock.schedule(
 			() => {
 				this.#timer = undefined;
 				this.#open();
