@@ -104,6 +104,11 @@ describe("internal agent channel #4272", () => {
 
 	it("orders agent thinking timing after the event it amends", async () => {
 		const source = new AssistantMessageEventStream({ captureBlocks: true });
+		const agent = new Agent({ initialState: { model }, streamFn: () => source });
+		const records: OrderedAgentRecord[] = [];
+		const unsubscribe = subscribeInternalAgent(agent, (record) => {
+			records.push(record);
+		});
 		const partial = message();
 		source.push({ type: "start", partial });
 		partial.content.push({ type: "thinking", thinking: "" });
@@ -112,11 +117,6 @@ describe("internal agent channel #4272", () => {
 		partial.stopReason = "stop";
 		source.push({ type: "done", reason: "stop", message: partial });
 		source.end(partial);
-		const agent = new Agent({ initialState: { model }, streamFn: () => source });
-		const records: OrderedAgentRecord[] = [];
-		const unsubscribe = subscribeInternalAgent(agent, (record) => {
-			records.push(record);
-		});
 		await agent.prompt("fixture");
 		unsubscribe();
 		// The provider captured each block before the agent stamped its timing, so the metadata must follow it.

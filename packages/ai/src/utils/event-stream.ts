@@ -94,14 +94,14 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 			this.resolveFinalResult(this.extractResult(event));
 		}
 
-		this.deliver({ event });
+		this.#deliver({ event });
 	}
 
 	protected enqueueProgress(progress: AssistantProgress): void {
-		if (!this.done) this.deliver({ progress });
+		if (!this.done) this.#deliver({ progress });
 	}
 
-	private deliver(entry: OrderedEntry<T>): void {
+	#deliver(entry: OrderedEntry<T>): void {
 		const waiter = this.waiting.dequeue();
 		if (waiter) {
 			waiter.resolve({ value: entry, done: false });
@@ -207,7 +207,8 @@ export class AssistantMessageEventStream extends EventStream<AssistantMessageEve
 		);
 		if (options.captureBlocks) enableAssistantCapture(this);
 		setAssistantProgressWriter(this, (progress) => this.enqueueProgress(progress));
-		// A subclass that replaces iteration (cancellation, snapshots, remapping) stays unaware unless it registers a reader.
+		// A subclass that replaces iteration (cancellation, snapshots, remapping) stays unaware unless it registers a reader;
+		// one that remaps contentIndex in push must register its own reader too, or progress keeps the unmapped indices.
 		if (new.target.prototype[Symbol.asyncIterator] === AssistantMessageEventStream.prototype[Symbol.asyncIterator])
 			setAssistantReader(this, (project) => this.mapIterator(project));
 	}

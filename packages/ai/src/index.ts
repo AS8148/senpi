@@ -42,6 +42,7 @@ export {
 	carryAssistantCapture,
 	getAssistantCapture,
 	isAssistantProgress,
+	subscribeAssistantCapture,
 } from "./utils/assistant-capture.ts";
 export type { MistralOptions } from "./api/mistral-conversations.ts";
 export type {

@@ -1,4 +1,4 @@
-import type { AssistantProgress } from "@earendil-works/pi-ai";
+import { type AssistantProgress, subscribeAssistantCapture } from "@earendil-works/pi-ai";
 import type { AgentEvent, AgentLoopConfig } from "./types.ts";
 
 export const internalProgressSink = Symbol("internalProgressSink");
@@ -9,7 +9,10 @@ export type OrderedAgentRecord = InternalEvent & { readonly sequence: number };
 type Listener = (record: OrderedAgentRecord) => Promise<void> | void;
 const channels = new WeakMap<object, { sequence: number; listeners: Set<Listener> }>();
 
-/** S02a owner seam: deliberately not exported by the package barrel or subscribed by a host. */
+/**
+ * S02a owner seam: deliberately not exported by the package barrel or subscribed by a host.
+ * A listener holds a capture subscription, so provider streams that first push after it build capture records.
+ */
 export function subscribeInternalAgent(owner: object, listener: Listener): () => void {
 	let channel = channels.get(owner);
 	if (!channel) {
@@ -17,8 +20,10 @@ export function subscribeInternalAgent(owner: object, listener: Listener): () =>
 		channels.set(owner, channel);
 	}
 	channel.listeners.add(listener);
+	const release = subscribeAssistantCapture();
 	return () => {
 		channel.listeners.delete(listener);
+		release();
 	};
 }
 
