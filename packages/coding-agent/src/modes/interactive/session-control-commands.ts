@@ -2,10 +2,10 @@
  * The terminal control endpoint's command surface. It answers who it is, which one session it holds
  * and that session's state and messages, renames it, streams its feed, wakes its inbox drain, relays
  * an answer to a question the session itself asked, and applies the pane's own session controls (a
- * model, a thinking level, an interrupt - `session-control-session-commands.ts`). Nothing here can
- * prompt, steer, queue a follow-up, open a session or run a command - one delivery authority (the
- * registrant's drain) applies messages, through admission, and only there. Every other command is
- * answered `unsupported` as data; `get_protocol_info` lists the accepted ones in `commands`.
+ * model, a thinking level, an interrupt - `session-control-session-commands.ts`), and serves the host's
+ * observe-and-drive set over its one session (`session-control-rpc-commands.ts`, senpi#3229, senpi#4267). Input
+ * goes through the session's admission and only there. Every other command is answered `unsupported` as data;
+ * `get_protocol_info` lists the accepted ones in `commands`.
  */
 import { VERSION } from "../../config.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
@@ -16,7 +16,13 @@ import type {
 	QuestionResponse,
 	SessionControlDrainResult,
 } from "../../core/extensions/types.ts";
-import { SESSION_STATUS_CAPABILITY } from "../rpc/custom-capability.ts";
+import {
+	ENTRIES_TAIL_CAPABILITY,
+	OBSERVE_READS_CAPABILITY,
+	SESSION_STATUS_CAPABILITY,
+	TUI_OBSERVER_CAPABILITY,
+} from "../rpc/custom-capability.ts";
+import { answerGetEntries } from "../rpc/get-entries-command.ts";
 import { answeredUiRequestId, settledQuestionStatus, unansweredQuestionIds } from "../rpc/extension-ui-response.ts";
 import { buildRpcSessionState } from "../rpc/rpc-session-state.ts";
 import { sessionUiAnswerLedger } from "../rpc/ui-answer-ledger.ts";
@@ -55,6 +61,7 @@ const TUI_CONTROL_COMMANDS = [
 	"list_sessions",
 	"get_state",
 	"get_messages",
+	"get_entries",
 	"set_session_name",
 	"subscribe",
 	"wake",
@@ -76,7 +83,15 @@ export async function runControlCommand(
 			return success(id, type, {
 				protocolVersion: 1,
 				serverVersion: VERSION,
-				capabilities: [TUI_CONTROL_CAPABILITY, SESSION_STATUS_CAPABILITY, "snapshot_cursor", "ui_answer_ledger"],
+				capabilities: [
+					TUI_CONTROL_CAPABILITY,
+					SESSION_STATUS_CAPABILITY,
+					TUI_OBSERVER_CAPABILITY,
+					OBSERVE_READS_CAPABILITY,
+					ENTRIES_TAIL_CAPABILITY,
+					"snapshot_cursor",
+					"ui_answer_ledger",
+				],
 				mode: "tui",
 				endpoint_kind: "tui",
 				instanceId: context.instanceId,
@@ -99,6 +114,8 @@ export async function runControlCommand(
 			});
 		case "get_messages":
 			return success(id, type, { messages: session.messages });
+		case "get_entries":
+			return answerGetEntries(session, command as unknown as Parameters<typeof answerGetEntries>[1]);
 		case "set_session_name": {
 			const name = typeof command.name === "string" ? command.name.trim() : "";
 			if (name === "") return failure(id, type, "Session name cannot be empty");
