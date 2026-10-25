@@ -1,3 +1,102 @@
+## 2026-10-25 - Scan each selected skill root once per load (senpi#4213)
+
+### What changed
+
+- `skill-access.ts` deduplicates repeated source spellings and owns a realpath cache for one allowed-set build. `skill-discovery.ts` accepts that pass-local resolver.
+- Regression coverage counts realpath and directory-read calls, checks fresh authority after a link retarget, and retains the no-skills fast path. A manual harness reproduces the 748-skill, 476-link report.
+
+### Why
+
+- Package resolution retains the selected root on every skill. Rewalking those duplicate roots made startup quadratic. Thanks to @haifenghan for the report and profile in code-yeongyu/oh-my-openagent#11245.
+
+### Why an extension could not handle it
+
+- The allowed-set build and directory walk run inside core resource loading, before extensions can use the loaded skills.
+
+### Expected merge conflict zones
+
+- LOW: allowed-set construction in `skill-access.ts` and the discovery options in `skill-discovery.ts`.
+
+## 2026-10-24 - Share the task ancestry boundary validator (oh-my-openagent#10782)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-spawned-by.ts`: owns the existing three non-empty string ancestry contract for CLI and hosted inputs.
+
+### Why
+
+- `packages/coding-agent/src/core/session-spawned-by.ts`: both entry points must accept the same ancestry shape.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-spawned-by.ts`: ancestry is validated before runtime creation.
+
+### Expected merge conflict zones
+
+- LOW: new `packages/coding-agent/src/core/session-spawned-by.ts` boundary helper.
+
+## 2026-10-24 - Keep restored delivery reservations across queue clears (senpi#4198 follow-up)
+
+### What changed
+
+- `external-admission.ts`: keep restored reservations while their live custody or persisted carrier owns the delivery; release reservations whose custody ends without persistence.
+- `lifecycle-session-binding.ts`: restore custody-backed reservations and reduce delivery history once before the constructor's restoration loop.
+
+### Why
+
+- Clearing an agent queue before recovery enqueues its restored carrier must not let a gateway retry enqueue a duplicate.
+
+### Why an extension could not handle it
+
+- The admission ledger and durable custody replay are engine-owned session state.
+
+### Expected merge conflict zones
+
+- `external-admission.ts`: restored reservations and queued admission cleanup.
+- `lifecycle-session-binding.ts`: constructor custody restoration.
+
+## 2026-10-24 - Restore external delivery ownership with queued custody (omo#11209)
+
+### What changed
+
+- `packages/coding-agent/src/core/external-admission.ts`: restore a queued delivery's id without enqueueing a second carrier.
+- `packages/coding-agent/src/core/lifecycle-session-binding.ts`: synchronously restore external admission ownership from durable queued custody before asynchronous startup recovery.
+
+### Why
+
+- A receiver crash could leave queued delivery custody without a transcript entry. Recovery replayed that payload while a gateway retry queued it again against an empty process-local admission ledger.
+
+### Why an extension could not handle it
+
+- Durable custody replay and the external admission ledger are engine-owned startup state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/external-admission.ts`: admission ledger restoration.
+- `packages/coding-agent/src/core/lifecycle-session-binding.ts`: constructor custody restoration.
+
+## 2026-10-24 - Session factories forward their cwd to provider requests (senpi#2848)
+
+### What changed
+
+- `packages/coding-agent/src/core/sdk.ts`: the session's provider stream wrapper passes its resolved `cwd` alongside request options.
+- `packages/coding-agent/src/core/agent-session.ts`: background fallback probe-back requests also carry the originating session's `cwd`.
+
+### Why
+
+- `packages/coding-agent/src/core/sdk.ts`: CLI and hosted desktop sessions already resolve a project directory, but the provider boundary discarded it, so SDK children used the shared process directory instead.
+- `packages/coding-agent/src/core/agent-session.ts`: background probes bypass the session's foreground stream wrapper and must preserve the same directory.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/sdk.ts`: the shared session factory owns the resolved directory and constructs the provider request.
+- `packages/coding-agent/src/core/agent-session.ts`: the session itself constructs background fallback probes.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/sdk.ts`: the `modelRuntime.streamSimple` options object.
+- `packages/coding-agent/src/core/agent-session.ts`: the background `completeSimple` options object.
+
 ## 2026-10-24 - Honor before-prompt extension message placement (senpi#4166)
 
 ### What changed

@@ -1,3 +1,21 @@
+## 2026-10-24 - Parse standalone child ancestry before startup (oh-my-openagent#10782)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: parses `--spawned-by` as one JSON object using the shared ancestry validator, reports malformed inputs before runtime creation, and documents it in help.
+
+### Why
+
+- `packages/coding-agent/src/cli/args.ts`: process-mode children need the same structured ancestry accepted by hosted `open_session`.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/cli/args.ts`: core flags are parsed before extension loading.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: session flag parsing and help options.
+
 ## 2026-10-19 - A bare - forces the piped-stdin read (senpi#3715)
 
 ### What changed

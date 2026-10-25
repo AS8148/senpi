@@ -12,6 +12,44 @@
 
 ### Removed
 
+## [2026.10.25-1] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+- When the Anthropic Subscription commit boundary sees a committed assistant that differs from what the provider streamed, the `assistant_rewritten` record, the continuity log line and the next continuity observation now name the first field that diverged (for example `content[0].arguments.summary`), never its value ([#1975](https://github.com/code-yeongyu/senpi/issues/1975))
+
+### Changed
+
+### Fixed
+
+- Skill loading no longer rescans every user root once per discovered skill; project skill containment remains enforced. Thanks to @haifenghan for the report ([#4214](https://github.com/code-yeongyu/senpi/pull/4214)).
+
+### Removed
+
+## [2026.10.24-4] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+- `--spawned-by` accepts a JSON object with `parentSessionId`, `rootSessionId`, and `taskId` for fresh standalone child sessions. Malformed values fail before runtime creation; resumed sessions retain their ancestry.
+
+### Changed
+
+### Fixed
+
+- File paths in tool output are clickable links again in VS Code's integrated terminal when `TERM_PROGRAM` is not set there, for example a VS Code terminal connected to WSL. The terminal is now also recognised by `VSCODE_IPC_HOOK_CLI`, which VS Code sets in every integrated terminal. A terminal started from VS Code that sets its own `TERM_PROGRAM` (herdr, for example) is still detected as itself. Inside tmux the tmux check still decides, and `PI_HYPERLINKS=0` still turns links off ([#2826](https://github.com/code-yeongyu/senpi/issues/2826)).
+- Claude subscription sessions use their own project directory for SDK children and project settings instead of the shared engine directory, preventing unrelated project-memory injection and conflicting compaction owners. Thanks @jaeheungahn ([#4181](https://github.com/code-yeongyu/senpi/pull/4181)).
+- Headless MCP sessions answer elicitation with a JSON-RPC processing error without form content or UI calls. Print/json connections no longer advertise elicitation in legacy initialization or modern request metadata; TUI and RPC retain form support ([#4185](https://github.com/code-yeongyu/senpi/issues/4185)).
+- Boolean forms use a cancellable Yes/No selection: a dismissed or automatically cancelled dialog cancels the whole form without field values; an explicit No still accepts a boolean `false`.
+- Dismissing optional fields cancels instead of implicitly submitting an empty form. Forms with no field values require an explicit submission; invalid answers produce a processing error, not a user refusal.
+- Prevent duplicate cross-session delivery entries when a receiver restarts with queued delivery custody.
+- Prevent duplicate cross-session deliveries when a queue is cleared before restored delivery recovery; allow redelivery when custody is released without persistence.
+
+### Removed
+
 ## [2026.10.24-3] - 2026-10-24
 
 ### Breaking Changes

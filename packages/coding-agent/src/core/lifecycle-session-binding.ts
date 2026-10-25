@@ -73,14 +73,18 @@ export class LifecycleSessionBinding {
 		});
 		// A crashed receiver may have durable custody but no transcript entry yet. Recovery owns that
 		// delivery already; register it before session_start can let the gateway enqueue a second carrier.
-		const deliveryEntries = session.sessionManager.reduceHistory(lifecycleDeliveryEntries);
+		const deliveries = session.sessionManager.reduceHistory(lifecycleDeliveryEntries);
 		for (const record of this.controller.obligations.active) {
+			// Discover consumed work before session_start can queue another automatic turn. The later
+			// recovery pass still writes interruption/tool records, but must not be the first to close admission.
+			if (record.ticketId && (record.state === "consumed" || deliveries.has(record.ticketId)))
+				this.controller.ledger.interrupted = true;
 			if (record.state !== "queued" || !record.payload || !record.ticketId) continue;
 			const ticketId = record.ticketId;
 			const message = { role: "custom" as const, ...record.payload.message, timestamp: 0 };
 			const deliveryId = deliveryIdOf(message);
 			if (deliveryId === undefined) continue;
-			if (deliveryEntries.has(ticketId)) session.externalAdmission.observePersisted(message);
+			if (deliveries.has(ticketId)) session.externalAdmission.observePersisted(message);
 			else
 				session.externalAdmission.restoreQueued(
 					deliveryId,

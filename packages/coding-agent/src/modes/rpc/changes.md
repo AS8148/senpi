@@ -1,3 +1,21 @@
+## 2026-10-24 - Hosted ancestry uses the shared validator (oh-my-openagent#10782)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-router-open-profile.ts`: delegates ancestry validation to the shared helper without changing the hosted contract.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/session-router-open-profile.ts`: CLI and hosted sessions must not maintain duplicate validation.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-router-open-profile.ts`: the host validates launch inputs before extension loading.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/session-router-open-profile.ts`, `invalidSpawnedBy`.
+
 ## 2026-10-24 - Public POSIX endpoints prove per-launch keys before admitting commands (senpi#3815)
 
 ### What changed
