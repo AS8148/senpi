@@ -109,7 +109,7 @@ it("HTTP completion without a graceful response retries instead of retaining a d
 	expect(vi.getTimerCount()).toBe(0);
 });
 
-it("graceful server response retires its subscription without reopening or forwarding late notifications", async () => {
+it.each([true, false])("4193 graceful response ends the stream with subscription metadata=%s", async (withMeta) => {
 	vi.useFakeTimers();
 	const sent: JSONRPCMessage[] = [];
 	const subscriptions = new ModernSubscriptions(async (message) => {
@@ -118,7 +118,11 @@ it("graceful server response retires its subscription without reopening or forwa
 	subscriptions.outgoing(list(1));
 	const id = listenId(sent);
 	expect(
-		subscriptions.incoming({ jsonrpc: "2.0", id, result: { resultType: "complete", _meta: { [key]: id } } }),
+		subscriptions.incoming({
+			jsonrpc: "2.0",
+			id,
+			result: { resultType: "complete", ...(withMeta ? { _meta: { [key]: id } } : {}) },
+		}),
 	).toBe(false);
 	expect(subscriptions.incoming(notification("notifications/tools/list_changed", id))).toBe(false);
 	await vi.runAllTimersAsync();
@@ -151,13 +155,14 @@ it("abrupt HTTP failure uses bounded exponential backoff and dispose cancels the
 	expect(sent).toHaveLength(3);
 });
 
-it("paginated resource lists replace the URI filter once complete and cancel the superseded stream", async () => {
+it("4193 paginated resource lists hand over delivery only after replacement acknowledgment", async () => {
 	const sent: JSONRPCMessage[] = [];
 	const subscriptions = new ModernSubscriptions(async (message) => {
 		sent.push(message);
 	}, discovery.capabilities);
 	subscriptions.outgoing(list(1));
 	const first = listenId(sent);
+	subscriptions.incoming(notification("notifications/subscriptions/acknowledged", first, { toolsListChanged: true }));
 	subscriptions.outgoing({ jsonrpc: "2.0", id: 2, method: "resources/list" });
 	subscriptions.incoming({ jsonrpc: "2.0", id: 2, result: { resources: [{ uri: "test://a" }], nextCursor: "next" } });
 	expect(listenId(sent)).toBe(first);
@@ -168,13 +173,151 @@ it("paginated resource lists replace the URI filter once complete and cancel the
 	expect(sent.at(-1)).toMatchObject({
 		params: { notifications: { resourceSubscriptions: ["test://a", "test://b"] } },
 	});
-	expect(sent.at(-2)).toMatchObject({ method: "notifications/cancelled", params: { requestId: first } });
+	expect(sent.filter((message) => "method" in message && message.method === "notifications/cancelled")).toEqual([]);
+	expect(subscriptions.incoming(notification("notifications/tools/list_changed", first))).toBe(true);
+	expect(subscriptions.incoming(notification("notifications/tools/list_changed", second))).toBe(false);
 	subscriptions.incoming(
 		notification("notifications/subscriptions/acknowledged", second, {
+			toolsListChanged: true,
 			resourceSubscriptions: ["test://b", "test://unrequested"],
 		}),
 	);
+	expect(sent.at(-1)).toMatchObject({ method: "notifications/cancelled", params: { requestId: first } });
+	expect(subscriptions.incoming(notification("notifications/tools/list_changed", first))).toBe(false);
+	expect(subscriptions.incoming(notification("notifications/tools/list_changed", second))).toBe(true);
 	expect(subscriptions.incoming(notification("notifications/resources/updated", first))).toBe(false);
-	expect(subscriptions.incoming(notification("notifications/resources/updated", second))).toBe(true);
+	expect(
+		subscriptions.incoming({
+			jsonrpc: "2.0",
+			method: "notifications/resources/updated",
+			params: { _meta: { [key]: second }, uri: "test://b" },
+		}),
+	).toBe(true);
 	subscriptions.dispose();
 });
+
+it("4193 resource updates reach refresh handlers only for an accepted URI", () => {
+	const sent: JSONRPCMessage[] = [];
+	const subscriptions = new ModernSubscriptions(async (message) => {
+		sent.push(message);
+	}, discovery.capabilities);
+	subscriptions.outgoing({ jsonrpc: "2.0", id: 1, method: "resources/list" });
+	subscriptions.incoming({ jsonrpc: "2.0", id: 1, result: { resources: [{ uri: "test://a" }, { uri: "test://b" }] } });
+	const id = listenId(sent);
+	subscriptions.incoming(
+		notification("notifications/subscriptions/acknowledged", id, {
+			resourceSubscriptions: ["test://a", "test://unrequested"],
+		}),
+	);
+	const refresh = vi.fn();
+	for (const uri of ["test://a", "test://b", "test://unrequested", undefined]) {
+		const message: JSONRPCMessage = {
+			jsonrpc: "2.0",
+			method: "notifications/resources/updated",
+			params: { _meta: { [key]: id }, ...(uri === undefined ? {} : { uri }) },
+		};
+		if (subscriptions.incoming(message)) refresh(uri);
+	}
+	expect(refresh.mock.calls).toEqual([["test://a"]]);
+	subscriptions.dispose();
+});
+
+it("4193 acknowledgment missing the required notifications object cancels and retries with backoff", async () => {
+	vi.useFakeTimers();
+	const sent: JSONRPCMessage[] = [];
+	const subscriptions = new ModernSubscriptions(async (message) => {
+		sent.push(message);
+	}, discovery.capabilities);
+	cleanup.push(async () => subscriptions.dispose());
+	subscriptions.outgoing(list(1));
+	const id = listenId(sent);
+	subscriptions.incoming(notification("notifications/subscriptions/acknowledged", id));
+	expect(sent.at(-1)).toMatchObject({ method: "notifications/cancelled", params: { requestId: id } });
+	expect(subscriptions.incoming(notification("notifications/tools/list_changed", id))).toBe(false);
+	await vi.advanceTimersByTimeAsync(999);
+	expect(listenId(sent)).toBe(id);
+	await vi.advanceTimersByTimeAsync(1);
+	expect(listenId(sent)).not.toBe(id);
+});
+
+it("4193 quick acknowledged disconnects grow backoff until an accepted notification proves health", async () => {
+	vi.useFakeTimers();
+	const sent: JSONRPCMessage[] = [];
+	const drops: Array<ReturnType<typeof Promise.withResolvers<void>>> = [];
+	const subscriptions = new ModernSubscriptions(
+		(message) => {
+			sent.push(message);
+			if ("method" in message && message.method === "subscriptions/listen") {
+				const drop = Promise.withResolvers<void>();
+				drops.push(drop);
+				return drop.promise;
+			}
+			return Promise.resolve();
+		},
+		discovery.capabilities,
+		true,
+	);
+	cleanup.push(async () => subscriptions.dispose());
+	subscriptions.outgoing(list(1));
+	for (const delay of [1000, 2000, 4000]) {
+		const id = listenId(sent);
+		subscriptions.incoming(notification("notifications/subscriptions/acknowledged", id, { toolsListChanged: true }));
+		drops.at(-1)?.resolve();
+		await vi.advanceTimersByTimeAsync(delay - 1);
+		expect(listenId(sent)).toBe(id);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(listenId(sent)).not.toBe(id);
+	}
+	const healthy = listenId(sent);
+	subscriptions.incoming(
+		notification("notifications/subscriptions/acknowledged", healthy, { toolsListChanged: true }),
+	);
+	expect(subscriptions.incoming(notification("notifications/tools/list_changed", healthy))).toBe(true);
+	drops.at(-1)?.resolve();
+	await vi.advanceTimersByTimeAsync(999);
+	expect(listenId(sent)).toBe(healthy);
+	await vi.advanceTimersByTimeAsync(1);
+	expect(listenId(sent)).not.toBe(healthy);
+});
+
+it.each([true, false])(
+	"4193 concurrent resource sweeps publish only the latest complete set, latest finishes first=%s",
+	(latestFirst) => {
+		const sent: JSONRPCMessage[] = [];
+		const subscriptions = new ModernSubscriptions(async (message) => {
+			sent.push(message);
+		}, discovery.capabilities);
+		subscriptions.outgoing(list(1));
+		const initial = listenId(sent);
+		subscriptions.outgoing({ jsonrpc: "2.0", id: 2, method: "resources/list" });
+		subscriptions.outgoing({ jsonrpc: "2.0", id: 3, method: "resources/list" });
+		subscriptions.incoming({
+			jsonrpc: "2.0",
+			id: 3,
+			result: { resources: [{ uri: "test://new-a" }], nextCursor: "new" },
+		});
+		subscriptions.incoming({
+			jsonrpc: "2.0",
+			id: 2,
+			result: { resources: [{ uri: "test://old-a" }], nextCursor: "old" },
+		});
+		subscriptions.outgoing({ jsonrpc: "2.0", id: 4, method: "resources/list", params: { cursor: "old" } });
+		subscriptions.outgoing({ jsonrpc: "2.0", id: 5, method: "resources/list", params: { cursor: "new" } });
+		const old: JSONRPCMessage = { jsonrpc: "2.0", id: 4, result: { resources: [{ uri: "test://old-b" }] } };
+		const latest: JSONRPCMessage = { jsonrpc: "2.0", id: 5, result: { resources: [{ uri: "test://new-b" }] } };
+		if (!latestFirst) {
+			subscriptions.incoming(old);
+			expect(listenId(sent)).toBe(initial);
+		}
+		subscriptions.incoming(latest);
+		const published = listenId(sent);
+		expect(sent.at(-1)).toMatchObject({
+			params: { notifications: { resourceSubscriptions: ["test://new-a", "test://new-b"] } },
+		});
+		if (latestFirst) {
+			subscriptions.incoming(old);
+			expect(listenId(sent)).toBe(published);
+		}
+		subscriptions.dispose();
+	},
+);
