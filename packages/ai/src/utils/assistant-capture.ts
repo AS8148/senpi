@@ -6,7 +6,12 @@ export type AssistantProgress =
 	| {
 			type: "message_block_metadata";
 			contentIndex: number;
+			/** Appends to the signature; `thinkingSignature` and `textSignature` replace it. */
 			thinkingSignatureDelta?: string;
+			thinkingSignature?: string;
+			textSignature?: string;
+			redacted?: true;
+			name?: string;
 			startedAt?: number;
 			endedAt?: number;
 	  }
@@ -66,6 +71,28 @@ export function pushAssistantProgress(owner: object, progress: AssistantProgress
 					progress.type === "message_block_state" ? { ...progress, block: publicBlock(progress.block) } : progress,
 				),
 	);
+}
+
+/** A text or thinking signature replaced without a public event; an unchanged or empty one records nothing. */
+export function pushAssistantSignature(
+	owner: object,
+	contentIndex: number,
+	block: Extract<PublicBlock, { type: "text" | "thinking" }>,
+	signature: string | undefined,
+): void {
+	if (!signature || signature === (block.type === "text" ? block.textSignature : block.thinkingSignature)) return;
+	pushAssistantProgress(owner, {
+		type: "message_block_metadata",
+		contentIndex,
+		...(block.type === "text" ? { textSignature: signature } : { thinkingSignature: signature }),
+	});
+}
+
+/** A block appended complete with no public event: its insert and end share one frozen copy. */
+export function pushAssistantCompleteBlock(owner: object, contentIndex: number, block: PublicBlock): void {
+	const frozen = freezeCapture(publicBlock(block));
+	for (const phase of ["insert", "end"] as const)
+		pushAssistantProgress(owner, Object.freeze({ type: "message_block_state", contentIndex, phase, block: frozen }));
 }
 
 /** Internal consumption is explicit; ordinary iterators are the downgrade boundary. */

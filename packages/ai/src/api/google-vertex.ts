@@ -22,6 +22,7 @@ import type {
 	ToolCall,
 	TranscriptContext,
 } from "../types.ts";
+import { pushAssistantCompleteBlock, pushAssistantSignature } from "../utils/assistant-capture.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
@@ -73,7 +74,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 	context: TranscriptContext,
 	options?: GoogleVertexOptions,
 ): AssistantMessageEventStream => {
-	const stream = new AssistantMessageEventStream();
+	const stream = new AssistantMessageEventStream({ captureBlocks: true });
 	const normalizedContext = collapseSystemMessages(context);
 
 	(async () => {
@@ -164,6 +165,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 							}
 							if (currentBlock.type === "thinking") {
 								currentBlock.thinking += part.text;
+								pushAssistantSignature(stream, blockIndex(), currentBlock, part.thoughtSignature);
 								currentBlock.thinkingSignature = retainThoughtSignature(
 									currentBlock.thinkingSignature,
 									part.thoughtSignature,
@@ -176,6 +178,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 								});
 							} else {
 								currentBlock.text += part.text;
+								pushAssistantSignature(stream, blockIndex(), currentBlock, part.thoughtSignature);
 								currentBlock.textSignature = retainThoughtSignature(
 									currentBlock.textSignature,
 									part.thoughtSignature,
@@ -227,17 +230,22 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 
 							output.content.push(toolCall);
 							stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
-							stream.push({
-								type: "toolcall_delta",
-								contentIndex: blockIndex(),
-								delta: JSON.stringify(toolCall.arguments),
-								partial: output,
-							});
+							// The adapter never parses its own spelling: the complete parsed seed stays authoritative.
+							stream.push(
+								{
+									type: "toolcall_delta",
+									contentIndex: blockIndex(),
+									delta: JSON.stringify(toolCall.arguments),
+									partial: output,
+								},
+								{ parsedThrough: 0 },
+							);
 							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
 						}
 
 						if (!handledAsKnownPart) {
 							output.content.push(toProviderNativeContent(part));
+							pushAssistantCompleteBlock(stream, blockIndex(), blocks[blockIndex()]);
 						}
 					}
 				}
@@ -248,6 +256,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 						subtype: "groundingMetadata",
 						raw: candidate.groundingMetadata,
 					});
+					pushAssistantCompleteBlock(stream, blockIndex(), blocks[blockIndex()]);
 					groundingMetadataEmitted = true;
 				}
 
@@ -257,6 +266,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 						subtype: "urlContextMetadata",
 						raw: candidate.urlContextMetadata,
 					});
+					pushAssistantCompleteBlock(stream, blockIndex(), blocks[blockIndex()]);
 					urlContextMetadataEmitted = true;
 				}
 
