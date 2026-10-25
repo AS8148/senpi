@@ -18,6 +18,7 @@ export async function createMcpRequestClient(
 	const { Client } = await loadMcpSdkClient();
 	protocol.privateForms = uiProvider?.enforced?.() === true;
 	const legacyEligible = legacyMcpFormEligible(uiProvider, elicitationEnabled);
+	protocol.legacyFormEligible = legacyEligible;
 	const client = new Client(
 		{ name: "senpi-mcp-client", version: "0.0.0" },
 		{ capabilities: mcpClientCapabilities(legacyEligible) },

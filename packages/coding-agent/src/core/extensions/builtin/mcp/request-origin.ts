@@ -51,6 +51,7 @@ export function beginLegacyMcpOperation(client: Client, origin: McpRequestOrigin
 }
 export function legacyMcpOperation(client: Client) {
 	const operations = legacyOperations.get(client);
+	if (operations && operations.size > 1) return "ambiguous";
 	if (operations?.size !== 1) return undefined;
 	const operation = operations.values().next().value;
 	return operation && !operation.signal.aborted && operation.origin.isCurrent() ? operation : undefined;

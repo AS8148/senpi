@@ -11,7 +11,10 @@ export class McpFormWorker {
 	>();
 	private readonly ready = new Map<string, () => void>();
 	private readonly settlements = new Set<string>();
-	private readonly bindings = new Map<string, { version?: string; active: boolean; admit: () => void }>();
+	private readonly bindings = new Map<
+		string,
+		{ version?: string; active: boolean; admit: () => void; listeners: Set<() => void> }
+	>();
 	private readonly entries = new Map<
 		string,
 		{
@@ -28,17 +31,30 @@ export class McpFormWorker {
 
 	async bind(durableId: string, ui: object, admit: () => void): Promise<() => void> {
 		const id = randomUUID();
-		const bound = new Promise<Extract<HostToSessionWorker, { type: "mcp_form_bound" }>>((resolve) =>
-			this.binds.set(id, resolve),
-		);
-		this.send({ type: "mcp_form_bind", id, durableId });
-		const message = await bound;
+		const bound = Promise.withResolvers<Extract<HostToSessionWorker, { type: "mcp_form_bound" }>>();
+		this.binds.set(id, bound.resolve);
+		const timer = setTimeout(() => bound.reject(new Error("private_form_unavailable")), 5_000);
+		timer.unref();
+		let message: Extract<HostToSessionWorker, { type: "mcp_form_bound" }>;
+		try {
+			this.send({ type: "mcp_form_bind", id, durableId });
+			message = await bound.promise;
+		} finally {
+			clearTimeout(timer);
+			this.binds.delete(id);
+		}
 		const lifetime = new AbortController();
-		const state = { version: message.version, active: true, admit };
+		const state = { version: message.version, active: true, admit, listeners: new Set<() => void>() };
 		this.bindings.set(message.epoch, state);
 		const binding: McpFormBinding = {
 			epoch: message.epoch,
 			signal: lifetime.signal,
+			subscribe: (listener) => {
+				state.listeners.add(listener);
+				return () => {
+					state.listeners.delete(listener);
+				};
+			},
 			capture: () => {
 				const version = state.version;
 				if (!state.active || version === undefined) return undefined;
@@ -104,6 +120,7 @@ export class McpFormWorker {
 				for (const entry of this.entries.values())
 					if (entry.epoch === message.epoch) Atomics.store(entry.fence, 0, 1);
 				this.bindings.delete(message.epoch);
+				state.listeners.clear();
 				this.send({ type: "mcp_form_release", epoch: message.epoch });
 			},
 		};
@@ -113,13 +130,19 @@ export class McpFormWorker {
 
 	receive(message: HostToSessionWorker): boolean {
 		switch (message.type) {
-			case "mcp_form_bound":
-				this.binds.get(message.id)?.(message);
+			case "mcp_form_bound": {
+				const resolve = this.binds.get(message.id);
+				if (resolve) resolve(message);
+				else this.send({ type: "mcp_form_release", epoch: message.epoch });
 				this.binds.delete(message.id);
 				return true;
+			}
 			case "mcp_form_availability": {
 				const binding = this.bindings.get(message.epoch);
-				if (binding) binding.version = message.version;
+				if (binding && binding.version !== message.version) {
+					binding.version = message.version;
+					for (const listener of binding.listeners) listener();
+				}
 				if (message.id) {
 					this.ready.get(message.id)?.();
 					this.ready.delete(message.id);

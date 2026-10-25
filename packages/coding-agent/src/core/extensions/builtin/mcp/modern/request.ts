@@ -24,6 +24,7 @@ const capabilitiesKey = "io.modelcontextprotocol/clientCapabilities";
 export const modernDispatchGuard = Symbol("mcp-modern-dispatch");
 export interface ModernProtocolState {
 	privateForms?: boolean;
+	legacyFormEligible?: boolean;
 	version?: string;
 	legacy?: boolean;
 	resolveStdioDiagnostics?: (modern: boolean) => void;
@@ -32,6 +33,7 @@ export interface ModernProtocolState {
 export type MrtrClock = McpClock;
 const states = new WeakMap<Client, ModernProtocolState>();
 export const isModernMcpClient = (client: Client) => states.get(physicalMcpClient(client))?.version !== undefined;
+export const legacyMcpFormsAdvertised = (client: Client) => states.get(physicalMcpClient(client))?.legacyFormEligible;
 const own = (value: object, key: string) => Object.hasOwn(value, key);
 const byteSize = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
 
@@ -295,8 +297,9 @@ export function installModernRequestAdapter(
 	protocol.activateRequests = () => {
 		client.request = requestWithMrtr;
 	};
-	// Legacy calls also carry private operation ownership; only the modern branch adds continuations.
-	protocol.activateRequests();
+	// Default legacy clients retain the SDK method and its original admission behavior.
+	// Enforced legacy calls need private operation ownership before the first tools/call.
+	if (protocol.privateForms || protocol.version !== undefined) protocol.activateRequests();
 }
 
 function interrupted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {

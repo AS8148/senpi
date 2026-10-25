@@ -33,6 +33,7 @@ type ElicitationUi = Pick<ExtensionUIContext, "input" | "select">;
 export type McpElicitationUiProvider = (() => ElicitationUi | undefined) & {
 	readonly eligible?: () => boolean;
 	readonly enforced?: () => boolean;
+	readonly subscribe?: (listener: () => void) => () => void;
 };
 export interface McpElicitationUiOwner {
 	getMcpElicitationUi(): ElicitationUi | undefined;
@@ -85,6 +86,14 @@ async function privateElicitation(
 	timeoutMs: number,
 ) {
 	const operation = legacyMcpOperation(client);
+	if (operation === "ambiguous") {
+		const { ErrorCode, McpError } = await loadMcpSdkTypes();
+		throw new McpError(
+			ErrorCode.InternalError,
+			"Elicitation cannot be processed: ambiguous origin from concurrent legacy tools/call requests. Run these calls sequentially or use an MRTR server.",
+			{ reason: "ambiguous_legacy_origin" },
+		);
+	}
 	const presenter = operation?.origin.privateForm;
 	if (
 		!isRecord(params) ||

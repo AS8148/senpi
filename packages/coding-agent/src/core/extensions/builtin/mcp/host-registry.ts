@@ -32,7 +32,12 @@ export class HostMcpRegistry {
 
 	attachShared(key: string, owner: object, options: SharedMcpOptions): ServerConnection {
 		const eligible = legacyMcpFormEligible(options.elicitationUiProvider, options.elicitationEnabled !== false);
-		const identity = `${sharedMcpKey(options, options.agentDir)}\0legacy-form:${eligible}:${options.elicitationUiProvider?.enforced?.() === true}`;
+		// Enforced pools observe live readiness; it must not remain frozen in a creation-time key.
+		const formPolicy =
+			options.elicitationUiProvider?.enforced?.() === true
+				? `private:${options.elicitationEnabled !== false}`
+				: `${eligible}:false`;
+		const identity = `${sharedMcpKey(options, options.agentDir)}\0legacy-form:${formPolicy}`;
 		let shared = this.#shared.get(identity);
 		if (shared === undefined) {
 			shared = new SharedMcpConnection(options, () => this.#shared.delete(identity));

@@ -3856,7 +3856,7 @@ export class InteractiveMode {
 			this.editorContainer.clear();
 			this.editorContainer.addChild(this.extensionSelector);
 			this.ui.setFocus(this.extensionSelector);
-			if (opts?.ephemeral) {
+			if (opts?.ephemeral && this.options?.mcpPresenterEnforcement) {
 				this.ui.renderNow();
 				markMcpFormPresented(opts);
 			} else this.ui.requestRender();

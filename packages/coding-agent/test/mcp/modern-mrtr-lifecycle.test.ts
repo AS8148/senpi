@@ -94,6 +94,9 @@ describe("MRTR deadlines and settlement", () => {
 		const stillCurrent = ui.host.extensionSelector;
 		currentReview.handleInput("\n");
 		await pending;
+		// senpi#4210: default ephemeral selects keep the ordinary scheduled render path.
+		expect(ui.host.ui.renderNow).not.toHaveBeenCalled();
+		expect(ui.host.ui.requestRender).toHaveBeenCalled();
 		expect(stillCurrent).toBe(currentReview);
 		expect(admit).toHaveBeenCalledTimes(4);
 		expect(f.transport.calls).toHaveLength(3);

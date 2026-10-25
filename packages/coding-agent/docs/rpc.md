@@ -5442,6 +5442,7 @@ queue, and a collector failure ends only its own form, not the terminal's grant.
 All UI contexts in one terminal session binding share its presenter authority.
 Without enforcement, each real select/input answer retains its existing human
 admission timing; the form collector does not add a second final admission.
+Ephemeral selects also keep the scheduled `requestRender()` path without enforcement.
 With enforcement, only the authority's winning whole-form action admits once.
 The host advertises `mcp_form_presenter_v1` only when enforcement is enabled;
 the capability reports protocol support, not authority to present or answer a form.
@@ -5477,6 +5478,26 @@ current host, session, binding epoch, connection nonce, attachment ID and epoch,
 Concurrent forms, including worker-origin forms, wait in the host's abort-aware
 FIFO for that holder. Waiting consumes the original deadline; timeout, cancellation,
 or revocation before display never fabricates a human response.
+Enforced legacy connections observe presenter readiness and reconnect when their
+negotiated form capability becomes stale, including a grant issued after connect.
+Revoking the last ready holder removes the capability on the new connection.
+A shared physical connection advertises forms when at least one attached owner is
+ready; each request still requires its own origin's grant. An ungranted owner cannot
+borrow another owner's presenter. Readiness changes during initialization are
+rechecked before the connection is published. Modern MRTR connections do not
+reconnect for this purpose because their capability metadata is per request.
+
+Legacy elicitation has no reliable parent tool-call identifier in the received SDK
+handler metadata. With multiple `tools/call` operations in flight on one physical
+legacy client, enforced elicitation fails closed with JSON-RPC `-32603` and
+`data.reason: "ambiguous_legacy_origin"`. The error explains that concurrent legacy
+calls make the origin ambiguous and recommends sequential calls or an MRTR server.
+No form is displayed and no human answer is admitted. Without enforcement, legacy
+clients keep the SDK request method, origin handling, and concurrent-call behavior.
+
+Worker binding waits at most five seconds for the host's acknowledgement; expiry
+fails with `private_form_unavailable`, removes the pending waiter, and releases any
+late host binding. Worker readiness events feed the same legacy renegotiation path.
 Under enforcement, server stderr remains available as redacted diagnostic records
 with allowlisted system error codes. Arbitrary text is omitted because a server can
 echo private messages, schema labels, or answers; ordinary legacy stderr is unchanged.

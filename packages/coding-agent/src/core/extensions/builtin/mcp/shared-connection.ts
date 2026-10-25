@@ -21,6 +21,8 @@ export class SharedMcpConnection {
 	readonly connection: ServerConnection;
 	readonly leases = new Set<SharedMcpLease>();
 	readonly #calls = new Map<SharedMcpLease, number>();
+	readonly #readinessListeners = new Set<() => void>();
+	readonly #readinessSubscriptions = new Map<SharedMcpLease, () => void>();
 	readonly #options: SharedMcpOptions;
 	readonly #onDispose: () => void;
 	#idleTimeoutMin: number;
@@ -82,13 +84,22 @@ export class SharedMcpConnection {
 				},
 				{
 					enforced: () => [...this.leases].some((lease) => lease.options.elicitationUiProvider?.enforced?.()),
-					eligible: () =>
-						this.leases.size > 0 &&
-						[...this.leases].every(
-							(lease) =>
-								lease.options.elicitationEnabled !== false &&
-								lease.options.elicitationUiProvider?.eligible?.() !== false,
-						),
+					subscribe: (listener: () => void) => {
+						this.#readinessListeners.add(listener);
+						return () => {
+							this.#readinessListeners.delete(listener);
+						};
+					},
+					eligible: () => {
+						const leases = [...this.leases];
+						const eligible = (lease: SharedMcpLease) =>
+							lease.options.elicitationEnabled !== false &&
+							lease.options.elicitationUiProvider?.eligible?.() !== false;
+						// Any ready owner permits negotiation; per-operation authority still selects the holder.
+						if (leases.some((lease) => lease.options.elicitationUiProvider?.enforced?.()))
+							return leases.some(eligible);
+						return leases.length > 0 && leases.every(eligible);
+					},
 				},
 			),
 		});
@@ -135,6 +146,11 @@ export class SharedMcpConnection {
 		this.#clearIdle();
 		const lease = new SharedMcpLease(this, options, owner, key);
 		this.leases.add(lease);
+		const unsubscribe = options.elicitationUiProvider?.subscribe?.(() => {
+			for (const listener of this.#readinessListeners) listener();
+		});
+		if (unsubscribe) this.#readinessSubscriptions.set(lease, unsubscribe);
+		for (const listener of this.#readinessListeners) listener();
 		this.#idleTimeoutMin = Math.max(...[...this.leases].map((item) => item.options.config.idleTimeoutMin));
 		this.#refreshKeepAlive();
 		return lease;
@@ -176,6 +192,9 @@ export class SharedMcpConnection {
 		// Capture the last attached policy before removing the final owner.
 		this.#idleTimeoutMin = Math.max(...[...this.leases].map((item) => item.options.config.idleTimeoutMin));
 		this.leases.delete(lease);
+		this.#readinessSubscriptions.get(lease)?.();
+		this.#readinessSubscriptions.delete(lease);
+		if (this.leases.size > 0) for (const listener of this.#readinessListeners) listener();
 		this.#refreshKeepAlive();
 		this.#armIdle();
 	}

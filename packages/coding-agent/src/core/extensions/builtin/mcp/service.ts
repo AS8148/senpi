@@ -1168,6 +1168,7 @@ export class McpService {
 		};
 		return Object.assign(() => this.getMcpElicitationUi(), {
 			enforced: () => privateBinding() !== undefined,
+			subscribe: (listener: () => void) => privateBinding()?.subscribe?.(listener) ?? (() => {}),
 			eligible: () => {
 				const binding = privateBinding();
 				return binding === undefined || binding.capture()?.ready() === true;
