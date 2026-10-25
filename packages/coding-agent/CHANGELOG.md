@@ -12,6 +12,22 @@
 
 ### Removed
 
+## [2026.10.25-2] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `senpi host gc` and the gc pass after an ensure no longer keep a dead endpoint (as `live_generation` or `live_claim`) while its SIGKILLed supervisor or host child is exited but not yet reaped, and a tool child's teardown still sweeps a process group whose leader is in that state: liveness now treats a process in state Z as gone ([#4119](https://github.com/code-yeongyu/senpi/issues/4119))
+- Keep interrupted sessions open when automatic continuation is enabled, holding automatic work until explicit Resume or input ([#4206](https://github.com/code-yeongyu/senpi/pull/4206)).
+- Keep Claude Code auto memory out of Anthropic subscription sessions, including when the inherited environment or SDK settings enable it ([#4222](https://github.com/code-yeongyu/senpi/pull/4222)).
+
+### Removed
+
 ## [2026.10.25-1] - 2026-10-25
 
 ### Breaking Changes

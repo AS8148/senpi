@@ -1,3 +1,23 @@
+## 2026-10-24 - Identify interrupted sessions in the pause footer (senpi#4204)
+
+### What changed
+
+- `pause-footer.ts` identifies the interrupted-run hold and shows the existing input and Resume recovery controls.
+- `pause-footer.ts` omits the held-update count when an interrupted session has no updates.
+- `interactive-mode.ts` restores the pause status after extension binding, including startup events emitted before the TUI subscription is installed.
+
+### Why
+
+- A recovered interrupted session must remain usable and explain how the person can continue.
+
+### Why an extension could not handle it
+
+- The interactive host owns the pause footer and Resume routing.
+
+### Expected merge conflict zones
+
+- `pause-footer.ts`: pause view and footer state selection.
+
 ## 2026-10-18 - Terminal.app's selection hint names Command-R (senpi#3604 follow-up)
 
 ### What changed

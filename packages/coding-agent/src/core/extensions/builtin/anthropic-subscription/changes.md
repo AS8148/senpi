@@ -1,3 +1,21 @@
+## 2026-10-25 - Keep Claude Code auto memory out of subscription sessions (senpi#4219)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-attempt.ts`: the shared resident and auxiliary dispatch boundary forces `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` after environment merging and sets inline SDK `autoMemoryEnabled` to false. Neither caller options nor inherited environment can enable Claude Code auto memory.
+
+### Why
+
+- Claude Code loads its private auto-memory index independently of `settingSources`, injecting notes from another tool into the subscription session. The policy is permanently off without a user-facing switch.
+
+### Why an extension could not handle it
+
+- The bundled subscription adapter owns the final child environment and SDK dispatch for every authentication lane.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-attempt.ts`, immediately before the resident/auxiliary dispatch split.
+
 ## 2026-10-24 - An assistant_rewritten decision names the first diverged path (senpi#1975)
 
 ### What changed
