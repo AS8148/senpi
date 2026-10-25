@@ -1,3 +1,38 @@
+## 2026-10-25 - Host-issued presenter grants and private form settlement (#4197)
+
+### What changed
+
+- `mcp-presenter-authority.ts` and `mcp-form-dialog.ts`: bind one holder to host, session, attachment, connection, principal, and presentation epochs; serialize concurrent RPC/worker forms through the abort-aware FIFO within each original deadline and settle through one synchronous terminal latch.
+- `mcp-presenter-control.ts` and `mcp-presenter-bootstrap.ts`: authenticate the launch owner with Ed25519 challenges, require explicit signed principal-to-binding assignment and presenter capabilities before acquisition, and carry enrollment on a separate private channel. Invalid descriptors return no presenter.
+- Host CLI, supervisor, and successor launch paths preserve the reserved channel without repurposing owner-watch or internal-key channels. Deferred handover relays a fresh challenge to the existing authenticated launch owner rather than copying live grants.
+- `session-event-writer.ts`, `session-binding.ts`, and `connection-handler.ts`: intercept dedicated private records only with enforcement enabled, preserving default unknown-command responses. Accepted private writes are not dropped while a prior socket drain is pending.
+- `mcp-form-worker.ts`, `session-worker-protocol.ts`, `session-worker.ts`, and `session-worker-client.ts`: carry private typed outcomes and atomic cancellation fences without using public worker output.
+- `mcp-form-worker.ts`: bound binding acknowledgement to five seconds with `private_form_unavailable`, retire waiters and late bindings, and propagate host readiness changes to connection observers.
+- `host-capabilities.ts`, `session-router-routing.ts`, and `multi-session-host.ts`: advertise presenter protocol support only with enforcement enabled, and keep ordinary host operation available if bootstrap setup fails.
+- `host-lifecycle-launch.ts`: contain bootstrap import and relay failures without ending the shared supervisor or its lifetime channel; preserve the supervisor's fixed startup import budget.
+- `AGENTS.md`: document the measured presenter bootstrap exception to the inline dynamic-import rule; retain the unchanged supervisor module ceiling.
+- `docs/rpc.md`: document the separate bootstrap and management channels, private form envelopes, and settlement rules.
+
+### Why
+
+- Any attachment could previously answer a general extension form. Declared roles and capabilities are not authentication.
+
+### Key decisions
+
+- Unknown and stolen-dialog submissions from a non-holder receive the same authorization error before private entry lookup.
+- Revoke authority before cleanup, but retain host entry references so internal timeout, detach, and replacement paths can always settle.
+- Private writes bypass queue-error previews. No pending form, schema, token, draft, response, or presentation marker is part of public session state.
+- Shell-based custom launch wrappers do not receive presenter authority; their ordinary RPC operation remains available.
+
+### Why an extension could not handle it
+
+- Only the host owns connection epochs, inherited descriptors, private output destinations, and worker termination.
+
+### Expected merge conflict zones
+
+- MEDIUM: host launch, handover, and session-worker protocol changes.
+- LOW: private routing before ordinary command admission and UI rebinding.
+
 ## 2026-10-24 - Hosted ancestry uses the shared validator (oh-my-openagent#10782)
 
 ### What changed
