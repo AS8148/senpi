@@ -1,5 +1,5 @@
 import { type ToolCall, validateToolArguments } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cachedToolsToCatalogEntries, collectToolCatalog } from "../../src/core/extensions/builtin/mcp/catalog.ts";
 import {
 	collectServerCatalogForCache,
@@ -12,6 +12,7 @@ import {
 	executeMcpCatalogEntry,
 } from "../../src/core/extensions/builtin/mcp/expose/register.ts";
 import { compileModernSchema } from "../../src/core/extensions/builtin/mcp/modern/tool-schema.ts";
+import { createMcpInvocationResolver } from "../../src/core/extensions/builtin/mcp/invocation.ts";
 import { callMcpToolRequest, listMcpTools } from "../../src/core/extensions/builtin/mcp/tool-client.ts";
 import { cleanupMrtrConnections, connect } from "./fixtures/mrtr-connection.ts";
 import { cleanupRoots, makeRoot } from "./fixtures/service-lifecycle.ts";
@@ -60,13 +61,131 @@ describe("modern schema validation", () => {
 	});
 
 	it.each([
+		{ schema: { $schema: "http://json-schema.org/draft-07/schema#" }, code: "MCP_SCHEMA_UNSUPPORTED_DIALECT" },
 		{ schema: { $schema: "https://example.invalid/dialect" }, code: "MCP_SCHEMA_UNSUPPORTED_DIALECT" },
 		{ schema: { $ref: "https://example.invalid/schema" }, code: "MCP_SCHEMA_INVALID" },
 		{ schema: { type: "bogus" }, code: "MCP_SCHEMA_INVALID" },
-	])("rejects invalid definitions at discovery: $code", async ({ schema, code }) => {
+	])("drops only the unsupported definition at discovery: $code", async ({ schema, code }) => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 		const { connection, script } = await connect([], false, false);
-		script.tools = [{ name: "fixture", inputSchema: schema }];
-		await expect(listMcpTools(connection.client)).rejects.toMatchObject({ code });
+		script.tools = [
+			{ name: "before", inputSchema: true },
+			{ name: "unsupported", inputSchema: schema },
+			{ name: "after", inputSchema: { type: "object" } },
+		];
+		const result = await listMcpTools(connection.client);
+		expect(result.tools.map((tool) => tool.name)).toEqual(["before", "after"]);
+		expect(warn).toHaveBeenCalledWith(expect.stringContaining("unsupported"));
+		expect(warn).toHaveBeenCalledWith(expect.stringContaining(code));
+	});
+
+	it("reports the argument path and keyword so the model can correct a modern call", async () => {
+		const { connection, script } = await connect([], false, false);
+		script.tools = [
+			{
+				name: "fixture",
+				inputSchema: {
+					type: "object",
+					properties: { count: { type: "integer" } },
+					required: ["count"],
+				},
+			},
+		];
+		const entries = await collectToolCatalog("fixture", connection, normalizeServer({ command: "unused" }));
+		const tool = buildMcpToolDefinitions(entries)[0];
+		if (!tool) throw new Error("Expected fixture");
+		for (const [args, keyword] of [
+			[{ count: "private-value" }, "type"],
+			[{}, "required"],
+		] as const) {
+			let message = "";
+			try {
+				validateToolArguments(tool, { type: "toolCall", id: "call", name: tool.name, arguments: args });
+			} catch (error) {
+				message = error instanceof Error ? error.message : String(error);
+			}
+			expect(message).toContain("count:");
+			expect(message).toContain(keyword);
+			expect(message).not.toContain("private-value");
+		}
+		expect(script.requests).toEqual([]);
+	});
+
+	it("uses the live modern era for a pre-upgrade cache without the modern flag", async () => {
+		const { connection, script } = await connect([], false, false);
+		script.tools = [
+			{
+				name: "fixture",
+				inputSchema: { type: "object", properties: { count: { type: "integer" } }, additionalProperties: false },
+			},
+		];
+		const { modern: _modern, ...oldCache } = await collectServerCatalogForCache(
+			connection,
+			{ requestTimeoutMs: 10_000 },
+			"schema-config",
+		);
+		const entries = cachedToolsToCatalogEntries("fixture", oldCache, connection, 10_000, async () => {});
+		const tool = buildMcpToolDefinitions(entries)[0];
+		if (!tool) throw new Error("Expected fixture");
+		expect(() =>
+			validateToolArguments(tool, {
+				type: "toolCall",
+				id: "call",
+				name: tool.name,
+				arguments: { count: "3" },
+			}),
+		).toThrow();
+		expect(() =>
+			validateToolArguments(tool, {
+				type: "toolCall",
+				id: "call",
+				name: tool.name,
+				arguments: { count: 3, extra: true },
+			}),
+		).toThrow();
+	});
+
+	it("drops invalid cached input and output schemas before tool registration", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const root = makeRoot("invalid-schema-cache", roots);
+		const { connection, script } = await connect([], false, false);
+		script.tools = [{ name: "valid", inputSchema: true }];
+		const catalog = await collectServerCatalogForCache(connection, { requestTimeoutMs: 10_000 }, "schema-config");
+		await writeMcpCachedServer(root.agentDir, "fixture", {
+			...catalog,
+			tools: [
+				...catalog.tools,
+				{ name: "invalid-input", inputSchema: { type: "bogus" } },
+				{ name: "invalid-output", inputSchema: true, outputSchema: { $ref: "https://example.invalid/schema" } },
+			],
+		});
+		const cached = (await readMcpCatalogCache(root.agentDir)).servers.fixture;
+		if (!cached) throw new Error("Missing cached catalog");
+		const entries = cachedToolsToCatalogEntries("fixture", cached, connection, 10_000, async () => {});
+		expect(buildMcpToolDefinitions(entries).map((tool) => tool.name)).toEqual(["mcp_fixture_valid"]);
+		for (const name of ["invalid-input", "invalid-output"]) {
+			expect(warn).toHaveBeenCalledWith(expect.stringContaining(name));
+		}
+		expect(warn).toHaveBeenCalledWith(expect.stringContaining("MCP_SCHEMA_INVALID"));
+	});
+
+	it("refuses a newly invalid current schema without dispatching or throwing", async () => {
+		const { connection, script, logger } = await connect([], false, false);
+		script.tools = [{ name: "fixture", inputSchema: true }];
+		const [offered] = await collectToolCatalog("fixture", connection, normalizeServer({ command: "unused" }));
+		if (!offered) throw new Error("Expected fixture");
+		const resolver = createMcpInvocationResolver({
+			owner: {},
+			sink: { logger },
+			configuration: "fixture",
+			contextRequired: false,
+			isCurrent: () => true,
+			ready: async () => {},
+			current: () => ({ ...offered, schema: { type: "bogus" } }),
+		});
+		const result = await executeMcpCatalogEntry({ ...offered, invocation: resolver }, {}, undefined, undefined);
+		expect(result).toMatchObject({ details: { error: { kind: "schema_changed", tool: "fixture" } } });
+		expect(script.requests).toEqual([]);
 	});
 
 	it("enforces ref siblings and unevaluatedProperties without rewriting arguments", async () => {

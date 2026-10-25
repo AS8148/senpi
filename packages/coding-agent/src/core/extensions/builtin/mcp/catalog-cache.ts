@@ -12,6 +12,7 @@ import { collectAllPages } from "./expose/pagination.ts";
 import { listMcpTools } from "./tool-client.ts";
 import type { McpListedTool as ListedTool } from "./tool-contracts.ts";
 import { isModernMcpClient } from "./modern/request.ts";
+import { hasSupportedModernToolSchemas } from "./modern/tool-schema.ts";
 
 type ListedResource = Awaited<ReturnType<Client["listResources"]>>["resources"][number];
 type ListedResourceTemplate = Awaited<ReturnType<Client["listResourceTemplates"]>>["resourceTemplates"][number];
@@ -211,7 +212,7 @@ function normalizeTools(value: unknown, modern: boolean): ListedTool[] | undefin
 	for (const item of value) {
 		if (!isRecord(item) || typeof item.name !== "string") return undefined;
 		if (!isRecord(item.inputSchema) && !(modern && typeof item.inputSchema === "boolean")) return undefined;
-		tools.push({
+		const tool: ListedTool = {
 			...(modern ? item : {}),
 			annotations: isRecord(item.annotations) ? (item.annotations as ListedTool["annotations"]) : undefined,
 			description: typeof item.description === "string" ? item.description : undefined,
@@ -220,7 +221,8 @@ function normalizeTools(value: unknown, modern: boolean): ListedTool[] | undefin
 				? { outputSchema: item.outputSchema }
 				: {}),
 			name: item.name,
-		});
+		};
+		if (!modern || hasSupportedModernToolSchemas(tool)) tools.push(tool);
 	}
 	return tools;
 }

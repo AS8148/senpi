@@ -1,8 +1,7 @@
 import { Compile } from "typebox/compile";
-import type { TLocalizedValidationError } from "typebox/error";
 import { Value } from "typebox/value";
 import type { Tool, ToolCall } from "../types.ts";
-import { getToolArgumentValidator } from "./tool-argument-validator.ts";
+import { getToolArgumentValidator, type ToolArgumentValidationError } from "./tool-argument-validator.ts";
 import { coercePrimitiveByType } from "./tool-argument-coercion.ts";
 export { registerToolArgumentValidator } from "./tool-argument-validator.ts";
 
@@ -208,10 +207,9 @@ function getValidator(schema: Tool["parameters"]): ReturnType<typeof Compile> {
 	return validator;
 }
 
-function formatValidationPath(error: TLocalizedValidationError): string {
+function formatValidationPath(error: ToolArgumentValidationError): string {
 	if (error.keyword === "required") {
-		const requiredProperties = (error.params as { requiredProperties?: string[] }).requiredProperties;
-		const requiredProperty = requiredProperties?.[0];
+		const requiredProperty = error.params.requiredProperties?.[0] ?? error.params.missingProperty;
 		if (requiredProperty) {
 			const basePath = error.instancePath.replace(/^\//, "").replace(/\//g, ".");
 			return basePath ? `${basePath}.${requiredProperty}` : requiredProperty;
@@ -247,7 +245,15 @@ export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 	const args = structuredClone(toolCall.arguments);
 	const protocolValidator = getToolArgumentValidator(tool.parameters);
 	if (protocolValidator !== undefined) {
-		if (!protocolValidator(args)) throw new Error(`Validation failed for tool "${toolCall.name}".`);
+		if (!protocolValidator(args)) {
+			const errors =
+				protocolValidator.errors
+					?.map(
+						(error) => `  - ${formatValidationPath(error)}: ${error.message ?? error.keyword} (${error.keyword})`,
+					)
+					.join("\n") || "Unknown validation error";
+			throw new Error(`Validation failed for tool "${toolCall.name}":\n${errors}`);
+		}
 		return args;
 	}
 	normalizeOptionalNulls(args, tool.parameters as JsonSchemaObject);

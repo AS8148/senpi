@@ -5,7 +5,7 @@ import { authorizeToolDispatch, type DispatchIdentity, hasDispatchAuthorizer } f
 import { getDispatchIdentity } from "../permission-system/dispatch-metadata.ts";
 import type { McpToolCatalogEntry } from "./catalog.ts";
 import { TimeoutError } from "./errors.ts";
-import { compileModernSchema } from "./modern/tool-schema.ts";
+import { compileModernSchema, McpToolSchemaError } from "./modern/tool-schema.ts";
 import { type McpAsyncErrorSink, safeTimer } from "./wrap.ts";
 
 export interface McpInvocation {
@@ -117,9 +117,15 @@ export function createMcpInvocationResolver(scope: InvocationScope): McpInvocati
 			const current = scope.current(offered.tool);
 			if (current === undefined) return refuse("unavailable", "MCP tool is no longer available.");
 			// Validate the current raw schema, never the coercing preflight schema.
-			const validate = current.modern
-				? compileModernSchema(current.schema)
-				: (value: unknown) => Check(Type.Unsafe(current.schema), value);
+			let validate: (value: unknown) => boolean;
+			try {
+				validate = current.modern
+					? compileModernSchema(current.schema)
+					: (value: unknown) => Check(Type.Unsafe(current.schema), value);
+			} catch (error) {
+				if (!(error instanceof McpToolSchemaError)) throw error;
+				return refuse("schema_changed", `${error.code}: ${error.message}`, current);
+			}
 			if (!validate(args)) {
 				return refuse("schema_changed", "Arguments do not match the current MCP tool schema.", current);
 			}

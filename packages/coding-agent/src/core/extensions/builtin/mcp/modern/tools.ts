@@ -1,14 +1,12 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import { CallToolResultSchema, ResultSchema, ToolSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { loadMcpSdkTypes } from "../sdk.lazy.ts";
 import type { McpJsonSchema } from "../tool-contracts.ts";
 import { McpMrtrError } from "./errors.ts";
-import { compileModernSchema, McpToolSchemaError } from "./tool-schema.ts";
+import { compileModernSchema, hasSupportedModernToolSchemas, McpToolSchemaError } from "./tool-schema.ts";
 
 const jsonSchema = z.union([z.boolean(), z.record(z.string(), z.json())]);
-// Keep SDK and workspace Zod identities separate (npm may install both).
-const toolMetadata = ToolSchema.omit({ inputSchema: true, outputSchema: true });
 const modernToolSchema = z.looseObject({
 	name: z.string(),
 	inputSchema: jsonSchema,
@@ -28,14 +26,15 @@ export async function listModernTools(
 	params?: Parameters<Client["listTools"]>[0],
 	options?: RequestOptions,
 ) {
+	// Keep the SDK behind its documented startup boundary, and its Zod identity separate.
+	const { ResultSchema, ToolSchema } = await loadMcpSdkTypes();
+	const toolMetadata = ToolSchema.omit({ inputSchema: true, outputSchema: true });
 	const raw = await client.request({ method: "tools/list", params }, ResultSchema, options);
 	const parsed = listResult.safeParse(raw);
 	if (!parsed.success) throw new McpMrtrError("MCP_MRTR_INVALID_RESULT");
-	const tools = parsed.data.tools.map((tool) => {
+	const tools = parsed.data.tools.filter(hasSupportedModernToolSchemas).map((tool) => {
 		const metadata = toolMetadata.safeParse(tool);
 		if (!metadata.success) throw new McpMrtrError("MCP_MRTR_INVALID_RESULT");
-		compileModernSchema(tool.inputSchema);
-		if (tool.outputSchema !== undefined) compileModernSchema(tool.outputSchema);
 		return { ...tool, ...metadata.data };
 	});
 	return { ...parsed.data, tools };
@@ -47,6 +46,7 @@ export async function callModernTool(
 	outputSchema: McpJsonSchema | undefined,
 	options?: RequestOptions,
 ) {
+	const { CallToolResultSchema, ResultSchema } = await loadMcpSdkTypes();
 	const validate = outputSchema === undefined ? undefined : compileModernSchema(outputSchema);
 	const raw = await client.request({ method: "tools/call", params }, ResultSchema, options);
 	const parsed = callResult.safeParse(raw);

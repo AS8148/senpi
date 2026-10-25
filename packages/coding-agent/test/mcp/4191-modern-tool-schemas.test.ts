@@ -64,7 +64,10 @@ describe("modern MCP tool schemas", () => {
 	it("sends exactly the model arguments after validation and exposure", async () => {
 		const { tool, script, execute } = await fixture({
 			type: "object",
-			properties: { value: { anyOf: [{ type: "integer" }, { type: "string" }] } },
+			properties: {
+				value: { anyOf: [{ type: "integer" }, { type: "string" }] },
+				optionalCount: { type: "integer" },
+			},
 			required: ["value"],
 		});
 		const argumentsFromModel = { value: "007", extra: { nested: [false, null, 0] } };
@@ -77,5 +80,15 @@ describe("modern MCP tool schemas", () => {
 		await execute(args);
 		expect(script.requests[0]?.params?.arguments).toEqual(argumentsFromModel);
 		expect(argumentsFromModel.value).toBe("007");
+		// The legacy path silently removes optional nulls and dispatches the repaired call.
+		expect(() =>
+			validateToolArguments(tool, {
+				type: "toolCall",
+				id: "invalid",
+				name: tool.name,
+				arguments: { ...argumentsFromModel, optionalCount: null },
+			}),
+		).toThrow();
+		expect(script.requests).toHaveLength(1);
 	});
 });
