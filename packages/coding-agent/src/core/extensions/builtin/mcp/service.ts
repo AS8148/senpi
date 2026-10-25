@@ -1156,14 +1156,17 @@ export class McpService {
 		return this.#elicitationUiProvider?.();
 	}
 	#elicitationProviderFor(owner: McpConfigOwner) {
+		// Connections outlive their first declarer's extension context. Capture its host-owned
+		// references while it is live; readiness must never read a released session's ctx.ui.
+		const binding = [...this.#bindings.values()].find((candidate) => candidate === owner);
+		const ui = owner.context.ui;
 		const privateBinding = () => {
-			// A live binding keeps its host-issued presenter even when a later wrapper lookup misses.
-			const binding = [...this.#bindings.values()].find((candidate) => candidate === owner);
+			// Keep observing presentation replacements on the binding, not just its initial grant.
 			const presentation = binding
 				? binding.presentation
-				: owner.context.ui === undefined
+				: ui === undefined
 					? undefined
-					: getMcpMrtrPresentation(owner.context.ui);
+					: getMcpMrtrPresentation(ui);
 			return presentation?.privateForms;
 		};
 		return Object.assign(() => this.getMcpElicitationUi(), {
