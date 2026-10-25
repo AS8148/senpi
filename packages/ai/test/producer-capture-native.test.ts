@@ -93,7 +93,9 @@ describe("native producer progress #4272", () => {
 				{ type: "message_block_state", phase: "insert", contentIndex: 2, block: { raw: { input: {} } } },
 				{ type: "message_block_state", phase: "end", contentIndex: 2, block: { raw: { input: { q: "x" } } } },
 			]);
-			expect(getAssistantCapture(records.find((record) => record.type === "thinking_start")!)?.block).toEqual({
+			const thinkingStart = records.find((record) => record.type === "thinking_start");
+			if (!thinkingStart) throw new Error("no thinking_start record");
+			expect(getAssistantCapture(thinkingStart)?.block).toEqual({
 				type: "thinking",
 				thinking: "[Reasoning redacted]",
 				thinkingSignature: "opaque",

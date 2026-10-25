@@ -186,7 +186,7 @@ describe("producer capture #4272", () => {
 		]);
 		await stream.result();
 		const events = await publicEvents(stream);
-		const start = events.find((event) => event.type === "toolcall_start")!;
+		const start = toolStart(events);
 		expect(getAssistantCapture(start)).toMatchObject({
 			block: { arguments: { initial: true } },
 			rawArgumentPrefix: "",
@@ -199,7 +199,7 @@ describe("producer capture #4272", () => {
 
 	it("Responses preserves nonempty raw seed independently of its parsed seed", async () => {
 		const events = await publicEvents(await responses(raw.slice(0, 5)));
-		expect(getAssistantCapture(events.find((event) => event.type === "toolcall_start")!)).toMatchObject({
+		expect(getAssistantCapture(toolStart(events))).toMatchObject({
 			block: { arguments: {} },
 			rawArgumentPrefix: raw.slice(0, 5),
 			parsedThrough: 0,
@@ -212,7 +212,7 @@ describe("producer capture #4272", () => {
 		const stream = completions(deferred);
 		await stream.result();
 		const events = await publicEvents(stream);
-		expect(getAssistantCapture(events.find((event) => event.type === "toolcall_start")!)).toMatchObject({
+		expect(getAssistantCapture(toolStart(events))).toMatchObject({
 			rawArgumentPrefix: deferred ? raw : "",
 			coveredCodeUnits: deferred ? raw.length : 0,
 			parsedThrough: deferred ? raw.length : 0,
@@ -228,7 +228,7 @@ describe("producer capture #4272", () => {
 		const deltas = events.filter((event) => event.type === "toolcall_delta");
 		const emitted = deltas.map((event) => event.delta).join("");
 		expect(JSON.parse(emitted)).toEqual({ input: raw });
-		expect(getAssistantCapture(events.find((event) => event.type === "toolcall_start")!)).toMatchObject({
+		expect(getAssistantCapture(toolStart(events))).toMatchObject({
 			rawArgumentPrefix: emitted.slice(0, -2),
 			coveredCodeUnits: emitted.length - 2,
 		});
@@ -245,6 +245,12 @@ describe("producer capture #4272", () => {
 		});
 	});
 });
+
+function toolStart(events: AssistantMessageEvent[]): AssistantMessageEvent {
+	const start = events.find((event) => event.type === "toolcall_start");
+	if (!start) throw new Error("no toolcall_start event");
+	return start;
+}
 
 function assertDeltas(events: AssistantMessageEvent[], start: number) {
 	let offset = start;

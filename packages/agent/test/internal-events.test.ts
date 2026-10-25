@@ -70,7 +70,8 @@ describe("internal agent channel #4272", () => {
 			expect(publicEvents.filter((event) => event.type === "message_update")).toEqual([]);
 			const start = publicEvents.find(
 				(event) => event.type === "message_start" && event.message.role === "assistant",
-			)!;
+			);
+			if (!start) throw new Error("no assistant message_start reached the public listener");
 			expect(getAssistantCapture(start)?.message?.content).toEqual([]);
 			expect(records.map((record) => record.sequence)).toEqual(records.map((_, index) => index + 1));
 			expect(JSON.stringify(publicEvents)).not.toContain("message_block_state");
