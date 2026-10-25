@@ -159,6 +159,17 @@ The shared `SessionLifecycle` type is exported by `@code-yeongyu/senpi`:
   with reason `provider_error`, `tool_error`, `task_error`, `lost`, or `interrupted`.
 - A standing agent self-settle intent adds `settleDecision: { decisionId }` to the
   persisted `done` seal, independently of the completion label.
+- Optional `lastStop: { cause, runId, at, epoch, deadline?, guard?, todo?, abortSource?, persisted? }`
+  says why the run `runId` stopped. `cause` is `deadline`, `goal_guard`, `todo_guard`, `aborted`,
+  or `no_wake`; `deadline` is `inactivity` or `max_runtime`, `guard` is the goal guard reason as
+  recorded, `todo` is `cap`, and `abortSource` is `user`, `system`, or `provider`. `persisted: false`
+  appears only when the deadline-stop entry could not be written and is independent of the
+  snapshot's `persisted`. `lastStop` describes the last run's historical stop, so a `no_wake`
+  stop remains even if a wake source later appears. It is cleared when the next run starts
+  and never names a later run. A fact refresh with no bound turn end never sets `lastStop`;
+  between runs, a refresh while the last end is still bound may set or update that run's stop.
+  Goal guards are captured during their bound end's own processing, never inherited from
+  another run. Provider errors and policy rejections carry no `lastStop`, even if a deadline fired.
 
 Clients must not notify or settle while `restoring` is true or `persisted` is false.
 Use `completionId` to deduplicate root completion/failure, not `agent_settled` or
