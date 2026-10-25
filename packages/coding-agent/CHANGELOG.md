@@ -1,14 +1,18 @@
 # Changelog
 
-## [Unreleased]
+## [2026.10.25-1] - 2026-10-25
 
 ### Breaking Changes
 
 ### Added
 
+- When the Anthropic Subscription commit boundary sees a committed assistant that differs from what the provider streamed, the `assistant_rewritten` record, the continuity log line and the next continuity observation now name the first field that diverged (for example `content[0].arguments.summary`), never its value ([#1975](https://github.com/code-yeongyu/senpi/issues/1975))
+
 ### Changed
 
 ### Fixed
+
+- Skill loading no longer rescans every user root once per discovered skill; project skill containment remains enforced. Thanks to @haifenghan for the report ([#4214](https://github.com/code-yeongyu/senpi/pull/4214)).
 
 ### Removed
 

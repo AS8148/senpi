@@ -1,3 +1,22 @@
+## 2026-10-25 - Scan each selected skill root once per load (senpi#4213)
+
+### What changed
+
+- `skill-access.ts` deduplicates repeated source spellings and owns a realpath cache for one allowed-set build. `skill-discovery.ts` accepts that pass-local resolver.
+- Regression coverage counts realpath and directory-read calls, checks fresh authority after a link retarget, and retains the no-skills fast path. A manual harness reproduces the 748-skill, 476-link report.
+
+### Why
+
+- Package resolution retains the selected root on every skill. Rewalking those duplicate roots made startup quadratic. Thanks to @haifenghan for the report and profile in code-yeongyu/oh-my-openagent#11245.
+
+### Why an extension could not handle it
+
+- The allowed-set build and directory walk run inside core resource loading, before extensions can use the loaded skills.
+
+### Expected merge conflict zones
+
+- LOW: allowed-set construction in `skill-access.ts` and the discovery options in `skill-discovery.ts`.
+
 ## 2026-10-24 - Share the task ancestry boundary validator (oh-my-openagent#10782)
 
 ### What changed
