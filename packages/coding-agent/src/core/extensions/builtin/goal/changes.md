@@ -1,3 +1,21 @@
+## 2026-10-24 - Distinguish interrupted recovery from goal Stop (senpi#4204)
+
+### What changed
+
+- `stop-pause.ts` does not attribute the interrupted-run gate to the user's Stop.
+
+### Why
+
+- The interrupted gate must block automatic continuation without marking the goal as user-stopped.
+
+### Why an extension could not handle it
+
+- This builtin owns goal Stop attribution.
+
+### Expected merge conflict zones
+
+- `stop-pause.ts`: Stop hold detection.
+
 ## 2026-10-21 - A user Stop pauses the goal with the session (senpi#3811)
 
 ### What changed
