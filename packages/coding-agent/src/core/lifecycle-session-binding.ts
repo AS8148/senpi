@@ -354,6 +354,7 @@ export class LifecycleSessionBinding {
 			data.source,
 			data.kind === "children" ? "children" : "background",
 			data.activeCount,
+			data.items ?? data.monitors,
 		);
 	}
 

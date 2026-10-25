@@ -109,6 +109,8 @@ function readChildReport(value: unknown): ChildLifecycleReport | undefined {
 		runEpoch: value.runEpoch,
 		generation: value.generation,
 		state,
+		...(typeof value.label === "string" ? { label: value.label } : {}),
+		...(typeof value.since === "string" && Number.isFinite(Date.parse(value.since)) ? { since: value.since } : {}),
 		...(waitingOn ? { waitingOn } : {}),
 		...(terminal === undefined ? {} : { terminal }),
 	};
