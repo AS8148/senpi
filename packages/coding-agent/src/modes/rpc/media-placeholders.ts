@@ -11,17 +11,19 @@
  * `SessionEventWriter.enqueue`.
  *
  * Two hard rules:
- * - Type-gate FIRST. `message_update` is the hot path (one record per token) and must
- *   never be walked.
+ * - Type-gate the media walk. JSON-value normalization is shared with writer
+ *   acceptance; media projection itself never walks `message_update` partials.
  * - Copy-on-write. Responses hand out live agent state by reference
  *   (`success(id, "get_messages", { messages: session.messages })`), so the input graph
- *   is never mutated and unchanged sub-trees keep their identity. When nothing changed
+ *   is never mutated and unchanged JSON sub-trees keep their identity. When nothing changed
  *   the SAME record reference comes back, which lets the caller reuse the line it
  *   already serialized.
  *
  * User-authored images (`prompt.images`) stay intact: they are bounded by the client
  * that sent them; the fan-out hazard is tool output.
  */
+
+import { normalizeJsonValue } from "./json-normal-value.ts";
 
 type RpcRecord = Record<string, unknown>;
 
@@ -178,9 +180,10 @@ function carriesMedia(record: RpcRecord): boolean {
  * serialization entirely.
  */
 export function omitInlineMedia<T extends object>(record: T, persist?: MediaPersister): T {
-	const typed = record as unknown as RpcRecord;
-	if (!carriesMedia(typed)) return record;
+	const { value, changed } = normalizeJsonValue(record);
+	const typed = (changed ? value : record) as RpcRecord;
+	if (!carriesMedia(typed)) return changed ? (typed as T) : record;
 	const scrubbed = typed.type === "tool_execution_end" ? omitToolExecutionEndImages(typed, persist) : typed;
 	const walked = walk(scrubbed, persist);
-	return (walked === typed ? record : walked) as T;
+	return (walked === typed && !changed ? record : walked) as T;
 }

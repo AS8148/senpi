@@ -4,6 +4,7 @@ import { bindPrivateMcpForms, type McpFormBinding } from "../../core/mcp-form-ty
 import { McpPresenterAuthority, type McpPresenterConnection } from "./mcp-presenter-authority.ts";
 import type { SecurityNoticeSnapshot, SecurityNoticeState } from "../../core/security-notices.ts";
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
+import { normalizeJsonValue } from "./json-normal-value.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import { type MediaPersister, omitInlineMedia } from "./media-placeholders.ts";
 import type {
@@ -408,7 +409,7 @@ export class SessionEventWriter {
 	enqueue(sessionId: string, value: object): boolean {
 		if (this.sealedSessions.has(sessionId)) return false;
 		const targetId = this.connectionContext.getStore();
-		const record = value as RpcRecord;
+		const record = normalizeJsonValue(value).value as RpcRecord;
 		const isTargeted =
 			record.type === "response" ||
 			record.type === "bash_execution_update" ||
@@ -417,7 +418,7 @@ export class SessionEventWriter {
 			record.type === "relocation_due" ||
 			(record.type === "extension_ui_request" &&
 				["select", "confirm", "input", "editor"].includes(String(record.method)));
-		const tagged = { ...value, sessionId } as RpcRecord;
+		const tagged = { ...record, sessionId } as RpcRecord;
 		const line = serializeJsonLine(tagged);
 		if (this.fanout.isEmpty() && this.exceedsStdioCapacity(line)) {
 			this.closeSession(
@@ -444,7 +445,7 @@ export class SessionEventWriter {
 		);
 		const redacted = hasPlaceholderTarget ? omitInlineMedia(tagged, this.mediaPersisters.get(sessionId)) : tagged;
 		const placeholderLine = redacted === tagged ? undefined : serializeJsonLine(redacted);
-		if (!isTargeted) this.fanout.rememberSnapshot(sessionId, tagged, line, placeholderLine, tagged);
+		if (!isTargeted) this.fanout.rememberSnapshot(sessionId, tagged, line, placeholderLine);
 		for (const target of targets) {
 			if (target !== undefined && !this.fanout.get(target)) continue;
 			const registered = target === undefined ? undefined : this.fanout.get(target);

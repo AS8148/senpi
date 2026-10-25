@@ -38,22 +38,23 @@ type RegisteredConnection = {
  *
  * `placeholderLine` is the `media_placeholders` variant. The writer supplies it only when
  * a capable connection was already attached when the record was emitted; a connection that
- * attaches later still needs it, so `source` carries the wire record and the variant is
- * derived once, on the first capable replay, then memoized. Records with no media resolve
+ * attaches later still needs it, so the frozen line supplies the source on the first
+ * capable replay. Only the derived line is memoized; no provider object is retained.
+ * Records with no media resolve
  * `placeholderLine` to `line`, so replay stays O(1) and never re-serializes twice.
  */
 type SnapshotRecord = {
 	readonly line: string;
 	placeholderLine?: string;
-	readonly source?: Record<string, unknown>;
+	readonly hasMessage: boolean;
 };
 
 /** The placeholder variant of a remembered record, derived and memoized on first use. */
 function snapshotPlaceholderLine(record: SnapshotRecord): string {
 	if (record.placeholderLine !== undefined) return record.placeholderLine;
-	const redacted = record.source === undefined ? undefined : omitInlineMedia(record.source);
-	record.placeholderLine =
-		redacted === undefined || redacted === record.source ? record.line : serializeJsonLine(redacted);
+	const source = JSON.parse(record.line) as Record<string, unknown>;
+	const redacted = omitInlineMedia(source);
+	record.placeholderLine = redacted === source ? record.line : serializeJsonLine(redacted);
 	return record.placeholderLine;
 }
 
@@ -210,19 +211,15 @@ export class SessionEventFanout {
 			if (this.connectionSessions.get(id)?.has(sessionId)) actor.enqueue(line);
 	}
 
-	rememberSnapshot(
-		sessionId: string,
-		value: Record<string, unknown>,
-		line: string,
-		placeholderLine?: string,
-		source?: Record<string, unknown>,
-	): void {
+	rememberSnapshot(sessionId: string, value: Record<string, unknown>, line: string, placeholderLine?: string): void {
+		const record: SnapshotRecord = { line, placeholderLine, hasMessage: value.message != null };
 		if (value.type === "session_lifecycle") {
-			this.lifecycleSnapshots.set(sessionId, { line, placeholderLine, source });
+			this.lifecycleSnapshots.set(sessionId, record);
 			return;
 		}
 		if (value.type === "extension_ui_request" && value.method === "question" && typeof value.id === "string") {
 			const pending = this.pendingQuestions.get(sessionId) ?? new Map<string, Record<string, unknown>>();
+			// Writer acceptance already detached and JSON-normalized the frame.
 			pending.set(value.id, { ...value });
 			this.pendingQuestions.set(sessionId, pending);
 			return;
@@ -237,7 +234,6 @@ export class SessionEventFanout {
 			return;
 		}
 		const event = value.assistantMessageEvent as Record<string, unknown> | undefined;
-		const record: SnapshotRecord = { line, placeholderLine, source };
 		if (value.type === "message_start" || (value.type === "message_update" && event?.type === "text_start")) {
 			this.sessionSnapshots.set(sessionId, [record]);
 		} else if (this.sessionSnapshots.has(sessionId)) {
@@ -267,7 +263,7 @@ export class SessionEventFanout {
 		const current = this.connectionSessions.get(id) ?? new Set<string>();
 		return [...new Set([...attached, ...current])].map((sessionId) => {
 			const records = this.sessionSnapshots.get(sessionId) ?? [];
-			const latest = records.findLast((record) => record.source?.message != null);
+			const latest = records.findLast((record) => record.hasMessage);
 			// The producer may mutate its partial object after emission. The serialized
 			// record, not that object, fixes the recovery cut before later deltas enqueue.
 			const frozen: unknown = latest === undefined ? undefined : JSON.parse(latest.line);

@@ -38,13 +38,9 @@ export async function createRpcSessionBinding(
 	// session is inside is what the loop-lag watchdog blames for a stall. The record
 	// stream already carries that transition; no extra subscription is needed.
 	const toolSpans = createToolAttributionSpans(sessionId);
-	const enqueueRecords = (chunk: string): void => {
-		for (const line of chunk.split("\n")) {
-			if (!line) continue;
-			const record = JSON.parse(line) as object;
-			toolSpans.observe(record);
-			writer.enqueue(sessionId, record);
-		}
+	const enqueueRecord = (record: object): void => {
+		toolSpans.observe(record);
+		writer.enqueue(sessionId, record);
 	};
 	// Attachments share one entry, so resolve the host from the live runtime. In
 	// particular, switch_session must use the entry's replacement-aware method
@@ -69,18 +65,22 @@ export async function createRpcSessionBinding(
 	// an unawaited prompt (senpi#2871).
 	let droppedAfterClose = false;
 	const handler: RpcConnectionHandler = await runWithProviderScope(entry.scope, async () => {
-		const writeInScope = bindToProviderScope(enqueueRecords);
+		const writeInScope = bindToProviderScope(enqueueRecord);
+		const writeRecord = (record: object): void => {
+			if (entry.scope.state === "closed") {
+				if (!droppedAfterClose)
+					process.stderr.write(
+						`senpi rpc host: dropped a record for closed session ${sessionId} at ${new Date().toISOString()}\n`,
+					);
+				droppedAfterClose = true;
+				return;
+			}
+			writeInScope(record);
+		};
 		const taggedSink: RpcConnectionSink = {
+			writeRecord,
 			writeRaw: (chunk) => {
-				if (entry.scope.state === "closed") {
-					if (!droppedAfterClose)
-						process.stderr.write(
-							`senpi rpc host: dropped a record for closed session ${sessionId} at ${new Date().toISOString()}\n`,
-						);
-					droppedAfterClose = true;
-					return;
-				}
-				writeInScope(chunk);
+				for (const line of chunk.split("\n")) if (line) writeRecord(JSON.parse(line) as object);
 			},
 			waitForBackpressure: bindToProviderScope(async () => {}),
 		};
@@ -88,7 +88,6 @@ export async function createRpcSessionBinding(
 			sessionId,
 			shutdownHandler: bindToProviderScope(requestClose),
 			disposeRuntime: false,
-			eventFlushScheduler: (flush) => flush(),
 			publishLoadedSurfacesChanged: (previous, digest) => {
 				if (entry.scope.state !== "closed") writer.publishLoadedSurfacesChanged(sessionId, previous, digest);
 			},
