@@ -1,3 +1,10 @@
+import { open, readdir, rm, stat } from "node:fs/promises";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { COMPACT_LEAF_CODE_UNITS as LEAF } from "../../src/modes/rpc/compact-content-store.ts";
+import { CompactSessionState } from "../../src/modes/rpc/compact-session-state.ts";
+import { createSpoolDir } from "../../src/modes/rpc/compact-spool-dir.ts";
+import { controlledIo, spoolRoot } from "./compact-storage-support.ts";
+
 const fsFault = vi.hoisted(() => ({
 	markerWrite: undefined as undefined | ((path: string) => Promise<void>),
 }));
@@ -13,13 +20,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 		},
 	};
 });
-
-import { open, readdir, rm, stat } from "node:fs/promises";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { COMPACT_LEAF_CODE_UNITS as LEAF } from "../../src/modes/rpc/compact-content-store.ts";
-import { CompactSessionState } from "../../src/modes/rpc/compact-session-state.ts";
-import { createSpoolDir } from "../../src/modes/rpc/compact-spool-dir.ts";
-import { controlledIo, spoolRoot } from "./compact-storage-support.ts";
 
 // senpi#4272 (#4322 delta review LOWs 1-2): a spool directory whose ownership marker could not be
 // written is removed again with a typed failure, so a restart creates it fresh instead of refusing
