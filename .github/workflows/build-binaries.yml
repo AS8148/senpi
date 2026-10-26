@@ -288,6 +288,10 @@ jobs:
     permissions:
       actions: write
       contents: read
+    # The cleanup job checks this run before deleting the draft: it can still publish
+    # after this job gives up or is cancelled (senpi#4173).
+    outputs:
+      run_id: ${{ steps.find.outputs.run_id }}
     env:
       GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
@@ -313,12 +317,11 @@ jobs:
           echo "not_before=$(date -u -d '1 minute ago' +%Y-%m-%dT%H:%M:%SZ)" >> "${GITHUB_OUTPUT}"
           gh workflow run publish-npm.yml -f version="${VERSION}" -f publish-only=true
 
-      - name: Await publish-npm.yml completion
+      - name: Find dispatched publish-npm.yml run
+        id: find
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NOT_BEFORE: ${{ steps.dispatch.outputs.not_before }}
-          AWAIT_MAX_SECONDS: "19800"
-          AWAIT_INTERVAL: "30"
         run: |
           set -euo pipefail
 
@@ -339,8 +342,16 @@ jobs:
             exit 1
           fi
 
-          echo "Watching publish-npm.yml run ${run_id}: https://github.com/${GH_REPO}/actions/runs/${run_id}"
-          RUN_ID="${run_id}" bash scripts/await-dispatched-run.sh
+          echo "run_id=${run_id}" >> "${GITHUB_OUTPUT}"
+          echo "Found publish-npm.yml run ${run_id}: https://github.com/${GH_REPO}/actions/runs/${run_id}"
+
+      - name: Await publish-npm.yml completion
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ steps.find.outputs.run_id }}
+          AWAIT_MAX_SECONDS: "19800"
+          AWAIT_INTERVAL: "30"
+        run: bash scripts/await-dispatched-run.sh
 
   publish-github-release:
     runs-on: ubuntu-latest
@@ -380,6 +391,7 @@ jobs:
       - publish-github-release
     if: ${{ always() && needs.stage-github-release.result != 'skipped' && (needs.stage-github-release.result != 'success' || needs.publish-npm.result != 'success' || needs.publish-github-release.result != 'success') }}
     permissions:
+      actions: read
       contents: write
     env:
       GH_REPO: ${{ github.repository }}
@@ -392,8 +404,11 @@ jobs:
           sparse-checkout: scripts
           sparse-checkout-cone-mode: true
 
-      # Keeps (and fails loudly on) a draft whose version npm already has (senpi#4173).
+      # Keeps (and fails loudly on) a draft that npm already has or that the dispatched
+      # publish run could still publish (senpi#4173).
       - name: Delete draft GitHub Release after failure
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISH_RUN_ID: ${{ needs.publish-npm.outputs.run_id }}
+          PUBLISH_JOB_RESULT: ${{ needs.publish-npm.result }}
         run: bash scripts/release-draft-cleanup.sh

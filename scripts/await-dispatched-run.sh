@@ -19,15 +19,19 @@ GH_BIN="${GH_BIN:-gh}"
 AWAIT_MAX_SECONDS="${AWAIT_MAX_SECONDS:-19800}"
 AWAIT_INTERVAL="${AWAIT_INTERVAL:-30}"
 
+gh_err="$(mktemp)"
+trap 'rm -f "${gh_err}"' EXIT
+
 started="$(date +%s)"
 status=""
 while :; do
 	conclusion=""
-	if state="$("${GH_BIN}" run view "${RUN_ID}" --json status,conclusion --jq '.status + " " + (.conclusion // "")' 2>&1)"; then
+	# Parse stdout only: gh can print notices to stderr even when the call succeeds.
+	if state="$("${GH_BIN}" run view "${RUN_ID}" --json status,conclusion --jq '.status + " " + (.conclusion // "")' 2>"${gh_err}")"; then
 		read -r status conclusion <<<"${state}" || true
 	else
 		# A transient API error is not the child's verdict; keep polling until the ceiling.
-		echo "::warning::Could not read the status of run ${RUN_ID}; retrying: ${state}"
+		echo "::warning::Could not read the status of run ${RUN_ID}; retrying: $(tr '\n' ' ' <"${gh_err}")"
 	fi
 	elapsed=$(($(date +%s) - started))
 
