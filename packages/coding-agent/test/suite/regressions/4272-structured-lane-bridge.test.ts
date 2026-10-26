@@ -1,0 +1,287 @@
+import {
+	type AssistantMessageEvent,
+	getAssistantCapture,
+	subscribeAssistantCapture,
+	type ToolCall,
+} from "@earendil-works/pi-ai";
+import { AssistantMessageEventStream } from "../../../../ai/src/utils/event-stream.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
+import { toJsonEvent } from "../../../src/modes/json-event.ts";
+import { createRpcSessionBinding } from "../../../src/modes/rpc/session-binding.ts";
+import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
+import {
+	structuredLaneEnabled,
+	subscribeStructuredSessionRecords,
+} from "../../../src/modes/rpc/structured-session-records.ts";
+import {
+	allControls,
+	CONTROL_TYPES,
+	messageLabels,
+	type Script,
+	type ScriptedSession,
+	scriptedSession,
+	textReply,
+} from "../structured-lane-support.ts";
+
+const FLAG = "SENPI_ENGINE_SOCKET_COMPACT_UPDATES";
+const ASSISTANT_TURN = [
+	"message_start",
+	"message_update:thinking_start",
+	"message_block_metadata",
+	"message_update:thinking_delta",
+	"message_update:thinking_end",
+	"message_block_metadata",
+	"message_block_state:insert",
+	"message_block_state:end",
+	"message_update:toolcall_start",
+	"message_update:toolcall_delta",
+	"message_tool_arguments_reset",
+	"message_update:toolcall_end",
+	"message_end",
+];
+
+const sessions: ScriptedSession[] = [];
+afterEach(async () => {
+	vi.unstubAllEnvs();
+	for (const session of sessions.splice(0)) await session.close();
+});
+
+type Lane = {
+	type?: string;
+	message?: { role?: string };
+	assistantMessageEvent?: object;
+	invalidatedBlocks?: number[];
+};
+
+function firstAssistantMessage(records: readonly Lane[]): Lane[] {
+	const start = records.findIndex((record) => record.type === "message_start" && record.message?.role === "assistant");
+	const end = records.findIndex((record, index) => index > start && record.type === "message_end");
+	return start === -1 || end === -1 ? [] : records.slice(start, end + 1);
+}
+
+function leaked(records: readonly object[]): string[] {
+	return records.flatMap((record) => {
+		const text = JSON.stringify(record);
+		const value = record as Lane & { assistantMessageEvent?: { seed?: unknown; offset?: unknown } };
+		return [
+			...CONTROL_TYPES.filter((type) => value.type === type || text.includes(`"type":"${type}"`)),
+			...(value.assistantMessageEvent?.seed !== undefined ? ["seed"] : []),
+			...(value.assistantMessageEvent?.offset !== undefined ? ["offset"] : []),
+		];
+	});
+}
+
+interface Run {
+	readonly lane: Lane[][];
+	readonly socket: string[];
+	readonly stdout: string[];
+	readonly extension: object[];
+	readonly hasWriteStructured: boolean[];
+}
+
+async function runControls(flag: boolean): Promise<Run> {
+	vi.unstubAllEnvs();
+	if (flag) vi.stubEnv(FLAG, "1");
+	expect(structuredLaneEnabled()).toBe(flag);
+	const extension: object[] = [];
+	const listen = (pi: ExtensionAPI) => {
+		pi.on("message_start", (event) => void extension.push(event));
+		pi.on("message_update", (event) => void extension.push(event));
+		pi.on("message_end", (event) => void extension.push(event));
+		pi.on("turn_end", (event) => void extension.push(event));
+	};
+	const session = await scriptedSession([allControls, textReply("ok"), allControls, textReply("ok")], {
+		extensionFactories: [listen],
+	});
+	sessions.push(session);
+	const stdout: string[] = [];
+	const stopStdout = session.harness.session.subscribe((event) => stdout.push(JSON.stringify(toJsonEvent(event))));
+	const writer = new SessionEventWriter(() => {});
+	const socket: string[] = [];
+	writer.registerConnection("client", { writeRaw: (line) => socket.push(line), waitForBackpressure: async () => {} });
+	writer.attachConnectionToSession("client", "session");
+	const lane: Lane[][] = [];
+	const hasWriteStructured: boolean[] = [];
+	try {
+		for (let bind = 0; bind < 2; bind++) {
+			const records: Lane[] = [];
+			lane.push(records);
+			const stop = writer.structuredLanes.observe("session", (record) => records.push(record));
+			const binding = await createRpcSessionBinding("session", session.entry, writer, () => {});
+			try {
+				await session.prompt(`go ${bind}`);
+				await writer.flush();
+			} finally {
+				await binding.dispose();
+				stop();
+			}
+			hasWriteStructured.push(records.length > 0);
+		}
+	} finally {
+		stopStdout();
+		writer.unregisterConnection("client");
+	}
+	return { lane, socket, stdout, extension, hasWriteStructured };
+}
+
+const updates = (lines: readonly string[]) =>
+	lines
+		.filter((line) => line.includes('"type":"message_update"'))
+		.map((line) => line.replace(/faux:\d+:[a-z0-9]+/g, "faux").replace(/"(startedAt|endedAt)":\d+/g, '"$1":0'));
+
+describe("T6 structured lane bridge", () => {
+	it("T6 orders all three controls among ordinary records on the lane, on every bind, and never anywhere legacy", async () => {
+		const run = await runControls(true);
+		for (const records of run.lane) {
+			const turn = firstAssistantMessage(records);
+			expect(messageLabels(turn)).toEqual(ASSISTANT_TURN);
+			expect(turn.at(-1)?.invalidatedBlocks).toBeUndefined();
+			expect(turn.find((record) => record.type === "message_tool_arguments_reset")).toEqual({
+				type: "message_tool_arguments_reset",
+				contentIndex: 2,
+				rawArgumentPrefix: '{"a":1}',
+				parsedThrough: 7,
+				sessionId: "session",
+			});
+			expect(turn.find((record) => record.type === "message_update")).toMatchObject({
+				sessionId: "session",
+				assistantMessageEvent: { type: "thinking_start", contentIndex: 0, seed: { coveredCodeUnits: 0 } },
+			});
+			for (const key of ["messageId", "turnId", "runtimeItemKey"])
+				expect(records.filter((record) => key in record)).toEqual([]);
+		}
+		expect(leaked(run.socket.map((line) => JSON.parse(line)))).toEqual([]);
+		expect(leaked(run.stdout.map((line) => JSON.parse(line)))).toEqual([]);
+		expect(leaked(run.extension)).toEqual([]);
+		expect(run.extension.length).toBeGreaterThan(10);
+	});
+
+	it("keeps legacy socket and classic stdout bytes identical with the flag off, and opens no lane", async () => {
+		const on = await runControls(true);
+		const off = await runControls(false);
+		expect(off.hasWriteStructured).toEqual([false, false]);
+		expect(on.hasWriteStructured).toEqual([true, true]);
+		expect(updates(on.socket).length).toBeGreaterThan(10);
+		expect(updates(on.socket)).toEqual(updates(off.socket));
+		expect(updates(on.stdout)).toEqual(updates(off.stdout));
+	});
+
+	it("T6 gives a lane attached mid-message no seed, delta or control for that message (late attach)", async () => {
+		const releaseCapture = subscribeAssistantCapture();
+		const resume = Promise.withResolvers<void>();
+		const paused: Script = async (stream, partial) => {
+			stream.push({ type: "start", partial });
+			partial.content.push({ type: "text", text: "a" });
+			stream.push({ type: "text_start", contentIndex: 0, partial });
+			await resume.promise;
+			const block = partial.content[0];
+			if (block?.type === "text") block.text = "ab";
+			stream.push({ type: "text_delta", contentIndex: 0, delta: "b", partial });
+			const native = { type: "providerNative" as const, subtype: "fixture", raw: {} };
+			partial.content.push(native);
+			stream.push({ type: "text_end", contentIndex: 0, content: "ab", partial });
+		};
+		const session = await scriptedSession([paused, textReply("next")]);
+		sessions.push(session);
+		const emitted = Promise.withResolvers<void>();
+		const stopWatch = session.harness.session.subscribe((event) => {
+			if (event.type === "message_update" && event.assistantMessageEvent.type === "text_start") emitted.resolve();
+		});
+		const records: Lane[] = [];
+		let stop = () => {};
+		try {
+			const running = session.prompt("first");
+			await emitted.promise;
+			stop = subscribeStructuredSessionRecords(session.harness.session, (record) => records.push(record));
+			resume.resolve();
+			await running;
+			const late = records.filter((record) => record.type?.startsWith("message_"));
+			expect(messageLabels(late)).toEqual(["message_end"]);
+			expect(late[0]?.invalidatedBlocks).toBeUndefined();
+			records.length = 0;
+			await session.prompt("second");
+			expect(messageLabels(firstAssistantMessage(records))).toEqual([
+				"message_start",
+				"message_update:text_start",
+				"message_update:text_delta",
+				"message_update:text_end",
+				"message_end",
+			]);
+		} finally {
+			stop();
+			stopWatch();
+			releaseCapture();
+		}
+	});
+
+	it("T6 invalidates a block whose seed was seen but whose end capture failed (LOW a)", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const failing: Script = (stream, partial) => {
+			stream.push({ type: "start", partial });
+			const call: ToolCall = { type: "toolCall", id: "call_1", name: "probe", arguments: {} };
+			partial.content.push(call);
+			stream.push({ type: "toolcall_start", contentIndex: 0, partial });
+			stream.push({ type: "toolcall_delta", contentIndex: 0, delta: '{"a":1}', partial });
+			Reflect.set(call.arguments, "uncloneable", () => 1);
+			stream.push({ type: "toolcall_end", contentIndex: 0, toolCall: call, partial });
+			partial.stopReason = "toolUse";
+		};
+		const session = await scriptedSession([failing, textReply("ok")]);
+		sessions.push(session);
+		const records: Lane[] = [];
+		const stop = subscribeStructuredSessionRecords(session.harness.session, (record) => records.push(record));
+		try {
+			await session.prompt("go");
+			const turn = firstAssistantMessage(records);
+			expect(messageLabels(turn)).toEqual([
+				"message_start",
+				"message_update:toolcall_start",
+				"message_update:toolcall_delta",
+				"message_end",
+			]);
+			expect(turn.at(-1)?.invalidatedBlocks).toEqual([0]);
+			expect(warn).toHaveBeenCalledTimes(1);
+		} finally {
+			stop();
+			warn.mockRestore();
+		}
+	});
+
+	it("measures the module-wide capture subscription on a stream no lane owns (LOW b)", async () => {
+		const session = await scriptedSession([]);
+		sessions.push(session);
+		const captured = (): boolean => {
+			const stream = new AssistantMessageEventStream({ captureBlocks: true });
+			const event: AssistantMessageEvent = {
+				type: "start",
+				partial: {
+					role: "assistant",
+					api: "faux",
+					provider: "faux",
+					model: "unrelated",
+					content: [],
+					timestamp: 1,
+					stopReason: "stop",
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+				},
+			};
+			stream.push(event);
+			return getAssistantCapture(event) !== undefined;
+		};
+		const before = captured();
+		const stop = session.harness.session.subscribeStructured(() => {});
+		const during = captured();
+		stop();
+		const after = captured();
+		console.log(`LOW-b unrelated stream captured: before=${before} during=${during} after=${after}`);
+		expect([before, during, after]).toEqual([false, true, false]);
+	});
+});
