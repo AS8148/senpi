@@ -34,8 +34,13 @@ export const nodeCompactStorageIo: CompactStorageIo = {
 	unlink: (path) => unlink(path),
 };
 
+/** Never throws: a host-supplied cause that cannot be described must not abort the failure report. */
 export function describeCause(cause: unknown): string {
-	return cause instanceof Error ? cause.message : String(cause);
+	try {
+		return cause instanceof Error ? cause.message : String(cause);
+	} catch {
+		return "unprintable failure cause";
+	}
 }
 
 /** Committed storage that can no longer be read: a real error, never empty content. */

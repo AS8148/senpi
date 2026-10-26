@@ -140,14 +140,20 @@ export class CompactContentStore extends CompactSpoolStorage {
 		const bytes = leaf.units * 2;
 		leaf.state = "pending";
 		this.ramLeaves.delete(id);
-		const path = await this.writeFile(Buffer.from(leaf.text, "utf16le"), "spill_write", bytes);
+		let path: string | undefined;
+		try {
+			path = await this.writeFile(Buffer.from(leaf.text, "utf16le"), "spill_write", bytes);
+		} finally {
+			// A failed write, or a failure report that threw, keeps the leaf resident and spillable.
+			if (path === undefined) {
+				leaf.state = "ram";
+				if (this.leaves.get(id) === leaf) this.ramLeaves.add(id);
+			}
+		}
 		const owned = this.leaves.get(id) === leaf;
-		if (path === undefined) {
-			leaf.state = "ram";
-			if (owned) this.ramLeaves.add(id);
-		} else if (!owned || this.retired) {
+		if (path !== undefined && (!owned || this.retired)) {
 			this.discard(path, bytes);
-		} else {
+		} else if (path !== undefined) {
 			leaf.state = "committed";
 			leaf.path = path;
 			leaf.text = undefined;

@@ -85,8 +85,11 @@ export abstract class CompactSpoolStorage {
 			this.spillBytesWritten += data.byteLength;
 			return file;
 		} catch (cause) {
-			this.fail(operation, file, cause, retainedInMemoryBytes);
-			this.discard(file, data.byteLength);
+			try {
+				this.fail(operation, file, cause, retainedInMemoryBytes);
+			} finally {
+				this.discard(file, data.byteLength);
+			}
 			return undefined;
 		} finally {
 			this.pendingIoCopyBytes -= data.byteLength;
