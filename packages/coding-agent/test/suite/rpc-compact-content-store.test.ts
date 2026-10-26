@@ -159,7 +159,7 @@ describe("compact content index: coalesced overrides and stale compaction", () =
 		pageWrite.release();
 		await state.idle();
 
-		expect(state.storageStatus()).toMatchObject({ basePages: 1, baseRows: 3, overrideSlots: 2, deletionMasks: 1 });
+		expect(state.storageStatus()).toMatchObject({ basePages: 1, baseRows: 1, overrideSlots: 1, deletionMasks: 0 });
 		const persistence = async (cut = state.freeze()) => {
 			const view = await state.read(cut);
 			state.release(cut);

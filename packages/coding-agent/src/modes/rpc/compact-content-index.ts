@@ -1,15 +1,14 @@
 import type { CompactContentStore, LeafId } from "./compact-content-store.ts";
+import { isSmallPage, packPages } from "./compact-index-pages.ts";
 
 /**
  * A spillable keyed collection: an immutable paged disk base plus one resident override slot per key
  * (senpi#4272). Updates coalesce into that slot, so N updates to one key hold one slot, and a cold row
  * changes without reading its page. Background compaction folds eligible overrides into new pages and
  * publishes them in one synchronous swap that never removes an override newer than the one it read.
+ * A failed compaction leaves the previous base in place and the next one free to run.
  * Pages are internal storage only; nothing here is a wire record.
  */
-
-const PAGE_ROWS = 128;
-const PAGE_BYTES = 64 * 1024;
 
 type Override<Row> =
 	| { readonly kind: "row"; readonly row: Row }
@@ -19,10 +18,17 @@ type Override<Row> =
 interface Page {
 	readonly path: string;
 	readonly bytes: number;
+	/** Published keys; a row skipped at publication stays in the file but is never read back. */
 	readonly keys: readonly string[];
 	readonly leaves: readonly LeafId[];
 	inBase: boolean;
 	pins: number;
+}
+
+interface WrittenPage<Row> {
+	readonly path: string;
+	readonly bytes: number;
+	readonly rows: readonly [string, Row][];
 }
 
 interface IndexBase {
@@ -41,6 +47,9 @@ export class CompactContentIndex<Row extends object> {
 	private readonly compactAboveRows: number;
 	private base: IndexBase = { pages: [], pageOf: new Map() };
 	private readonly overrides = new Map<string, Override<Row>>();
+	/** Uncommitted leaves per row override; only overrides absent here are eligible to fold. */
+	private readonly unsettledLeaves = new Map<string, number>();
+	private readonly leafKey = new Map<LeafId, string>();
 	private compacting = false;
 	private tombstones = 0;
 	private tombstoneKeyUnits = 0;
@@ -49,7 +58,7 @@ export class CompactContentIndex<Row extends object> {
 		this.store = store;
 		this.leavesOf = leavesOf;
 		this.compactAboveRows = compactAboveRows;
-		store.onCommitted = () => this.maybeCompact();
+		store.onCommitted = (id) => this.committed(id);
 	}
 
 	has(key: string): boolean {
@@ -106,26 +115,38 @@ export class CompactContentIndex<Row extends object> {
 		};
 	}
 
-	/** Only a size check runs on the acceptance path; eligibility is judged inside the storage job. */
+	/** The acceptance path checks counts only: an override is eligible once none of its leaves is uncommitted. */
 	maybeCompact(): void {
-		if (this.compacting || !this.store.spillAllowed || this.overrides.size < this.compactAboveRows) return;
+		if (this.compacting || !this.store.spillAllowed) return;
+		if (this.overrides.size - this.unsettledLeaves.size < this.compactAboveRows) return;
 		this.compacting = true;
 		this.store.enqueue("page_write", async () => {
-			const progressed = await this.compact();
-			this.compacting = false;
+			let progressed = false;
+			try {
+				progressed = await this.compact();
+			} finally {
+				this.compacting = false;
+			}
 			if (progressed) this.maybeCompact();
 		});
 	}
 
-	private eligible(override: Override<Row>): boolean {
-		return override.kind !== "row" || this.leavesOf(override.row).every((id) => this.store.isCommitted(id));
+	private committed(id: LeafId): void {
+		const key = this.leafKey.get(id);
+		if (key === undefined) return;
+		this.leafKey.delete(id);
+		const left = (this.unsettledLeaves.get(key) ?? 0) - 1;
+		if (left > 0) this.unsettledLeaves.set(key, left);
+		else this.unsettledLeaves.delete(key);
+		this.maybeCompact();
 	}
 
+	/** Folds eligible overrides and every small base page; false leaves the previous base untouched. */
 	private async compact(): Promise<boolean> {
 		const base = this.base;
-		const selected = [...this.overrides].filter(([, override]) => this.eligible(override));
+		const selected = [...this.overrides].filter(([key]) => !this.unsettledLeaves.has(key));
 		if (selected.length < this.compactAboveRows) return false;
-		const touched = new Set<Page>();
+		const touched = new Set(base.pages.filter(isSmallPage));
 		for (const [key] of selected) {
 			const page = base.pageOf.get(key);
 			if (page) touched.add(page);
@@ -137,34 +158,56 @@ export class CompactContentIndex<Row extends object> {
 			return false;
 		}
 		applyOverrides(rows, new Map(selected));
-		const written: Page[] = [];
-		for (const chunk of chunkRows([...rows])) {
+		const written: WrittenPage<Row>[] = [];
+		for (const chunk of packPages([...rows])) {
 			const data = Buffer.from(JSON.stringify(chunk));
 			const path = await this.store.writeFile(data, "page_write", data.byteLength);
-			if (path === undefined) {
+			if (path === undefined || !this.store.spillAllowed) {
 				for (const page of written) this.store.discard(page.path, page.bytes);
+				if (path !== undefined) this.store.discard(path, data.byteLength);
 				return false;
 			}
-			const leaves = chunk.flatMap(([, row]) => this.leavesOf(row));
-			written.push({ path, bytes: data.byteLength, keys: chunk.map(([key]) => key), leaves, inBase: true, pins: 0 });
+			written.push({ path, bytes: data.byteLength, rows: chunk });
 		}
-		this.swap(base, touched, written, selected);
+		this.swap(base, touched, written, new Map(selected));
 		return true;
 	}
 
-	/** The publication point: one synchronous step, so no acceptance observes a half-swapped index. */
-	private swap(base: IndexBase, touched: Set<Page>, written: Page[], selected: [string, Override<Row>][]): void {
+	/**
+	 * The publication point: one synchronous step, so no acceptance observes a half-swapped index. A folded
+	 * row is published only while its value is still observable (its override is the folded one, or a newer
+	 * patch over it); a row removed or wholly replaced meanwhile is skipped, so every published leaf is still
+	 * owned by the folded override or a touched page when its reference is added.
+	 */
+	private swap(
+		base: IndexBase,
+		touched: Set<Page>,
+		written: WrittenPage<Row>[],
+		selected: Map<string, Override<Row>>,
+	): void {
 		const pageOf = new Map(base.pageOf);
 		for (const page of touched) for (const key of page.keys) pageOf.delete(key);
-		for (const page of written) {
+		const published: Page[] = [];
+		for (const { path, bytes, rows } of written) {
+			const kept = rows.filter(([key]) => {
+				const folded = selected.get(key);
+				const current = this.overrides.get(key);
+				return folded === undefined || current === folded || current?.kind === "patch";
+			});
+			if (kept.length === 0) {
+				this.store.discard(path, bytes);
+				continue;
+			}
+			const leaves = kept.flatMap(([, row]) => this.leavesOf(row));
+			const page: Page = { path, bytes, keys: kept.map(([key]) => key), leaves, inBase: true, pins: 0 };
 			for (const key of page.keys) pageOf.set(key, page);
-			for (const id of page.leaves) this.store.adjust(id, 1, 0);
+			for (const id of leaves) this.store.adjust(id, 1, 0);
+			published.push(page);
 		}
-		this.base = { pages: [...base.pages.filter((page) => !touched.has(page)), ...written], pageOf };
+		this.base = { pages: [...base.pages.filter((page) => !touched.has(page)), ...published], pageOf };
 		for (const [key, override] of selected) {
 			const current = this.overrides.get(key);
-			if (current === override) this.drop(key);
-			else if (current === undefined && pageOf.has(key)) this.put(key, { kind: "tombstone" });
+			if (current === override || (current?.kind === "tombstone" && !pageOf.has(key))) this.drop(key);
 		}
 		for (const page of touched) {
 			page.inBase = false;
@@ -176,7 +219,9 @@ export class CompactContentIndex<Row extends object> {
 	private async readPage(page: Page): Promise<[string, Row][]> {
 		const data = await this.store.readFile(page.path, page.bytes, "page_read");
 		const entries: [string, Row][] = JSON.parse(data.toString("utf8"));
-		return entries;
+		if (entries.length === page.keys.length) return entries;
+		const keys = new Set(page.keys);
+		return entries.filter(([key]) => keys.has(key));
 	}
 
 	private reclaimPage(page: Page, live: number, pins: number): void {
@@ -185,9 +230,13 @@ export class CompactContentIndex<Row extends object> {
 	}
 
 	private put(key: string, override: Override<Row>): void {
-		if (override.kind === "row") for (const id of this.leavesOf(override.row)) this.store.adjust(id, 1, 0);
+		const leaves = override.kind === "row" ? this.leavesOf(override.row) : [];
+		for (const id of leaves) this.store.adjust(id, 1, 0);
 		this.drop(key);
 		this.overrides.set(key, override);
+		const unsettled = leaves.filter((id) => !this.store.isCommitted(id));
+		for (const id of unsettled) this.leafKey.set(id, key);
+		if (unsettled.length > 0) this.unsettledLeaves.set(key, unsettled.length);
 		if (override.kind === "tombstone") this.countTombstone(key, 1);
 		this.maybeCompact();
 	}
@@ -196,7 +245,13 @@ export class CompactContentIndex<Row extends object> {
 		const old = this.overrides.get(key);
 		if (!old) return;
 		this.overrides.delete(key);
-		if (old.kind === "row") for (const id of this.leavesOf(old.row)) this.store.adjust(id, -1, 0);
+		this.unsettledLeaves.delete(key);
+		if (old.kind === "row") {
+			for (const id of this.leavesOf(old.row)) {
+				this.leafKey.delete(id);
+				this.store.adjust(id, -1, 0);
+			}
+		}
 		if (old.kind === "tombstone") this.countTombstone(key, -1);
 	}
 
@@ -222,22 +277,4 @@ function applyOverrides<Row extends object>(
 			if (row) rows.set(key, { ...row, ...override.patch });
 		}
 	}
-}
-
-function chunkRows<Row>(rows: [string, Row][]): [string, Row][][] {
-	const chunks: [string, Row][][] = [];
-	let chunk: [string, Row][] = [];
-	let bytes = 0;
-	for (const entry of rows) {
-		const size = JSON.stringify(entry).length;
-		if (chunk.length > 0 && (chunk.length === PAGE_ROWS || bytes + size > PAGE_BYTES)) {
-			chunks.push(chunk);
-			chunk = [];
-			bytes = 0;
-		}
-		chunk.push(entry);
-		bytes += size;
-	}
-	if (chunk.length > 0) chunks.push(chunk);
-	return chunks;
 }

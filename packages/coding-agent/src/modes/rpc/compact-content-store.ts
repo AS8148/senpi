@@ -82,7 +82,7 @@ export class CompactContentStore {
 	private spillBytesWritten = 0;
 	private reclaimDebtBytes = 0;
 	/** Called after a leaf commits, so index compaction can include rows that now reference only disk. */
-	onCommitted: (() => void) | undefined;
+	onCommitted: ((id: LeafId) => void) | undefined;
 
 	constructor(options: CompactContentStoreOptions) {
 		this.dir = options.dir;
@@ -179,7 +179,7 @@ export class CompactContentStore {
 		return data;
 	}
 
-	/** Writes one new spool file; undefined means the write failed, was reported, and spilling halted. */
+	/** Writes one new spool file; undefined means the write failed and was reported (a spill write also halts spilling). */
 	async writeFile(
 		data: Buffer,
 		operation: CompactStorageOperation,
@@ -286,7 +286,7 @@ export class CompactContentStore {
 			leaf.text = undefined;
 			this.residentPayloadBytes -= bytes;
 			this.spilledLiveBytes += bytes;
-			this.onCommitted?.();
+			this.onCommitted?.(id);
 		}
 		this.spillQueued = false;
 		if (this.residentPayloadBytes > this.spillTargetBytes) {
@@ -316,7 +316,7 @@ export class CompactContentStore {
 	}
 
 	private fail(operation: CompactStorageOperation, path: string, cause: unknown, retained: number): void {
-		if (operation === "spill_write" || operation === "page_write" || operation === "spool_create") this.halted = true;
+		if (operation === "spill_write" || operation === "spool_create") this.halted = true;
 		this.record({ operation, path, cause: describeCause(cause), retainedInMemoryBytes: retained });
 	}
 
