@@ -37,6 +37,19 @@ interface Word {
 class Unparsed extends Error {}
 
 const MAX_DEPTH = 12;
+/** Longer commands are not lexed at all: they are `unparsed`, so only a `*` rule can decide them. */
+export const MAX_COMMAND_LENGTH = 64 * 1024;
+/** Total characters the lexer may visit across every nested scan of one command before giving up. */
+const MAX_STEPS = 4_000_000;
+/** Words a best-effort candidate needs: the longest `BashArity` prefix is three words. */
+const CANDIDATE_WORDS = 3;
+
+let steps = 0;
+/** Counts lexer work; overrunning the budget makes the command `unparsed`, never slow. */
+const step = (count = 1) => {
+	steps += count;
+	if (steps > MAX_STEPS) fail();
+};
 
 const fail = (): never => {
 	throw new Unparsed();
@@ -57,6 +70,7 @@ function matchParen(source: string, start: number): number {
 	let depth = 1;
 	let index = start;
 	while (index < source.length) {
+		step();
 		const char = source[index];
 		if (char === "\\") {
 			index += 2;
@@ -90,6 +104,7 @@ function matchParen(source: string, start: number): number {
 function skipDoubleQuoted(source: string, start: number): number {
 	let index = start;
 	while (index < source.length) {
+		step();
 		const char = source[index];
 		if (char === "\\") {
 			index += 2;
@@ -113,6 +128,7 @@ function skipDoubleQuoted(source: string, start: number): number {
 function skipBackticks(source: string, start: number): number {
 	let index = start;
 	while (index < source.length) {
+		step();
 		const char = source[index];
 		if (char === "\\") {
 			index += 2;
@@ -129,6 +145,7 @@ function matchBrace(source: string, start: number): number {
 	let depth = 1;
 	let index = start;
 	while (index < source.length) {
+		step();
 		const char = source[index];
 		if (char === "\\") {
 			index += 2;
@@ -208,6 +225,7 @@ class Lexer {
 	run(): void {
 		const source = this.source;
 		while (this.index < source.length) {
+			step();
 			const char = source[this.index];
 			if (this.word === undefined && char === "#") {
 				while (this.index < source.length && source[this.index] !== "\n") this.index += 1;
@@ -330,14 +348,15 @@ class Lexer {
 	}
 
 	private nested(source: string): void {
-		new Lexer(source, this.depth + 1, this.segments).run();
+		new Lexer(source, this.depth + this.textDepth + 1, this.segments).run();
 	}
 
 	private endWord(): void {
 		const word = this.word;
 		this.word = undefined;
 		if (word === undefined) return;
-		if (word.brace && word.text !== "{") word.dynamic = true;
+		// Only `{a,b}` and `{1..3}` expand; `{}` (find's placeholder) and `{x}` stay literal.
+		if (word.brace && /\{[^}]*(,|\.\.)[^}]*\}/.test(word.text)) word.dynamic = true;
 		// `[` and `[[` are the test command and keyword, not a pattern.
 		if (word.glob && word.text !== "[" && word.text !== "[[") word.dynamic = true;
 		if (this.redirectNext !== undefined) {
@@ -457,7 +476,19 @@ class Lexer {
 	}
 
 	/** Searches text that is not a command list (a `${…}` body, a here-document) for substitutions. */
+	private textDepth = 0;
+
 	private nestedText(text: string): void {
+		this.textDepth += 1;
+		if (this.depth + this.textDepth > MAX_DEPTH) fail();
+		try {
+			this.scanText(text);
+		} finally {
+			this.textDepth -= 1;
+		}
+	}
+
+	private scanText(text: string): void {
 		let index = 0;
 		while (index < text.length) {
 			const char = text[index];
@@ -649,6 +680,8 @@ const WRAPPER_OPTIONS: Readonly<Record<string, OptionTable>> = {
 		"-u -g -h -p -C -D -r -t -U -T --user --group --host --prompt --close-from --chdir --role --type --other-user --command-timeout",
 	),
 	doas: opts("-n -s", "-u -C"),
+	setsid: opts("-c -f -w --ctty --fork --wait"),
+	ionice: opts("-t --ignore", "-c -n --class --classdata"),
 };
 
 const ENV_OPTIONS = opts("-i -0 -v --ignore-environment --null --debug", "-u -C --unset --chdir");
@@ -760,11 +793,13 @@ const expandSimpleCommand: Expand = (input, out) => {
 	}
 	if (name === "find") {
 		out.push(line);
+		// find reads its words after quote removal, so a quoted action is still an action.
+		if (rest.some((word) => word.dynamic)) fail();
 		for (let index = 0; index < rest.length; index += 1) {
-			const text = rest[index].text;
-			if (rest[index].quoted || !["-exec", "-execdir", "-ok", "-okdir"].includes(text)) continue;
-			const end = rest.findIndex((word, position) => position > index && (word.text === ";" || word.text === "+"));
-			if (end < 0) fail();
+			if (!["-exec", "-execdir", "-ok", "-okdir"].includes(rest[index].text)) continue;
+			let end = index + 1;
+			while (end < rest.length && rest[end].text !== ";" && rest[end].text !== "+") end += 1;
+			if (end >= rest.length) fail();
 			expandSimpleCommand(rest.slice(index + 1, end), out);
 			index = end;
 		}
@@ -839,14 +874,22 @@ function lexSegments(command: string): Word[][] {
  * source order; or `unparsed` when any part of the command is outside what this lexer understands.
  */
 export function analyzeBashCommand(command: string): BashCommandAnalysis {
+	if (command.length > MAX_COMMAND_LENGTH) return { kind: "unparsed" };
+	steps = 0;
 	try {
 		const out: string[][] = [];
 		for (const segment of lexSegments(command)) expandSimpleCommand(segment, out);
 		return { kind: "parsed", segments: out };
-	} catch (error) {
-		if (error instanceof Unparsed) return { kind: "unparsed" };
-		throw error;
+	} catch {
+		// Fail closed: a parse failure, the depth or step budget, or a runtime error (a deep stack)
+		// all mean `unparsed`, which no command-specific rule can allow.
+		return { kind: "unparsed" };
 	}
+}
+
+/** Lexer steps the last `analyzeBashCommand` call used (for scaling tests). */
+export function lastAnalysisSteps(): number {
+	return steps;
 }
 
 /**
@@ -859,5 +902,13 @@ export function bestEffortCommandLines(command: string): string[][] {
 		.filter((word) => /^[A-Za-z0-9._+/-]+$/.test(word))
 		.map(pathBasename)
 		.filter((word) => word !== "");
-	return words.map((_word, index) => words.slice(index));
+	return words.map((_word, index) => words.slice(index, index + CANDIDATE_WORDS));
+}
+
+/**
+ * A rule target that matches only itself: `*` and `?` are wildcards in rule patterns, so a command's own
+ * `*`, `?` (and the escape `%`) are percent-encoded before it becomes a pattern or an "Allow always" rule.
+ */
+export function literalPattern(text: string): string {
+	return text.replace(/[%*?]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
 }

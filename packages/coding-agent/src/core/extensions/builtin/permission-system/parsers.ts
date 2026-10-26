@@ -3,7 +3,11 @@ import { realpathWithoutOpen } from "../../../../utils/paths.ts";
 import type { ToolInfo } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { BashArity } from "../permission-system/arity.ts";
-import { analyzeBashCommand, bestEffortCommandLines } from "../permission-system/bash-command-segments.ts";
+import {
+	analyzeBashCommand,
+	bestEffortCommandLines,
+	literalPattern,
+} from "../permission-system/bash-command-segments.ts";
 import {
 	type AlwaysScope,
 	extractExternalPaths,
@@ -120,7 +124,7 @@ export const UNPARSED_BASH_PREFIX = "(unparsed) ";
 function bashCommandRequests(command: string): PermissionRequest[] {
 	const analysis = analyzeBashCommand(command);
 	if (analysis.kind === "unparsed") {
-		const target = `${UNPARSED_BASH_PREFIX}${command}`;
+		const target = `${UNPARSED_BASH_PREFIX}${literalPattern(command)}`;
 		const candidates = uniq(
 			bestEffortCommandLines(command)
 				.map((words) => BashArity.prefix(words).join(" "))
@@ -134,8 +138,11 @@ function bashCommandRequests(command: string): PermissionRequest[] {
 			{ permission: "bash", patterns: [target], always: [target] },
 		];
 	}
-	const prefixes = uniq(analysis.segments.map((words) => BashArity.prefix([...words]).join(" ")).filter(Boolean));
-	if (prefixes.length === 0) return [{ permission: "bash", patterns: [command], always: [command] }];
+	const prefixes = uniq(
+		analysis.segments.map((words) => literalPattern(BashArity.prefix([...words]).join(" "))).filter(Boolean),
+	);
+	if (prefixes.length === 0)
+		return [{ permission: "bash", patterns: [literalPattern(command)], always: [literalPattern(command)] }];
 	return [
 		{
 			permission: "bash",

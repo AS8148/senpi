@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { analyzeBashCommand } from "../../src/core/extensions/builtin/permission-system/bash-command-segments.ts";
+import {
+	analyzeBashCommand,
+	bestEffortCommandLines,
+	lastAnalysisSteps,
+	MAX_COMMAND_LENGTH,
+} from "../../src/core/extensions/builtin/permission-system/bash-command-segments.ts";
 import { fromConfig, rulesForPreset } from "../../src/core/extensions/builtin/permission-system/config.ts";
 import {
 	createBuiltinParserRegistry,
@@ -106,6 +111,8 @@ const WRAPPER_SHAPES: ReadonlyArray<readonly [string, string]> = [
 	["xargs", `xargs ${TARGET}`],
 	["sudo", `sudo -u root ${TARGET}`],
 	["doas", `doas ${TARGET}`],
+	["setsid", `setsid ${TARGET}`],
+	["ionice", `ionice -c 3 ${TARGET}`],
 	["bash -c", `bash -c '${TARGET}'`],
 	["sh -c with flags", `sh -ec "${TARGET}"`],
 	["eval", `eval '${TARGET}'`],
@@ -234,4 +241,67 @@ describe("analyzeBashCommand", () => {
 	])("refuses %s", (_case, command) => {
 		expect(analyzeBashCommand(command)).toEqual({ kind: "unparsed" });
 	});
+});
+
+describe("bounded work and fail-closed limits", () => {
+	const unparsedScript = (words: number) =>
+		`f() { ${Array.from({ length: words }, (_, i) => `echo w${i};`).join(" ")} }`;
+	const candidateWork = (command: string) =>
+		bestEffortCommandLines(command).reduce((total, words) => total + words.length, 0);
+
+	it("scales best-effort candidates linearly with an unparsed command's size", () => {
+		const small = unparsedScript(500);
+		const large = unparsedScript(1000);
+		expect(analyzeBashCommand(large)).toEqual({ kind: "unparsed" });
+		expect(candidateWork(large) / candidateWork(small)).toBeLessThan(2.5);
+	});
+
+	it("scales lexer work linearly with a parsed command's size", () => {
+		const chain = (n: number) => Array.from({ length: n }, (_, i) => `echo "a$(true)b" ${i}`).join(" && ");
+		analyzeBashCommand(chain(500));
+		const small = lastAnalysisSteps();
+		analyzeBashCommand(chain(1000));
+		expect(lastAnalysisSteps() / small).toBeLessThan(2.5);
+	});
+
+	it.each([
+		["arithmetic", (n: number) => `echo ${"$((".repeat(n)}1${"))".repeat(n)}`],
+		["parameter defaults", (n: number) => `echo ${"${x:-".repeat(n)}y${"}".repeat(n)}`],
+		["command substitution", (n: number) => `echo ${"$(".repeat(n)}true${")".repeat(n)}`],
+	])("refuses %s nested past the depth limit instead of recursing", (_shape, build) => {
+		expect(analyzeBashCommand(build(5_000))).toEqual({ kind: "unparsed" });
+	});
+
+	it("refuses a command longer than the lexer accepts", () => {
+		expect(analyzeBashCommand(`echo ${"a".repeat(MAX_COMMAND_LENGTH)}`)).toEqual({ kind: "unparsed" });
+	});
+
+	it("unwraps a quoted find action and refuses an expanded one", () => {
+		expect(analyzeBashCommand(`find . "-exec" ${TARGET} {} \\;`)).toEqual({
+			kind: "parsed",
+			segments: [
+				["find", ".", "-exec", "rm", "-rf", "build", "{}", ";"],
+				["rm", "-rf", "build", "{}"],
+			],
+		});
+		expect(analyzeBashCommand(`find . $action ${TARGET} {} \\;`)).toEqual({ kind: "unparsed" });
+	});
+});
+
+describe("an Allow always answer stores a literal", () => {
+	it.each(ASKING_PRESETS)(
+		"%s: an unparsed command approved always does not match a different command",
+		async (preset) => {
+			const approvedCommand = "case $1 in *) echo hi;; esac";
+			const remembered: Rule[] = registry
+				.parse("bash", { command: approvedCommand }, cwd)
+				.flatMap((request) =>
+					request.always.map((pattern) => ({ permission: "bash", pattern, action: "allow" as const })),
+				);
+			expect(await decide(preset, approvedCommand, { approved: remembered })).toBe("allow");
+			expect(await decide(preset, `case $1 in x) ${TARGET};; *) echo hi;; esac`, { approved: remembered })).toBe(
+				"ask",
+			);
+		},
+	);
 });
