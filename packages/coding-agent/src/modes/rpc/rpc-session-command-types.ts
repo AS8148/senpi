@@ -148,6 +148,7 @@ export type RpcSessionCommand =
 
 	// State
 	| { id?: string; type: "get_state" }
+	| { id?: string; type: "get_snapshot"; tail?: number; maxBytes?: number; observe?: boolean }
 	| { id?: string; type: "request_self_settle" }
 	/**
 	 * The newest receipt of one effect (capability `effect_ledger`). With `sessionId` it answers from the
@@ -272,7 +273,19 @@ export type RpcSessionCommand =
 	  }
 	| { id?: string; type: "clone" }
 	| { id?: string; type: "get_fork_messages" }
-	| { id?: string; type: "get_entries"; since?: string; limit?: number; maxBytes?: number }
+	/**
+	 * `since`/`before` bound the range (strictly after / strictly before an entry id); `limit` pages it forward from
+	 * its start, `tail` backward from its end (`next_before` names the next page, senpi#4267).
+	 */
+	| {
+			id?: string;
+			type: "get_entries";
+			since?: string;
+			before?: string;
+			limit?: number;
+			tail?: number;
+			maxBytes?: number;
+	  }
 	| { id?: string; type: "get_tree" }
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }

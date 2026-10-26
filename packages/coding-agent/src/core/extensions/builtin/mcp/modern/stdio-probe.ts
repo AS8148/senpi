@@ -14,6 +14,7 @@ import {
 } from "./era.ts";
 import { modernInitializeResult, normalizeModernResult } from "./sdk-bridge.ts";
 import { ModernTransportError } from "./transport.ts";
+import { ModernSubscriptions } from "./subscriptions.ts";
 import { sanitizeModernMessage } from "./diagnostics.ts";
 import { McpMrtrError } from "./errors.ts";
 import { getModernDispatchGuard } from "./request.ts";
@@ -203,6 +204,20 @@ export function probeStdioTransport(
 		const initializeResult = modernInitializeResult(discovery, version);
 		const deliver = transport.onmessage;
 		const live = new Set<string | number>();
+		const subscriptions = new ModernSubscriptions(
+			(message, options) => transport.send(message, options),
+			discovery.capabilities,
+		);
+		const end = transport.close.bind(transport);
+		transport.close = async () => {
+			subscriptions.dispose();
+			await end();
+		};
+		const onclose = transport.onclose;
+		transport.onclose = () => {
+			subscriptions.dispose();
+			onclose?.();
+		};
 		let initialized = false;
 		transport.onerror = () => {
 			// A parser error may quote a wire body; never forward it.
@@ -220,6 +235,14 @@ export function probeStdioTransport(
 				return;
 			}
 			if ("id" in message && message.id !== undefined && !live.delete(message.id)) return;
+			if (!subscriptions.incoming(message)) {
+				const id =
+					"method" in message && message.method === "notifications/cancelled"
+						? message.params?.requestId
+						: undefined;
+				if (typeof id === "string" || typeof id === "number") live.delete(id);
+				return;
+			}
 			if ("method" in message && message.method === "notifications/progress") {
 				const token = message.params?.progressToken;
 				if ((typeof token !== "string" && typeof token !== "number") || !live.has(token)) return;
@@ -239,6 +262,7 @@ export function probeStdioTransport(
 			}
 			if (message.method === "notifications/initialized" && !("id" in message)) return;
 			if (message.method === "notifications/cancelled" && !("id" in message)) {
+				subscriptions.outgoing(message);
 				const id = message.params?.requestId;
 				if ((typeof id !== "string" && typeof id !== "number") || !live.delete(id)) return;
 				return send(
@@ -247,6 +271,7 @@ export function probeStdioTransport(
 				);
 			}
 			getModernDispatchGuard(message.params)?.();
+			subscriptions.outgoing(message);
 			const request = modernizeRequest(
 				"id" in message ? message.id : 0,
 				message.method,
@@ -261,6 +286,7 @@ export function probeStdioTransport(
 					return await send(request, sendOptions);
 				} catch {
 					live.delete(message.id);
+					subscriptions.failedSend(message);
 					throw new McpMrtrError("MCP_MRTR_TRANSPORT_FAILED");
 				}
 			}
