@@ -24,7 +24,7 @@ export interface CandidateFilters {
 	isModelSkipped?(base: string): boolean;
 	/** Providers whose account-wide usage limit or billing failure this session saw: their entries are skipped. */
 	isProviderSpent?(provider: string): boolean;
-	/** Providers that refused this turn's request on a credential that had just served: the same key refuses again (senpi#2491). */
+	/** Provider-wide conservative skip after a request refusal; credentials are unavailable at this scan (senpi#2491). */
 	isProviderRefused?(provider: string): boolean;
 	skip(candidate: string, skipReason: string): void;
 }

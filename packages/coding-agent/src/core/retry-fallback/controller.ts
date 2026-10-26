@@ -37,8 +37,8 @@ export class RetryFallbackController {
 	// Entries this session itself saw fail out of a chain: only these (or an entry spent for everyone)
 	// may move the session off its model at a turn boundary (senpi#3467).
 	private readonly ownFailures = new Set<string>();
-	// Providers that refused this turn's request on a credential that had just served: every other model behind
-	// that provider and key draws the same refusal, so the turn's walk skips them (senpi#2491).
+	// Conservatively skip the refused provider for this turn: this synchronous scan cannot resolve
+	// asynchronously prepared request credentials, including per-model endpoints or keys (senpi#2491).
 	private readonly refusedProviders = new Set<string>();
 	private readonly unusable: UnusableEntries;
 	readonly probes: CircuitProbes;

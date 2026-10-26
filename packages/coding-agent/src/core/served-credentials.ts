@@ -3,6 +3,7 @@ import { type AssistantMessage, sanitizeProviderDiagnostic } from "@earendil-wor
 
 /** How long a served response vouches for its credential (senpi#2491). */
 export const CREDENTIAL_SERVED_WINDOW_MS = 10 * 60_000;
+const MAX_SERVED_CREDENTIALS = 1_024;
 
 export interface RequestCredential {
 	readonly provider: string;
@@ -14,6 +15,7 @@ export interface RequestCredential {
  * When each credential last served a response, keyed by a one-way hash of provider, endpoint and key so no
  * key material is held. An `auth` failure on a credential that served within the window is marked on its
  * message: a gateway refused that request while the key kept working for others (senpi#2491).
+ * Without an apiKey (headers, ADC or SigV4), identity reduces to provider + baseUrl.
  */
 export class ServedCredentials {
 	private readonly servedAt = new Map<string, number>();
@@ -30,15 +32,24 @@ export class ServedCredentials {
 	}
 
 	private settle(key: string, message: AssistantMessage): void {
+		const now = this.now();
+		for (const [recordedKey, servedAt] of this.servedAt) {
+			if (now - servedAt > CREDENTIAL_SERVED_WINDOW_MS) this.servedAt.delete(recordedKey);
+		}
 		if (message.stopReason !== "error" && message.stopReason !== "aborted") {
-			this.servedAt.set(key, this.now());
+			// Map insertion order tracks last success, not last failed check.
+			this.servedAt.delete(key);
+			this.servedAt.set(key, now);
+			if (this.servedAt.size > MAX_SERVED_CREDENTIALS) {
+				const oldest = this.servedAt.keys().next().value;
+				if (oldest !== undefined) this.servedAt.delete(oldest);
+			}
 			return;
 		}
 		const servedAt = this.servedAt.get(key);
 		if (
 			message.stopReason === "error" &&
 			servedAt !== undefined &&
-			this.now() - servedAt <= CREDENTIAL_SERVED_WINDOW_MS &&
 			sanitizeProviderDiagnostic(message.providerDiagnostic)?.category === "auth"
 		) {
 			message.credentialServedRecently = true;

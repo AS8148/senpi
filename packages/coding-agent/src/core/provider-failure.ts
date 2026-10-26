@@ -32,8 +32,8 @@ export interface ProviderFailure {
 const ACTIONS: Record<Exclude<ProviderFailureCategory, "unknown">, { reason: string; action: string }> = {
 	auth: { reason: "the provider rejected the credentials", action: "re-authenticate the provider" },
 	request_refused: {
-		reason: "the provider refused this request, but the same key worked moments ago, so it is probably still valid",
-		action: "send the message again or choose another model",
+		reason: "the provider refused this request, but the same key worked moments ago, so it may still be valid",
+		action: "send the message again or choose another model; if it keeps failing, re-authenticate",
 	},
 	rate_limit: { reason: "the provider is rate limiting requests", action: "retry later or set a fallback model" },
 	quota: { reason: "the provider account is out of quota", action: "check the plan or credits" },
@@ -81,6 +81,7 @@ export function describeProviderFailure(
 		...(diagnostic?.code === undefined ? {} : { code: diagnostic.code }),
 		...(resetsAt === undefined ? {} : { resetsAt }),
 		...detail,
+		...(category === "request_refused" ? { action: `${detail.action} ${provider}` } : {}),
 		...(resetsAt === undefined ? {} : { reason: `${detail.reason} until ${new Date(resetsAt).toISOString()}` }),
 	};
 }
