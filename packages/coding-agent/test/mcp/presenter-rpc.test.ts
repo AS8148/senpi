@@ -283,6 +283,37 @@ it.each(["legacy", "modern", "modern-parallel"] as const)(
 				const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 				await legacyServer.connect(serverTransport);
 				await legacy.connect(clientTransport);
+				// senpi#4248: missing and ambiguous origins expose the same body-free SDK wire error.
+				for (const count of [0, 2]) {
+					const ends = Array.from({ length: count }, () => beginLegacyMcpOperation(legacy, origin));
+					const reply = Promise.withResolvers<unknown>();
+					const onmessage = serverTransport.onmessage;
+					serverTransport.onmessage = (message, extra) => {
+						if ("id" in message && message.id === "unavailable") reply.resolve(message);
+						else onmessage?.(message, extra);
+					};
+					try {
+						await serverTransport.send({
+							jsonrpc: "2.0",
+							id: "unavailable",
+							method: "elicitation/create",
+							params: {
+								message: "message-canary",
+								requestedSchema: { type: "object", properties: { value: { type: "string" } } },
+							},
+						});
+						expect(await reply.promise).toEqual({
+							jsonrpc: "2.0",
+							id: "unavailable",
+							error: { code: -32603, message: "MCP error -32603: Elicitation processing unavailable" },
+						});
+						expect(holderRecords.filter((record) => record.type === "mcp_form_request")).toHaveLength(0);
+						expect(admission).not.toHaveBeenCalled();
+					} finally {
+						serverTransport.onmessage = onmessage;
+						for (const end of ends) end();
+					}
+				}
 				endLegacy = beginLegacyMcpOperation(legacy, origin);
 				result = legacyServer.elicitInput({
 					message: "message-canary",

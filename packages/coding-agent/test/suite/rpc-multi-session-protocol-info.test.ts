@@ -24,6 +24,9 @@ describe("multi-session RPC protocol info", () => {
 				serverVersion: VERSION,
 				capabilities: [
 					"multi_session",
+					"snapshot_cursor",
+					"ui_answer_ledger",
+					"dialog_observer",
 					"session_lifecycle",
 					"expected_host_instance",
 					"attach_session",
@@ -46,6 +49,8 @@ describe("multi-session RPC protocol info", () => {
 					"session_held",
 					"resume_session",
 					"attended",
+					"observe_reads",
+					"entries_tail",
 					"retain_on_disconnect",
 					"detach_connection",
 					"unload_session",

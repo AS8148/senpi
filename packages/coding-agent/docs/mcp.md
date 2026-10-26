@@ -386,6 +386,26 @@ above.
 
 ## Resources and prompts
 
+MCP 2026-07-28 tool schemas use JSON Schema 2020-12 by default. Explicit
+2020-12 declarations are supported; other dialect declarations produce
+`MCP_SCHEMA_UNSUPPORTED_DIALECT`. Tool discovery, the disk cache, and MCP
+exposure retain the full schema, including `$defs`, `$ref` siblings, and
+`additionalProperties`. Boolean roots use an equivalent `allOf` container
+at the object-shaped model-tool API boundary.
+
+Modern structured results may be any JSON value, including `null`, `false`,
+and `0`. Successful results with an `outputSchema` must contain conforming
+`structuredContent`; execution-error results are exempt. Validation never
+coerces values, inserts defaults, removes properties, or fetches references
+from the network. Unresolved references are rejected. Schemas are bounded
+to 64 nesting levels and 16,384 JSON nodes; `format` is an annotation.
+
+Object-only model providers may require a lossy schema adaptation in the AI
+provider layer. That wire adaptation does not change MCP's source schema
+or the arguments sent to the server: modern calls validate the model's
+arguments without coercion. Legacy connections retain the SDK's existing
+schema validation and compatibility conversion.
+
 - `mcp_list_resources` / `mcp_read_resource` register automatically when a
   connected server lists resources.
 - Mention `@mcp:<server>/<uri>` in your prompt to inline a resource's content
