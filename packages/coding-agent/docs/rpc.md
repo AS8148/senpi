@@ -5025,6 +5025,7 @@ When the run ended with a provider error (the last assistant message has `stopRe
 | `category` | `action` |
 | --- | --- |
 | `auth` | re-authenticate the provider |
+| `request_refused` | send the message again or choose another model |
 | `rate_limit` | retry later or set a fallback model |
 | `quota` | check the plan or credits |
 | `context_limit` | compact or shorten the conversation |
@@ -5034,6 +5035,8 @@ When the run ended with a provider error (the last assistant message has `stopRe
 | `unknown` | retry once; if it repeats, switch the model or report the code |
 
 `unknown` is used when the error carries no diagnostic or its metadata matches no row; its `reason` names the provider and the code or status, for example `the provider returned an error that could not be classified (openai, status 429)`. A bare 429 stays `unknown` because status alone cannot tell a rate limit from exhausted quota. Retry and fallback decisions do not read `failure`.
+
+`request_refused` is an `auth` failure whose credential (same provider, endpoint and key) served a response within the last 10 minutes: the provider refused this one request, and the key is probably still valid. The failed assistant message carries `credentialServedRecently: true` and keeps the provider's own `errorMessage`. The fallback chain then skips every other model on that provider for the rest of the turn, because the same key draws the same refusal; models on other providers are still tried. An `auth` failure with no recent success on the credential stays `auth`.
 
 ### agent_settled
 
