@@ -127,8 +127,10 @@ describe("SessionManager torn tail recovery", () => {
 		const seen = recoveriesOf(SessionManager.open(file));
 
 		expect(seen).toHaveLength(1);
-		expect(readFileSync(seen[0]!.backupPath)).toEqual(fragment);
-		expect(seen[0]?.droppedBytes).toBe(fragment.length);
+		const recovery = seen[0];
+		if (!recovery) throw new Error("expected a recovery for the incomplete multibyte tail");
+		expect(readFileSync(recovery.backupPath)).toEqual(fragment);
+		expect(recovery.droppedBytes).toBe(fragment.length);
 		expect(readFileSync(file, "utf8")).toBe(prefix);
 	});
 
