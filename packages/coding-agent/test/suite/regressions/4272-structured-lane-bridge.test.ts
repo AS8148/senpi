@@ -1,6 +1,7 @@
 import {
 	type AssistantMessageEvent,
 	getAssistantCapture,
+	pushAssistantProgress,
 	subscribeAssistantCapture,
 	type ToolCall,
 } from "@earendil-works/pi-ai";
@@ -85,9 +86,15 @@ async function runControls(flag: boolean): Promise<Run> {
 	if (flag) vi.stubEnv(FLAG, "1");
 	expect(structuredLaneEnabled()).toBe(flag);
 	const extension: object[] = [];
+	// Holds the session's event queue at the first thinking_start until the agent has emitted message_end, so a
+	// control that skipped the queue would overtake the queued events.
+	const hold = Promise.withResolvers<void>();
 	const listen = (pi: ExtensionAPI) => {
 		pi.on("message_start", (event) => void extension.push(event));
-		pi.on("message_update", (event) => void extension.push(event));
+		pi.on("message_update", async (event) => {
+			extension.push(event);
+			if (event.assistantMessageEvent.type === "thinking_start") await hold.promise;
+		});
 		pi.on("message_end", (event) => void extension.push(event));
 		pi.on("turn_end", (event) => void extension.push(event));
 	};
@@ -95,6 +102,9 @@ async function runControls(flag: boolean): Promise<Run> {
 		extensionFactories: [listen],
 	});
 	sessions.push(session);
+	const stopHold = session.harness.agent.subscribe((event) => {
+		if (event.type === "message_end" && event.message.role === "assistant") hold.resolve();
+	});
 	const stdout: string[] = [];
 	const stopStdout = session.harness.session.subscribe((event) => stdout.push(JSON.stringify(toJsonEvent(event))));
 	const writer = new SessionEventWriter(() => {});
@@ -119,6 +129,8 @@ async function runControls(flag: boolean): Promise<Run> {
 			hasWriteStructured.push(records.length > 0);
 		}
 	} finally {
+		hold.resolve();
+		stopHold();
 		stopStdout();
 		writer.unregisterConnection("client");
 	}
@@ -178,8 +190,16 @@ describe("T6 structured lane bridge", () => {
 			const block = partial.content[0];
 			if (block?.type === "text") block.text = "ab";
 			stream.push({ type: "text_delta", contentIndex: 0, delta: "b", partial });
+			pushAssistantProgress(stream, { type: "message_block_metadata", contentIndex: 0, textSignature: "sig" });
 			const native = { type: "providerNative" as const, subtype: "fixture", raw: {} };
 			partial.content.push(native);
+			pushAssistantProgress(stream, {
+				type: "message_block_state",
+				contentIndex: 1,
+				phase: "insert",
+				block: native,
+			});
+			pushAssistantProgress(stream, { type: "message_block_state", contentIndex: 1, phase: "end", block: native });
 			stream.push({ type: "text_end", contentIndex: 0, content: "ab", partial });
 		};
 		const session = await scriptedSession([paused, textReply("next")]);
@@ -189,6 +209,8 @@ describe("T6 structured lane bridge", () => {
 			if (event.type === "message_update" && event.assistantMessageEvent.type === "text_start") emitted.resolve();
 		});
 		const records: Lane[] = [];
+		const early: Lane[] = [];
+		const stopEarly = subscribeStructuredSessionRecords(session.harness.session, (record) => early.push(record));
 		let stop = () => {};
 		try {
 			const running = session.prompt("first");
@@ -196,6 +218,16 @@ describe("T6 structured lane bridge", () => {
 			stop = subscribeStructuredSessionRecords(session.harness.session, (record) => records.push(record));
 			resume.resolve();
 			await running;
+			expect(messageLabels(firstAssistantMessage(early))).toEqual([
+				"message_start",
+				"message_update:text_start",
+				"message_update:text_delta",
+				"message_block_metadata",
+				"message_block_state:insert",
+				"message_block_state:end",
+				"message_update:text_end",
+				"message_end",
+			]);
 			const late = records.filter((record) => record.type?.startsWith("message_"));
 			expect(messageLabels(late)).toEqual(["message_end"]);
 			expect(late[0]?.invalidatedBlocks).toBeUndefined();
@@ -210,6 +242,7 @@ describe("T6 structured lane bridge", () => {
 			]);
 		} finally {
 			stop();
+			stopEarly();
 			stopWatch();
 			releaseCapture();
 		}
