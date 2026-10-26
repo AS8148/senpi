@@ -12,6 +12,75 @@
 
 ### Removed
 
+## [2026.10.25-4] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+- RPC: `get_state` and `get_entries` accept `observe: true` and then never hold a host open (`observe_reads`); `get_entries` reads the newest entries first with `tail` and walks back with `before: next_before` (`entries_tail`) ([#4268](https://github.com/code-yeongyu/senpi/pull/4268))
+- RPC: a terminal control endpoint serves `get_entries`, `set_client_info`, `attach_session`, `release_attachment` and `abort` with the host's contract, answers input with admission receipts (`replayed` on a retry), advertises `tui_observer`, and registers on Windows over a named pipe ([#4268](https://github.com/code-yeongyu/senpi/pull/4268))
+
+### Changed
+
+### Fixed
+
+- Return the same fixed, body-free processing error for ambiguous legacy MCP form origins as for an unavailable presenter when presenter enforcement is enabled ([#4248](https://github.com/code-yeongyu/senpi/issues/4248)).
+
+### Removed
+
+## [2026.10.25-3] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+- Handle modern MCP multi-round-trip form input in the interactive terminal with private review, editing, explicit submission, and bounded continuation requests ([#4207](https://github.com/code-yeongyu/senpi/pull/4207)).
+- Add opt-in host-issued MCP presenter grants, private form delivery, and authenticated consent settlement. RPC and terminal enforcement remain off by default while clients adopt the protected presenter channel; ordinary terminal queuing, legacy forms, and stderr diagnostics are preserved ([#4197](https://github.com/code-yeongyu/senpi/issues/4197)).
+- `SessionLifecycle` carries an optional, persisted `lastStop` that says why the last run stopped (deadline, goal guard, todo cap, abort, or no wake) and names only that run ([#4224](https://github.com/code-yeongyu/senpi/pull/4224)).
+
+### Changed
+
+### Fixed
+
+- Preserve the terminal's private MCP presenter through real extension-session UI wrapping without publishing form titles or values as ordinary prompt events ([#4207](https://github.com/code-yeongyu/senpi/pull/4207)).
+- Keep a live session's shared MCP tools available after the original declaring session exits, including calls already in flight ([#4210](https://github.com/code-yeongyu/senpi/pull/4210)).
+- Send declared MCP tool parameter headers over modern HTTP, encode routing names and values using the protocol's Base64 sentinel, and exclude tools with invalid header annotations ([#4229](https://github.com/code-yeongyu/senpi/pull/4229)).
+
+### Removed
+
+## [2026.10.25-2] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `senpi host gc` and the gc pass after an ensure no longer keep a dead endpoint (as `live_generation` or `live_claim`) while its SIGKILLed supervisor or host child is exited but not yet reaped, and a tool child's teardown still sweeps a process group whose leader is in that state: liveness now treats a process in state Z as gone ([#4119](https://github.com/code-yeongyu/senpi/issues/4119))
+- Keep interrupted sessions open when automatic continuation is enabled, holding automatic work until explicit Resume or input ([#4206](https://github.com/code-yeongyu/senpi/pull/4206)).
+- Keep Claude Code auto memory out of Anthropic subscription sessions, including when the inherited environment or SDK settings enable it ([#4222](https://github.com/code-yeongyu/senpi/pull/4222)).
+
+### Removed
+
+## [2026.10.25-1] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+- When the Anthropic Subscription commit boundary sees a committed assistant that differs from what the provider streamed, the `assistant_rewritten` record, the continuity log line and the next continuity observation now name the first field that diverged (for example `content[0].arguments.summary`), never its value ([#1975](https://github.com/code-yeongyu/senpi/issues/1975))
+
+### Changed
+
+### Fixed
+
+- Skill loading no longer rescans every user root once per discovered skill; project skill containment remains enforced. Thanks to @haifenghan for the report ([#4214](https://github.com/code-yeongyu/senpi/pull/4214)).
+
+### Removed
+
 ## [2026.10.24-4] - 2026-10-24
 
 ### Breaking Changes

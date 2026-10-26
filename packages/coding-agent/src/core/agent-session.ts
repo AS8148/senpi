@@ -177,6 +177,7 @@ import {
 	engineTurnLimitNotice,
 	engineTurnStop,
 	isUserDirectedTurn,
+	resetsEngineTurnHistory,
 } from "./engine-turn-limit.ts";
 import { EngineTurnRelease } from "./engine-turn-release.ts";
 import {
@@ -3399,6 +3400,8 @@ export class AgentSession {
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = (event: AgentEvent, signal: AbortSignal): void => {
 		if (event.type === "agent_start") this._lifecycleBinding.startRun();
+		// Bound at emission: the core can start the next run before the queue reaches this end (senpi#3864).
+		if (event.type === "agent_end") this._lifecycleBinding.bindTurnEnd(event);
 		if (event.type === "message_start") {
 			try {
 				const entryId = this._lifecycleBinding.consume(event.message);
@@ -4462,8 +4465,9 @@ export class AgentSession {
 				this._findLastAssistantInMessages(event.messages)?.stopReason === "aborted",
 			);
 			try {
+				const guardStartLeafId = this.sessionManager.getLeafId();
 				await this._extensionRunner.emit(extensionEvent);
-				await this._lifecycleBinding.turnEnded(extensionEvent);
+				await this._lifecycleBinding.turnEnded(extensionEvent, event, guardStartLeafId);
 			} finally {
 				this._abortProvenance.endAgentEnd(extensionEvent);
 			}
@@ -4923,14 +4927,22 @@ export class AgentSession {
 
 	/** Record a deadline stop durably so the goal engine holds off until admitted user input. */
 	_recordDeadlineStop(deadline: TurnDeadline): void {
-		this._emitEntryAppended(
-			this.sessionManager.appendCustomEntry(TURN_DEADLINE_ENTRY_TYPE, {
+		const at = Date.now();
+		// The lifecycle stop is captured before the write, so a refused write keeps it for this run (senpi#3864).
+		this._lifecycleBinding.deadlineStopped(deadline.kind, at);
+		let entryId: string;
+		try {
+			entryId = this.sessionManager.appendCustomEntry(TURN_DEADLINE_ENTRY_TYPE, {
 				kind: deadline.kind,
 				limitMs: deadline.limitMs,
 				elapsedMs: deadline.elapsedMs,
-				at: Date.now(),
-			}),
-		);
+				at,
+			});
+		} catch (error) {
+			this._lifecycleBinding.deadlineStopWriteFailed();
+			throw error;
+		}
+		this._emitEntryAppended(entryId);
 	}
 
 	/**
@@ -7414,7 +7426,12 @@ export class AgentSession {
 			});
 		const deliveredNotices = this._engineTurnHold.noticeCount;
 		const deliveredHeldInputs = this._heldInputs.pending().length;
-		if (this._stopHoldLive() || this._engineTurnHold.fences.length > 0 || deliveredHeldInputs > 0) {
+		// Payload-free notices (including goals) revalidate through their producer after release.
+		// An interruption must not add a directive-only turn when that work has already completed.
+		const resumeHeldTurn =
+			this._stopHoldLive() &&
+			(this._resumeCause() === "stop" || deliveredNotices === 0 || this._engineTurnHold.messages().length > 0);
+		if (resumeHeldTurn || this._engineTurnHold.fences.length > 0 || deliveredHeldInputs > 0) {
 			const { turnStarted, settled } = await this._resumeAfterStop(onQueued);
 			return {
 				answer: { resumed: true, pauseSeq, turnStarted, deliveredNotices, deliveredHeldInputs },
@@ -7457,8 +7474,9 @@ export class AgentSession {
 	 * resume settlement delivered the turn.
 	 */
 	private async _resumeAfterStop(onQueued?: () => void): Promise<{ turnStarted: boolean; settled: Promise<void> }> {
+		const resumeCause = this._resumeCause();
 		const sources = this._engineTurnHold.releaseAll("resume_session");
-		const { turnId, delivered } = await this._startResumeTurn(onQueued);
+		const { turnId, delivered } = await this._startResumeTurn(onQueued, resumeCause);
 		const settled = (async () => {
 			if (!(await delivered)) {
 				this._engineTurnHold.rejectInput();
@@ -7482,7 +7500,10 @@ export class AgentSession {
 	}
 
 	/** The resume turn both resume paths start; held input and notices are consumed only if no newer Stop aborted it. */
-	private async _startResumeTurn(onQueued?: () => void): ReturnType<typeof startRunResumeTurn> {
+	private async _startResumeTurn(
+		onQueued?: () => void,
+		resumeCause: "stop" | "interrupted" = "stop",
+	): ReturnType<typeof startRunResumeTurn> {
 		const settlement = Promise.withResolvers<void>();
 		this._resumeSettlement = settlement.promise;
 		try {
@@ -7515,7 +7536,7 @@ export class AgentSession {
 				);
 				// The hold is already released: include new or re-held input before sending, and omit withdrawals.
 			}
-			const started = await this._startResumeTurnWith(generation, continues, heldInputs, onQueued);
+			const started = await this._startResumeTurnWith(generation, continues, heldInputs, onQueued, resumeCause);
 			started.delivered.then(
 				() => settlement.resolve(),
 				() => settlement.resolve(),
@@ -7532,8 +7553,10 @@ export class AgentSession {
 		continues: ReadonlySet<string>,
 		heldInputs: HeldInput[],
 		onQueued?: () => void,
+		resumeCause: "stop" | "interrupted" = "stop",
 	): ReturnType<typeof startRunResumeTurn> {
 		return startRunResumeTurn({
+			resumeCause,
 			heldInputs: () => heldInputs,
 			continueInputs: () => [...continues],
 			heldWakes: () => this._engineTurnHold.messages(),
@@ -7568,7 +7591,7 @@ export class AgentSession {
 		if (!this._engineTurnHold.held || this._engineTurnHold.releasing || this._releaseExtras.length > 0) return;
 		this._releaseExtrasGeneration = this._userAbortGeneration;
 		if (this._stopHoldLive())
-			this._releaseExtras.push({ role: "custom", ...stopResumeDirective(), timestamp: Date.now() });
+			this._releaseExtras.push({ role: "custom", ...stopResumeDirective(this._resumeCause()), timestamp: Date.now() });
 		const { messages, commands } = this._takeHeldInputs();
 		this._releaseExtras.push(...messages);
 		// A later capture that finds no commands keeps the run an earlier one (a question answer's) still owes.
@@ -7695,7 +7718,8 @@ export class AgentSession {
 
 	noteAutomaticInput(text: string): boolean {
 		const userHold = this._engineTurnHold.holds.some(
-			(hold) => hold.kind === "session_hold" || hold.kind === "inherited_hold",
+			(hold) =>
+				(hold.kind === "session_hold" && hold.key !== "interrupted-run") || hold.kind === "inherited_hold",
 		);
 		if (!userHold) return false;
 		const message: CustomMessage = {
@@ -7719,6 +7743,14 @@ export class AgentSession {
 
 	private _stopHoldLive(): boolean {
 		return this._engineTurnHold.holds.some((hold) => hold.kind === "session_hold");
+	}
+
+	private _resumeCause(): "stop" | "interrupted" {
+		const holds = this._engineTurnHold.holds;
+		return holds.some((hold) => hold.kind === "session_hold" && hold.key === "interrupted-run") &&
+			!holds.some((hold) => hold.kind === "session_hold" && hold.key !== "interrupted-run")
+			? "interrupted"
+			: "stop";
 	}
 
 	get pauseView(): {
@@ -7846,7 +7878,10 @@ export class AgentSession {
 
 	/** Keeps this process's engine-turn record: a user message clears it, a tool call marks the running engine turn. */
 	private _observeEngineTurnMessage(message: AgentMessage): void {
-		if (message.role === "user" || (message.role === "custom" && isUserDirectedTurn(message.customType))) {
+		if (
+			message.role === "user" ||
+			(message.role === "custom" && resetsEngineTurnHistory(message.customType, message.details))
+		) {
 			this._engineTurnStarts = [];
 			this._engineResumeWindow = false;
 			this._engineTurnPauseRecorded = false;
@@ -8359,6 +8394,7 @@ export class AgentSession {
 	/** A user Stop: hold automatic turns until human input or resume_session, then stop the running turn (senpi#3811). */
 	async stop(): Promise<void> {
 		this._runHolds.stamp();
+		this.refreshLifecycle();
 		this._stopInterrupt = { pauseSeq: this._engineTurnHold.currentPauseSeq, at: new Date().toISOString() };
 		try {
 			await this.abort();
@@ -11379,6 +11415,10 @@ export class AgentSession {
 			}
 
 			this._applyExtensionBindings(this._extensionRunner);
+			// Opening a session is not explicit Resume. Install the same hold used by Stop before
+			// session_start producers run, so automatic work waits quietly in notice custody.
+			if (this._lifecycleBinding.controller.requiresHumanContinuation)
+				this._engineTurnHold.addHold("session_hold", { key: "interrupted-run" });
 			this._engineTurnHold.start();
 			this.syncPromptCacheSafeWaitEnv();
 			await this._extensionRunner.emit({

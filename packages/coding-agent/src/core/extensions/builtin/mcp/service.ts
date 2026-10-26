@@ -2,6 +2,7 @@ import { ConfigReferenceError } from "@earendil-works/pi-ai/utils/config-referen
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getAgentDir } from "../../../../config.ts";
 import { redactResolvedReferenceData } from "../../../config-reference-redaction.ts";
+import { getMcpMrtrPresentation, type McpMrtrPresentation } from "../../../mcp-mrtr-presentations.ts";
 import type { ExtensionAPI, ExtensionUIContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
 import {
 	getToolSearchService,
@@ -24,6 +25,8 @@ import { HostMcpRegistry } from "./host-registry.ts";
 import { refreshMcpInstructionsForSession } from "./instructions.ts";
 import { createMcpLogger } from "./log.ts";
 import { prepareProjectSkillServer } from "./project-skill-policy.ts";
+import { createMcpRequestOrigin, type McpRequestOrigin } from "./request-origin.ts";
+import { McpMrtrError } from "./modern/errors.ts";
 import { reconnectMcpNow } from "./reconnect.ts";
 import type { McpResourceServer } from "./resources.ts";
 import { createMcpSessionConnection, disposeEntryConnection } from "./service-connection.ts";
@@ -58,8 +61,8 @@ import {
 	waitForMcpStartupRace,
 } from "./startup-race.ts";
 import { safeTimer } from "./wrap.ts";
+import type { McpListedTool as ListedTool } from "./tool-contracts.ts";
 
-type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
 type ListedResource = Awaited<ReturnType<Client["listResources"]>>["resources"][number];
 type ListedResourceTemplate = Awaited<ReturnType<Client["listResourceTemplates"]>>["resourceTemplates"][number];
 type McpElicitationUi = Pick<ExtensionUIContext, "input" | "select" | "confirm"> &
@@ -73,6 +76,8 @@ type McpToolRegistrar = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" |
  * shared across bindings; only the binding is per session.
  */
 interface McpSessionBinding {
+	readonly lifetime: AbortController;
+	presentation?: McpMrtrPresentation;
 	readonly pi: McpToolRegistrar;
 	/** Only for a session whose extension load owns no tool-search service (SDK and test hosts). */
 	readonly fallbackToolSearch: ToolSearchService | undefined;
@@ -262,7 +267,11 @@ export class McpService {
 		};
 		const previous = this.#bindings.get(pi);
 		// A session-owned service serves exactly one session: a new attach takes over its binding.
-		if (!this.#servesManySessions) this.#bindings.clear();
+		previous?.lifetime.abort();
+		if (!this.#servesManySessions) {
+			for (const binding of this.#bindings.values()) binding.lifetime.abort();
+			this.#bindings.clear();
+		}
 		let fallbackToolSearch: ToolSearchService | undefined;
 		let holdsProcessFallback = false;
 		const sessionToolSearch = getToolSearchServiceForExtension(pi);
@@ -282,6 +291,8 @@ export class McpService {
 			}
 		}
 		const binding: McpSessionBinding = {
+			lifetime: new AbortController(),
+			presentation: owner.context.ui === undefined ? undefined : getMcpMrtrPresentation(owner.context.ui),
 			pi,
 			fallbackToolSearch,
 			holdsProcessFallback,
@@ -303,7 +314,10 @@ export class McpService {
 	#liveBindings(): McpSessionBinding[] {
 		for (const [pi, binding] of this.#bindings) {
 			// A disposed session retires its own tool-search service; its binding goes with it.
-			if (getToolSearchServiceForExtension(binding.pi)?.isDisposed === true) this.#bindings.delete(pi);
+			if (getToolSearchServiceForExtension(binding.pi)?.isDisposed === true) {
+				binding.lifetime.abort();
+				this.#bindings.delete(pi);
+			}
 		}
 		return [...this.#bindings.values()];
 	}
@@ -320,6 +334,7 @@ export class McpService {
 	 */
 	async releaseSession(pi: object, disposeReason?: McpDisposeReason): Promise<void> {
 		const released = this.#bindings.get(pi);
+		released?.lifetime.abort();
 		this.#bindings.delete(pi);
 		if (disposeReason !== undefined) this.#releasedSessions.add(pi);
 		const live = this.#liveBindings();
@@ -463,7 +478,7 @@ export class McpService {
 						{
 							context: binding.context,
 							options: binding.options,
-							ui: () => this.getMcpElicitationUi(),
+							ui: this.#elicitationProviderFor(binding),
 							notice: (identity, names) => {
 								// An untrusted project keeps the skill's references literal (senpi#2345); keep that fix in
 								// the one notice instead of a generic withheld line (senpi#3796).
@@ -619,6 +634,7 @@ export class McpService {
 		this.#disposed = true;
 		this.#disposeCount += 1;
 		this.#lastDisposeReason = reason;
+		for (const binding of this.#bindings.values()) binding.lifetime.abort();
 		this.#bindings.clear();
 		this.#sessionContext = null;
 		this.#config = null;
@@ -815,7 +831,7 @@ export class McpService {
 				session: options,
 				elicitationEnabled: declarer.context.mode !== "print" && declarer.context.mode !== "json",
 				cwd: declarer.context.cwd,
-				ui: () => this.getMcpElicitationUi(),
+				ui: this.#elicitationProviderFor(declarer),
 				artifacts: this.#outputArtifacts,
 				shouldReconnect: (current) =>
 					!this.#disposed &&
@@ -932,6 +948,8 @@ export class McpService {
 				onRegistered: (entry, identity) => binding.registeredIdentities.set(entry.key, identity),
 				contextRequired: binding.context.mode !== undefined,
 				sessionManager: binding.context.sessionManager,
+				requestOrigin: (entry) => this.#requestOrigin(binding, entry),
+				bindPresentation: (ui) => this.bindMcpMrtrPresentation(binding.pi, ui),
 				// A new attach of this session replaces its binding (and with it its config); a peer's attach does not.
 				isCurrent: (entry) =>
 					!this.#disposed &&
@@ -1096,8 +1114,69 @@ export class McpService {
 		this.#elicitationUiProvider = provider;
 	}
 
+	bindMcpMrtrPresentation(pi: object, ui: ExtensionUIContext): void {
+		const binding = this.#bindings.get(pi);
+		const presentation = getMcpMrtrPresentation(ui);
+		if (binding && presentation) binding.presentation = presentation;
+	}
+
+	#requestOrigin(binding: McpSessionBinding, entry: McpConnectionEntry): McpRequestOrigin {
+		const source = binding.config.servers[entry.name]?.source;
+		return createMcpRequestOrigin({
+			binding,
+			connection: entry.connection,
+			signal: AbortSignal.any([binding.lifetime.signal, entry.connection.requestLifetimeSignal]),
+			presentation: binding.presentation,
+			privateFormsEnforced: binding.presentation?.privateForms !== undefined,
+			privateForm: binding.presentation?.privateForms?.capture(),
+			serverLabel: entry.name,
+			serverSource:
+				source === "project" || source === "claude"
+					? "project"
+					: source === "skill" || source === "extension"
+						? "plugin"
+						: "user",
+			isCurrent: () =>
+				!this.#disposed &&
+				!binding.lifetime.signal.aborted &&
+				this.#bindings.get(binding.pi) === binding &&
+				[...this.#connections.values()].includes(entry) &&
+				declares(binding.config, entry.name, entry.configHash) &&
+				entry.isCurrent?.() !== false &&
+				entry.credentialsCurrent?.() !== false,
+			resolveAuthority: async (signal) => {
+				if (await entry.generationChanged?.()) throw new McpMrtrError("MCP_MRTR_CONTEXT_CHANGED");
+				// Same observed-revocation boundary as ordinary MCP requests. Never prompts for a new grant.
+				return await entry.connection.projectPolicy?.resolve(signal, false);
+			},
+		});
+	}
+
 	getMcpElicitationUi(): McpElicitationUi | undefined {
 		return this.#elicitationUiProvider?.();
+	}
+	#elicitationProviderFor(owner: McpConfigOwner) {
+		// Connections outlive their first declarer's extension context. Capture its host-owned
+		// references while it is live; readiness must never read a released session's ctx.ui.
+		const binding = [...this.#bindings.values()].find((candidate) => candidate === owner);
+		const ui = owner.context.ui;
+		const privateBinding = () => {
+			// Keep observing presentation replacements on the binding, not just its initial grant.
+			const presentation = binding
+				? binding.presentation
+				: ui === undefined
+					? undefined
+					: getMcpMrtrPresentation(ui);
+			return presentation?.privateForms;
+		};
+		return Object.assign(() => this.getMcpElicitationUi(), {
+			enforced: () => privateBinding() !== undefined,
+			subscribe: (listener: () => void) => privateBinding()?.subscribe?.(listener) ?? (() => {}),
+			eligible: () => {
+				const binding = privateBinding();
+				return binding === undefined || binding.capture()?.ready() === true;
+			},
+		});
 	}
 
 	isMcpPromptCommandRegistered(name: string): boolean {

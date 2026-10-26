@@ -1,3 +1,98 @@
+## 2026-10-25 - Persist why the last run stopped on the session lifecycle (senpi#3864)
+
+### What changed
+
+- `session-lifecycle-types.ts` adds optional `lastStop: { cause, runId, at, epoch, deadline?, guard?, todo?, abortSource?, persisted? }` to `SessionLifecycle`, with `cause` one of `deadline`, `goal_guard`, `todo_guard`, `aborted`, `no_wake`.
+- `agent-session.ts` captures the deadline kind and stop time when a turn deadline fires, before the deadline-stop entry write, and marks the captured stop `persisted: false` when that write is refused; the snapshot-level `persisted` is unchanged by it.
+- `agent-session.ts` binds each core `agent_end` to the lifecycle run current when it is emitted and passes that binding with the extension `agent_end` to the lifecycle turn end.
+- `agent-session.ts` brackets each bound extension end's processing window; `lifecycle-session-binding.ts` captures its goal guard once with the emission-bound run id and the todo outcome `afterAgentEnd` returned as the run's stop facts. Legacy goal guard entries can count only in their own end-processing window, never on a later run or refresh.
+- `lifecycle-stop.ts` gives provider errors and policy rejections precedence over a captured deadline, leaving `lastStop` absent on the failed path.
+- `session-lifecycle.ts` and `lifecycle-stop.ts` derive `lastStop` only from a fact refresh that carries a bound turn end, and only while that run is still current; a refresh with no bound turn end (wake, timer, goal-store, idle) sets nothing. They clear it when the next lifecycle run starts and keep the first `at` across unchanged refreshes.
+- `lifecycle-ledger.ts` includes `lastStop` in record equivalence; `lifecycle-record.ts` restores it only for the record's own run and drops malformed detail without invalidating the base record.
+
+### Why
+
+- Lifecycle consumers could not tell a deadline stop, a goal guard, an exhausted todo reminder chain, an abort and an unowned continuation apart; a stop must never be shown on, or attributed to, a later run, including runs started by `_continueAgentAfterCurrentRun` and runs the agent core drains from queued input before the earlier `agent_end` is processed.
+- `lifecycle-session-binding.ts` and `lifecycle-stop.ts` must not label a late guard from A as B's stop or replace B's real abort source; the end-processing window correlates legacy unstamped entries without widening the public extension event schema.
+
+### Why an extension could not handle it
+
+- The lifecycle snapshot, its persisted record, the turn deadline and the agent event ordering are owned by the session core.
+- `agent-session.ts`, `lifecycle-session-binding.ts` and `lifecycle-stop.ts` own the emission-bound end window, the captured run facts and provider-failure precedence; an extension cannot bind those core facts on its own.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: `_handleAgentEvent` `agent_end` handling, `_emitExtensionEvent` `agent_end` branch, and the deadline-stop recording.
+- `lifecycle-session-binding.ts`: `turnEnded` and bound fact refresh; `lifecycle-stop.ts`: end-window guard capture and stop precedence.
+
+## 2026-10-25 - Private MCP form scope and outcome contracts (#4197)
+
+### What changed
+
+- `mcp-form-types.ts`: define private form scopes, host-originated outcomes, whole-form requests, and host-installed private bindings.
+- `mcp-mrtr-presentations.ts`: carry the private binding, actual-presentation callback, and final human-admission callback on the host-issued presenter entry.
+
+### Why
+
+- A cancellation result alone does not prove that a human acted. Worker and in-process paths need the same explicit settlement provenance.
+
+### Key decisions
+
+- Private bindings ride the same host-issued presenter entry that the runner wrapper aliases. Nothing derives or re-registers authority from the wrapped extension UI, and the binding never becomes an extension UI property, snapshot, session entry, or ordinary RPC capability.
+- Operation cancellation and presentation loss remain distinct. Worker cancellation publishes an atomic fence before its asynchronous notification.
+
+### Why an extension could not handle it
+
+- The engine owns the binding identity and the cross-worker settlement provenance.
+
+### Expected merge conflict zones
+
+- LOW: the internal MRTR presentation registry; the private form contract is new.
+
+## 2026-10-24 - Hold interrupted reopen continuations until human recovery (senpi#4204)
+
+### What changed
+
+- `agent-session.ts` establishes an interrupted session hold before session-start hooks run.
+- `agent-session.ts` refreshes lifecycle facts on each explicit Stop, including a Stop added while interrupted recovery already holds the session.
+- `lifecycle-session-binding.ts` recognizes consumed delivery custody before session-start admission, while leaving interruption record recovery in its existing pass.
+- `lifecycle-runtime-facts.ts` reports the interruption gate as a human wait, preserving attended `waiting_human`, unattended `held`, and genuine Stop precedence without changing lifecycle state names.
+- `stop-resume-directive.ts` and `run-resume-turn.ts` distinguish interrupted recovery from a user Stop while retaining the partial-side-effect advice for Resume and first input.
+- `agent-session.ts` leaves payload-free held notices to their existing producer revalidation, avoiding an extra recovery-only turn for a goal completed while held.
+- `engine-turn-limit.ts` and `agent-session.ts` preserve the unattended resume-window budget across an interrupted recovery directive; genuine user input and user Stop recovery keep their existing reset behavior.
+- `agent-session.ts` does not impose user Stop authority on ordinary RPC input after an interruption, preserving input recovery and admission retry receipts.
+
+### Why
+
+- Reopening a crashed run could attempt automatic continuation before human input, reject the turn, and fail the session switch.
+
+### Why an extension could not handle it
+
+- Lifecycle restoration and extension startup ordering belong to the session core.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: extension binding startup; `lifecycle-session-binding.ts`: restored custody registration.
+
+## 2026-10-25 - Scan each selected skill root once per load (senpi#4213)
+
+### What changed
+
+- `skill-access.ts` deduplicates repeated source spellings and owns a realpath cache for one allowed-set build. `skill-discovery.ts` accepts that pass-local resolver.
+- Regression coverage counts realpath and directory-read calls, checks fresh authority after a link retarget, and retains the no-skills fast path. A manual harness reproduces the 748-skill, 476-link report.
+
+### Why
+
+- Package resolution retains the selected root on every skill. Rewalking those duplicate roots made startup quadratic. Thanks to @haifenghan for the report and profile in code-yeongyu/oh-my-openagent#11245.
+
+### Why an extension could not handle it
+
+- The allowed-set build and directory walk run inside core resource loading, before extensions can use the loaded skills.
+
+### Expected merge conflict zones
+
+- LOW: allowed-set construction in `skill-access.ts` and the discovery options in `skill-discovery.ts`.
+
 ## 2026-10-24 - Share the task ancestry boundary validator (oh-my-openagent#10782)
 
 ### What changed
