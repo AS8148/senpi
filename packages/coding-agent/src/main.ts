@@ -45,6 +45,7 @@ import { writeHelpFlagsCache } from "./cli/help-flags-cache.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { isModelsDiscoverCommand, runModelsDiscoverCommand } from "./cli/models-command.ts";
+import { printPromptSizes } from "./cli/print-prompt-sizes.ts";
 import { pipedStdinOptions } from "./cli/piped-stdin-options.ts";
 import { exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
@@ -104,7 +105,7 @@ import {
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
 import { sessionExtensionFlagValues } from "./core/session-extension-flags.ts";
-import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
+import { assertValidSessionId, SessionManager, sessionFileNameId } from "./core/session-manager.ts";
 import { classifySessionRepository, readSessionCwd, rebindSessionFile } from "./core/session-rebind.ts";
 import { collectSettingsDiagnosticsWithContext } from "./core/settings-diagnostics.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
@@ -128,11 +129,32 @@ import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.
 
 const EXTENSION_LOAD_FAILURE_HINT = `Hint: Start without extensions using "${APP_NAME} -ne".`;
 
-function collectAuthDiagnostics(authStorage: AuthStorage, context: string): AgentSessionRuntimeDiagnostic[] {
-	return authStorage.drainErrors().map((error) => ({
-		type: "warning",
-		message: `(${context}, auth storage) ${error.message}`,
-	}));
+/**
+ * Auth problems for a run's diagnostics. Each credential notice appears once per process; with
+ * `persistSeen` (a run a person reads) it is also recorded as seen, so later runs stay quiet until
+ * the problem changes (senpi#3486).
+ */
+export function collectAuthDiagnostics(
+	authStorage: AuthStorage,
+	context: string,
+	options: { persistSeen: boolean },
+): AgentSessionRuntimeDiagnostic[] {
+	return [
+		...authStorage.drainErrors().map((error) => error.message),
+		...authStorage.takePendingNotices(options).map((notice) => notice.message),
+	].map((message) => ({ type: "warning", message: `(${context}, auth storage) ${message}` }));
+}
+
+/** The TUI shows auth problems at startup; credential notices are marked seen once shown (senpi#3486). */
+export function interactiveAuthNotices(authStorage: AuthStorage): { messages: string[]; markSeen: () => void } {
+	const pending = authStorage.takePendingNotices({ persistSeen: false });
+	return {
+		messages: [
+			...authStorage.drainErrors().map((error) => error.message),
+			...pending.map((notice) => notice.message),
+		],
+		markSeen: () => authStorage.markNoticesSeen(pending.map((notice) => notice.id)),
+	};
 }
 
 export function collectExtensionLoadDiagnostics(
@@ -332,8 +354,20 @@ async function findLocalSessionByExactId(
 	sessionDir?: string,
 ): Promise<{ type: "local"; path: string } | undefined> {
 	const localSessions = sessionDir ? await SessionManager.listAll(sessionDir) : await SessionManager.list(cwd);
-	const localMatch = localSessions.find((s) => s.id === sessionId);
+	// The id a file name carries counts too: a session named after it must not get a second file under that id.
+	const localMatch =
+		localSessions.find((s) => s.id === sessionId) ??
+		localSessions.find((s) => sessionFileNameId(s.path) === sessionId);
 	return localMatch ? { type: "local", path: localMatch.path } : undefined;
+}
+
+/** Header id first, then the id the file name carries (what a resume hint printed), then an id prefix. */
+function findSessionByIdOrFileName<T extends { id: string; path: string }>(sessions: T[], arg: string): T | undefined {
+	return (
+		sessions.find((s) => s.id === arg) ??
+		sessions.find((s) => sessionFileNameId(s.path) === arg) ??
+		sessions.find((s) => s.id.startsWith(arg))
+	);
 }
 
 async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: string): Promise<ResolvedSession> {
@@ -344,8 +378,7 @@ async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: 
 
 	// Try to match as session ID in current project first
 	const localSessions = await SessionManager.list(cwd, sessionDir);
-	const localMatch =
-		localSessions.find((s) => s.id === sessionArg) ?? localSessions.find((s) => s.id.startsWith(sessionArg));
+	const localMatch = findSessionByIdOrFileName(localSessions, sessionArg);
 
 	if (localMatch) {
 		return { type: "local", path: localMatch.path };
@@ -353,8 +386,7 @@ async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: 
 
 	// Try global search across all projects
 	const allSessions = await SessionManager.listAll(sessionDir);
-	const globalMatch =
-		allSessions.find((s) => s.id === sessionArg) ?? allSessions.find((s) => s.id.startsWith(sessionArg));
+	const globalMatch = findSessionByIdOrFileName(allSessions, sessionArg);
 
 	if (globalMatch) {
 		return { type: "global", path: globalMatch.path, cwd: globalMatch.cwd };
@@ -479,9 +511,9 @@ async function rebindSessionOrExit(sourcePath: string, cwd: string, sessionDir?:
 	}
 }
 
-function sessionCwdOrUndefined(sessionFile: string): string | undefined {
+async function sessionCwdOrUndefined(sessionFile: string): Promise<string | undefined> {
 	try {
-		return readSessionCwd(sessionFile);
+		return await readSessionCwd(sessionFile);
 	} catch {
 		return undefined;
 	}
@@ -494,8 +526,11 @@ export async function createSessionManager(
 	settingsManager: SettingsManager,
 	appMode: AppMode,
 ): Promise<SessionManager> {
+	if (parsed.spawnedBy && (parsed.session || parsed.resume || parsed.continue || parsed.fork || parsed.rebind)) {
+		console.error(chalk.yellow("Warning: --spawned-by is ignored when resuming or forking a session."));
+	}
 	if (parsed.noSession || parsed.help || parsed.listModels !== undefined || parsed.listTips) {
-		return SessionManager.inMemory(cwd, parsed.sessionId !== undefined ? { id: parsed.sessionId } : undefined);
+		return SessionManager.inMemory(cwd, { id: parsed.sessionId, spawnedBy: parsed.spawnedBy });
 	}
 
 	if (parsed.fork) {
@@ -527,7 +562,7 @@ export async function createSessionManager(
 			console.error(chalk.red(`No session found matching '${resolved.arg}'`));
 			process.exit(1);
 		}
-		const sessionCwd = resolved.type === "global" ? resolved.cwd : sessionCwdOrUndefined(resolved.path);
+		const sessionCwd = resolved.type === "global" ? resolved.cwd : await sessionCwdOrUndefined(resolved.path);
 		if (resolved.type === "local" || sessionCwd === undefined || resolvePath(sessionCwd) === resolvePath(cwd)) {
 			return openSessionOrExit(resolved.path, sessionDir);
 		}
@@ -639,6 +674,8 @@ export async function createSessionManager(
 	if (parsed.sessionId) {
 		const existingSession = await findLocalSessionByExactId(parsed.sessionId, cwd, sessionDir);
 		if (existingSession) {
+			if (parsed.spawnedBy)
+				console.error(chalk.yellow("Warning: --spawned-by is ignored when resuming an existing session."));
 			return SessionManager.open(existingSession.path, sessionDir);
 		}
 		console.error(
@@ -648,7 +685,7 @@ export async function createSessionManager(
 		);
 	}
 
-	return SessionManager.create(cwd, sessionDir, { id: parsed.sessionId });
+	return SessionManager.create(cwd, sessionDir, { id: parsed.sessionId, spawnedBy: parsed.spawnedBy });
 }
 
 function buildSessionOptions(
@@ -1087,7 +1124,8 @@ export async function main(args: string[], options?: MainOptions) {
 	// over when the first statement runs, so it is read from the process clock rather than measured.
 	recordTiming("processStart->main", Math.round(process.uptime() * 1000));
 	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
-	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(envValue("OFFLINE"));
+	const offlineMode =
+		args.includes("--print-prompt-sizes") || args.includes("--offline") || isTruthyEnvFlag(envValue("OFFLINE"));
 	if (offlineMode) {
 		process.env.PI_OFFLINE = "1";
 		process.env.PI_SKIP_VERSION_CHECK = "1";
@@ -1189,7 +1227,9 @@ export async function main(args: string[], options?: MainOptions) {
 		await printThenExit(() => console.log(`Exported to: ${result}`), 0);
 	}
 
-	let appMode = resolveAppMode(parsed, process.stdin.isTTY, process.stdout.isTTY);
+	let appMode: AppMode = parsed.printPromptSizes
+		? "print"
+		: resolveAppMode(parsed, process.stdin.isTTY, process.stdout.isTTY);
 	const shouldTakeOverStdout =
 		appMode !== "interactive" && (!isPlainRuntimeMetadataCommand(parsed) || (parsed.help && parsed.mode === "json"));
 	if (shouldTakeOverStdout) {
@@ -1271,7 +1311,7 @@ export async function main(args: string[], options?: MainOptions) {
 		reportDiagnostics([
 			...services.diagnostics,
 			...collectSettingsDiagnosticsWithContext(services.settingsManager, "model listing"),
-			...collectAuthDiagnostics(services.authStorage, "model listing"),
+			...collectAuthDiagnostics(services.authStorage, "model listing", { persistSeen: true }),
 		]);
 		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
 		await printThenExit(() => listModels(services.modelRuntime, searchPattern), 0);
@@ -1300,7 +1340,8 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "rpc" && parsed.multiSession) {
 		if (options?.extensionFactories?.length)
 			throw new Error("Shared RPC workers require file-backed extensions; inline factories cannot cross isolates");
-		const runtimeConfiguration = { parsed, cwd, agentDir, appMode, toolRuntime };
+		const { presenterBootstrapFd, mcpPresenterEnforcement, ...sessionArgs } = parsed;
+		const runtimeConfiguration = { parsed: sessionArgs, cwd, agentDir, appMode, toolRuntime };
 		// Socket hosts (the machine-wide daemon) run every session IN this process:
 		// createHostCore selects the worker registry only when a workerConfiguration
 		// is passed, so withholding it is what selects the uncapped in-process registry.
@@ -1332,6 +1373,8 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 		printTimings();
 		await runMultiSessionHost({
+			presenterBootstrapFd,
+			mcpPresenterEnforcement,
 			agentDir,
 			createRuntime: createCliRuntimeFactory(runtimeConfiguration, {
 				...(hostModelRuntime === undefined ? {} : { modelRuntime: hostModelRuntime }),
@@ -1427,6 +1470,9 @@ export async function main(args: string[], options?: MainOptions) {
 			startupLoadingIndicator.stop();
 		});
 	time("createAgentSessionRuntime");
+	if (parsed.printPromptSizes) {
+		await printPromptSizes(runtime);
+	}
 	await prepareSessionOpening(sessionManager, appMode);
 	const { services, session, modelFallbackMessage } = runtime;
 	const { settingsManager, modelRuntime, resourceLoader } = services;
@@ -1495,7 +1541,9 @@ export async function main(args: string[], options?: MainOptions) {
 					message: diagnostic.path ? `${diagnostic.path}: ${diagnostic.message}` : diagnostic.message,
 				})),
 		);
-		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "runtime creation"));
+		reportDiagnostics(
+			collectAuthDiagnostics(services.authStorage, "runtime creation", { persistSeen: appMode !== "rpc" }),
+		);
 	}
 	if (runtime.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
 		if (runtime.diagnostics.some((diagnostic) => diagnostic.message.includes("Failed to load extension"))) {
@@ -1551,7 +1599,9 @@ export async function main(args: string[], options?: MainOptions) {
 		// mode seam: interactive startup still loads the same module before first use.
 		const { InteractiveMode } = await import("./modes/interactive/interactive-mode.ts");
 		const interactiveMode = new InteractiveMode(runtime, {
+			mcpPresenterEnforcement: parsed.mcpPresenterEnforcement,
 			migratedProviders,
+			authNotices: interactiveAuthNotices(services.authStorage),
 			legacyPiEditNotice: legacyPiEditStartupNotice(),
 			modelFallbackMessage,
 			autoTrustOnReloadCwd,
@@ -1594,7 +1644,7 @@ export async function main(args: string[], options?: MainOptions) {
 			initialMessage,
 			initialImages,
 		});
-		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "print mode"));
+		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "print mode", { persistSeen: true }));
 		stopChildReaper();
 		stopThemeWatcher();
 		restoreStdout();

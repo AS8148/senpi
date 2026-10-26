@@ -17,6 +17,8 @@ import {
 	runAgentLoopContinue,
 } from "./agent-loop.ts";
 import { ProviderRetryWatchdogAbortError } from "./assistant-terminal-state.ts";
+import { dispatchInternalAgent, type InternalLoopConfig, internalLoopSink } from "./internal-events.ts";
+import { isLocalFailure, localFailurePort } from "./local-failure.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
 	AfterToolCallContext,
@@ -459,9 +461,10 @@ export class Agent {
 		return this.steeringQueue.hasItems() || this.followUpQueue.hasItems();
 	}
 
-	/** Preview the messages selected for the next turn without consuming them. */
-	peekQueuedMessages(): AgentMessage[] {
+	/** Preview next-turn messages, or both queues with { all: true }, without consuming them. */
+	peekQueuedMessages(options?: { all?: boolean }): AgentMessage[] {
 		const steering = this.steeringQueue.peek();
+		if (options?.all) return [...steering, ...this.followUpQueue.peek()];
 		return steering.length > 0 ? steering : this.followUpQueue.peek();
 	}
 
@@ -675,7 +678,7 @@ export class Agent {
 	 */
 	private async takeQueuedMessages(queue: "steering" | "followUp"): Promise<AgentMessage[]> {
 		const pendingQueue = queue === "steering" ? this.steeringQueue : this.followUpQueue;
-		const port = this.queuedInputPort;
+		const port = this.queuedInputPort && localFailurePort(this.queuedInputPort);
 		if (!port) return pendingQueue.drain();
 		let generation = pendingQueue.getClearGeneration();
 		const messages = await port.claim(queue, () => {
@@ -737,16 +740,17 @@ export class Agent {
 			initialRequestTimeoutMs?: number;
 			initialRequestStreamStartTimeoutMs?: number;
 		} = {},
-	): AgentLoopConfig {
+	): InternalLoopConfig {
 		let skipInitialSteeringPoll = options.skipInitialSteeringPoll === true;
 		let steeringQueueGeneration = this.steeringQueue.getClearGeneration();
 		let followUpQueueGeneration = this.followUpQueue.getClearGeneration();
 		const finishTurn = this.finishTurn;
-		const queuedInputPort = this.queuedInputPort;
+		const queuedInputPort = this.queuedInputPort && localFailurePort(this.queuedInputPort);
 		const giveBack = (queue: "steering" | "followUp", messages: AgentMessage[]): QueuedGiveBack =>
 			this.giveBack(queue, messages, queue === "steering" ? steeringQueueGeneration : followUpQueueGeneration);
 		const reasoning = (this._state.reasoningBaseline as ThinkingLevel | undefined) ?? this._state.thinkingLevel;
 		return {
+			...internalLoopSink(this),
 			model: this._state.model,
 			reasoning: reasoning === "off" ? undefined : reasoning,
 			thinkingSelection: this._state.thinkingSelection,
@@ -905,6 +909,7 @@ export class Agent {
 			errorMessage: error instanceof Error ? error.message : String(error),
 			...(providerDiagnostic === undefined ? {} : { providerDiagnostic }),
 			...(error instanceof ProviderRetryWatchdogAbortError ? { abortSource: "provider" as const } : {}),
+			...(!aborted && isLocalFailure(error) ? { failureSource: "local" as const } : {}),
 			timestamp: Date.now(),
 		} satisfies AgentMessage;
 		await this.processEvents({ type: "message_start", message: failureMessage });
@@ -973,6 +978,8 @@ export class Agent {
 		if (!signal) {
 			throw new Error("Agent listener invoked outside active run");
 		}
+		const internal = dispatchInternalAgent(this, { event });
+		if (internal) await internal;
 		for (const listener of this.listeners) {
 			await listener(event, signal);
 		}

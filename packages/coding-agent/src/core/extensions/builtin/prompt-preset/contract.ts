@@ -1,3 +1,4 @@
+import { FABLE55_LAUNCH, isFable55ModelId } from "@earendil-works/pi-ai/utils/fable55-launch";
 import {
 	extractClaudeOpusVersion,
 	extractGpt5Version,
@@ -19,6 +20,7 @@ import {
 	isGrok46Model,
 	isGrok47Model,
 	isKimiK3Model,
+	isKimiK31Model,
 	isKimiK26Model,
 	isKimiK27Model,
 	isKimiK28Model,
@@ -42,6 +44,9 @@ export function resolvePresetName(input: {
 	if (gpt5Version) {
 		return gpt5Version;
 	}
+	if (isKimiK31Model(model)) {
+		return "kimi-k3-1";
+	}
 	if (isSWE2Model(model) || isKimiK3Model(model)) {
 		return "kimi-k3";
 	}
@@ -55,6 +60,9 @@ export function resolvePresetName(input: {
 		return "kimi-k2-6";
 	}
 	// The dotted release must resolve before the generic fable-5 substring.
+	if (isFable55ModelId(model.id)) {
+		return "claude-fable-5-5";
+	}
 	if (isClaudeFable51Model(model.id)) {
 		return "claude-fable-5-1";
 	}
@@ -125,6 +133,7 @@ export const PROMPT_PRESET_MODEL_CASES: readonly PromptPresetModelCase[] = [
 	{ providerID: "openai", modelID: "gpt-5.4", preset: "gpt-5.4" },
 	{ providerID: "openai", modelID: "gpt-5.3-codex", preset: "gpt-5.3-codex" },
 	{ providerID: "openai", modelID: "gpt-5.2", preset: "gpt-5.2" },
+	{ providerID: "kimi-coding", modelID: "k3.1-pro", preset: "kimi-k3-1" },
 	{ providerID: "moonshotai", modelID: "kimi-k3", preset: "kimi-k3" },
 	{ providerID: "kimi-for-coding", modelID: "kimi-for-coding", preset: "kimi-k2-8" },
 	{ providerID: "kimi-for-coding", modelID: "kimi-for-coding-highspeed", preset: "kimi-k2-7" },
@@ -137,6 +146,7 @@ export const PROMPT_PRESET_MODEL_CASES: readonly PromptPresetModelCase[] = [
 	{ providerID: "deepseek", modelID: "deepseek-v4-pro", preset: "deepseek-v4-pro" },
 	{ providerID: "anthropic", modelID: "claude-fable-5", preset: "claude-fable-5" },
 	{ providerID: "anthropic", modelID: "claude-fable-5.1", preset: "claude-fable-5-1" },
+	{ providerID: "anthropic", modelID: FABLE55_LAUNCH.modelId, preset: "claude-fable-5-5" },
 	{ providerID: "anthropic", modelID: "claude-opus-5.5", preset: "claude-opus-5-5" },
 	{ providerID: "anthropic", modelID: "claude-opus-5", preset: "claude-opus-5" },
 	{ providerID: "anthropic", modelID: "claude-sonnet-5.5", preset: "claude-sonnet-5-5" },
@@ -161,6 +171,7 @@ export const AUTO_RESOLVED_PRESET_NAMES: readonly ResolvedPresetName[] = [
 	"gpt-5.4",
 	"gpt-5.3-codex",
 	"gpt-5.2",
+	"kimi-k3-1",
 	"kimi-k3",
 	"kimi-k2-8",
 	"kimi-k2-7",
@@ -176,6 +187,7 @@ export const AUTO_RESOLVED_PRESET_NAMES: readonly ResolvedPresetName[] = [
 	"grok-4.5",
 	"claude-fable-5",
 	"claude-fable-5-1",
+	"claude-fable-5-5",
 	"claude-opus-5-5",
 	"claude-opus-5",
 	"claude-sonnet-5-5",

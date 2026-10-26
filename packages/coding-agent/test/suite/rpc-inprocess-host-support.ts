@@ -69,7 +69,7 @@ export interface FakeBindingExtras {
  * the host aborted persists nothing - so a test that expects a turn to outlive its
  * client's disconnect fails if the host tore the session down instead.
  */
-function inProcessRuntimeFactory(): {
+export function inProcessRuntimeFactory(): {
 	createRuntime: CreateAgentSessionRuntimeFactory;
 	turns: Map<string, FakeTurn>;
 	teardown: TeardownGate;
@@ -183,7 +183,11 @@ function inProcessRuntimeFactory(): {
 				get isSessionBusy(): boolean {
 					return isSessionBusySnapshot(this.activitySnapshot);
 				},
-				extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+				extensionRunner: {
+					hasHandlers: () => false,
+					emit: async () => {},
+					emitSessionMove: async () => [],
+				},
 				subscribe: () => () => {},
 				abort: async () => {
 					state.aborted = true;

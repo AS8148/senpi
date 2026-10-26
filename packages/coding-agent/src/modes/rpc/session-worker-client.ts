@@ -4,10 +4,14 @@ import { isBunBinary } from "../../config.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import { ownProcessStartedAtMs } from "../../core/extensions/builtin/terminal/process-identity.ts";
+import { isSecurityNoticeState } from "../../core/security-notices.ts";
 import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
+import { roleConnection } from "./connection-roles.ts";
+import { answeredUiRequestId } from "./extension-ui-response.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
+import type { RpcExtensionUIResponse } from "./rpc-types.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
 import type {
@@ -16,9 +20,11 @@ import type {
 	SessionWriteGrant,
 	WorkerSnapshot,
 } from "./session-worker-protocol.ts";
-
+import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker-requests.ts";
 import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
+import { randomUUID } from "node:crypto";
+import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 
 /** Lifecycle hooks the owning registry installs on every worker it allocates. */
 export interface SessionWorkerCallbacks {
@@ -37,6 +43,12 @@ const compiledWorkerEntry =
 		: "./src/modes/rpc/session-worker.ts";
 
 export class SessionWorkerClient {
+	private privateBinding?: McpFormBinding;
+	private stopPrivateBinding?: () => void;
+	private readonly privateOperations = new Map<
+		string,
+		{ operation: AbortController; presentation: AbortController; epoch: string }
+	>();
 	/** The worker's own route to the main-thread Bun.WebView service; released when the worker exits. */
 	private readonly webviewBroker = createWebViewBroker();
 	readonly worker = new Worker(
@@ -64,10 +76,11 @@ export class SessionWorkerClient {
 	private writer?: SessionEventWriter;
 	private sessionId?: string;
 	private requestClose?: () => void;
-	private options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo"> = {};
+	private options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo" | "connectionRoles"> = {};
 	private readonly listeners = new Set<() => void>();
 	private cancelUiPending = false;
 	private terminalFailure?: string;
+	private stopLimitMirror: () => void = () => {};
 
 	private readonly callbacks: SessionWorkerCallbacks;
 
@@ -75,11 +88,16 @@ export class SessionWorkerClient {
 		this.callbacks = callbacks;
 		this.exited = new Promise((resolve, reject) => {
 			this.worker.once("exit", () => {
+				this.stopPrivateBinding?.();
+				this.privateBinding?.dispose();
+				for (const operation of this.privateOperations.values()) operation.operation.abort();
+				this.privateOperations.clear();
 				if (!this.stopped && !this.closeTimer) this.fail("session_worker_exited");
 				this.stopped = true;
 				if (this.closeTimer) clearTimeout(this.closeTimer);
 				this.requests.close(new Error("session_worker_exited"));
 				void this.webviewBroker?.dispose();
+				this.stopLimitMirror();
 				this.listeners.clear();
 				const released = callbacks.exit();
 				if (released)
@@ -98,7 +116,19 @@ export class SessionWorkerClient {
 	}
 
 	async prepare(configuration: CliRuntimeConfiguration, profile: RpcSessionLaunchProfile): Promise<string> {
-		const result = await this.request({ type: "prepare", configuration, profile });
+		// The host's poller feeds only the host's store and the isolate reads its own copy, so the isolate starts
+		// from the host's records and then receives each change (senpi#3695). Subscribing before the request is
+		// posted keeps a change that lands in between ordered after the snapshot.
+		this.stopLimitMirror();
+		this.stopLimitMirror = subscriptionLimits.subscribeMirror((limits) =>
+			this.post({ type: "subscription_limits", accounts: [limits] }),
+		);
+		const result = await this.request({
+			type: "prepare",
+			configuration,
+			profile,
+			subscriptionLimits: subscriptionLimits.mirrorSnapshot(),
+		});
 		if (result.type !== "prepared") throw new Error("Invalid worker prepare response");
 		return result.sessionPath;
 	}
@@ -132,7 +162,7 @@ export class SessionWorkerClient {
 		sessionId: string,
 		writer: SessionEventWriter,
 		requestClose: () => void,
-		options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo">,
+		options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo" | "connectionRoles">,
 	): Promise<RpcSessionBinding> {
 		this.sessionId = sessionId;
 		this.writer = writer;
@@ -143,10 +173,28 @@ export class SessionWorkerClient {
 			sessionId,
 			capabilities: options.capabilities ?? [],
 			connection: writer.currentConnection(),
+			roles: options.connectionRoles?.rolesOf(roleConnection(writer.currentConnection())),
+			mcpFormsEnforced: writer.mcpPresenters !== undefined,
 		});
 		return {
 			handle: async (command) => {
-				await this.request({ type: "command", command, connection: writer.currentConnection() });
+				if (writer.handleMcpForm(command)) return;
+				const connection = writer.currentConnection();
+				const grantAnswer =
+					"type" in command && command.type === "extension_ui_response"
+						? answeredUiRequestId(command as RpcExtensionUIResponse)
+						: undefined;
+				if (
+					grantAnswer !== undefined &&
+					writer.acceptWorkerGrantResponse(sessionId, grantAnswer, connection) === false
+				)
+					return;
+				await this.request({
+					type: "command",
+					command,
+					connection,
+					roles: options.connectionRoles?.rolesOf(roleConnection(connection)),
+				});
 			},
 			cancelPendingExtensionUiRequests: () => this.post({ type: "cancel_ui" }),
 			dispose: async () => {
@@ -201,6 +249,86 @@ export class SessionWorkerClient {
 			return;
 		}
 		switch (message.type) {
+			case "mcp_form_bind": {
+				this.stopPrivateBinding?.();
+				this.privateBinding?.dispose();
+				const writer = this.writer;
+				const sessionId = this.sessionId;
+				if (!writer?.mcpPresenters || !sessionId) {
+					this.fail("private_form_unavailable");
+					return;
+				}
+				const bound = writer.bindMcpForms(sessionId, message.durableId, {}, () => {});
+				if (bound instanceof Promise) {
+					this.fail("private_form_unavailable");
+					return;
+				}
+				this.privateBinding = writer.getMcpFormBinding(sessionId);
+				const binding = this.privateBinding;
+				if (!binding) {
+					this.fail("private_form_unavailable");
+					return;
+				}
+				const unsubscribe = binding.subscribe?.(() =>
+					this.post({
+						type: "mcp_form_availability",
+						epoch: binding.epoch,
+						version: binding.version?.(),
+					}),
+				);
+				this.stopPrivateBinding = () => {
+					unsubscribe?.();
+					bound?.();
+				};
+				this.post({ type: "mcp_form_bound", id: message.id, epoch: binding.epoch, version: binding.version?.() });
+				return;
+			}
+			case "mcp_form_ready": {
+				const binding = this.privateBinding;
+				this.post({
+					type: "mcp_form_availability",
+					id: message.id,
+					epoch: message.epoch,
+					version: binding?.epoch === message.epoch ? binding.version?.() : undefined,
+				});
+				return;
+			}
+			case "mcp_form_release":
+				if (this.privateBinding?.epoch === message.epoch) this.stopPrivateBinding?.();
+				return;
+			case "mcp_form_cancel": {
+				const operation = this.privateOperations.get(message.id);
+				if (operation?.epoch === message.epoch) operation[message.lifetime].abort();
+				return;
+			}
+			case "mcp_form_create": {
+				const binding = this.privateBinding;
+				const presenter =
+					binding?.epoch === message.epoch && binding.version?.() === message.version
+						? binding.capture()
+						: undefined;
+				const operation = new AbortController();
+				const presentation = new AbortController();
+				this.privateOperations.set(message.id, { operation, presentation, epoch: message.epoch });
+				const fence = new Int32Array(message.operationFence);
+				const result = presenter?.present({
+					...message.input,
+					operationSignal: operation.signal,
+					presentationSignal: presentation.signal,
+					operationCurrent: () => Atomics.load(fence, 0) === 0,
+				});
+				void Promise.resolve(result).then((outcome) => {
+					this.privateOperations.delete(message.id);
+					this.post({
+						type: "mcp_form_settlement",
+						id: message.id,
+						epoch: message.epoch,
+						settlementId: randomUUID(),
+						outcome: outcome ?? { kind: "processing_failure", source: "host_termination", humanAdmission: false },
+					});
+				});
+				return;
+			}
 			case "prepared":
 			case "ready":
 			case "result": {
@@ -249,6 +377,52 @@ export class SessionWorkerClient {
 						...message.activity,
 						state: { ...this.snapshot.state, isStreaming: message.activity.streaming },
 					};
+				const record = message.record;
+				if (
+					"type" in record &&
+					record.type === "security_grant_settled" &&
+					"id" in record &&
+					typeof record.id === "string"
+				) {
+					writer.settleGrantDialog(sessionId, record.id);
+					acknowledge(message.signal, true);
+					return;
+				}
+				if ("type" in record && record.type === "security_notice_snapshot") {
+					if (!("snapshot" in record) || !isSecurityNoticeState(record.snapshot)) {
+						acknowledge(message.signal, false);
+						this.fail("invalid_security_notice_snapshot");
+						return;
+					}
+					writer.acceptWorkerSecuritySnapshot(sessionId, record.snapshot);
+					acknowledge(message.signal, true);
+					return;
+				}
+				let outputConnection = message.connection;
+				if (
+					"type" in record &&
+					record.type === "extension_ui_request" &&
+					"method" in record &&
+					record.method === "select" &&
+					"grantSelect" in record &&
+					record.grantSelect === true &&
+					"id" in record &&
+					typeof record.id === "string"
+				) {
+					const id = record.id;
+					const target = writer.routeWorkerGrant(
+						sessionId,
+						id,
+						message.connection,
+						this.options.capabilities ?? [],
+						() => this.post({ type: "cancel_grant", id }),
+					);
+					if (!target.accepted) {
+						acknowledge(message.signal, true);
+						return;
+					}
+					outputConnection = target.connection;
+				}
 				const enqueue = () => {
 					if (!writer.enqueue(sessionId, message.record)) {
 						acknowledge(message.signal, false);
@@ -260,7 +434,7 @@ export class SessionWorkerClient {
 				const consumed = Promise.resolve(
 					message.snapshot ? this.callbacks.reconcile(message.snapshot.liveSessionPaths) : undefined,
 				).then(() =>
-					message.connection === undefined ? enqueue() : writer.withConnection(message.connection, enqueue),
+					outputConnection === undefined ? enqueue() : writer.withConnection(outputConnection, enqueue),
 				);
 				void consumed.then(
 					() => acknowledge(message.signal, true),
@@ -272,6 +446,15 @@ export class SessionWorkerClient {
 				return;
 			}
 			case "capabilities":
+				if (message.connection === undefined)
+					this.options = { ...this.options, capabilities: message.capabilities };
+				// The isolate already refused a changed role; a refusal here means the two registries drifted.
+				if (
+					this.options.connectionRoles?.declare(roleConnection(message.connection), message.capabilities) === false
+				)
+					process.stderr.write(
+						`senpi rpc worker role drift: connection ${roleConnection(message.connection)} declared a changed role\n`,
+					);
 				this.options.clientInfo?.setCapabilities(message.connection, message.capabilities);
 				acknowledge(message.signal, true);
 				return;
@@ -289,6 +472,9 @@ export class SessionWorkerClient {
 			}
 			case "request_close":
 				this.requestClose?.();
+				return;
+			case "subscription_limits":
+				subscriptionLimits.adopt(message.limits);
 				return;
 			case "failure":
 				this.fail(message.error);

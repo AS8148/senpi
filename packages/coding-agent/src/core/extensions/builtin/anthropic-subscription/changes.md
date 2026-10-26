@@ -1,3 +1,174 @@
+## 2026-10-25 - Keep Claude Code auto memory out of subscription sessions (senpi#4219)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-attempt.ts`: the shared resident and auxiliary dispatch boundary forces `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` after environment merging and sets inline SDK `autoMemoryEnabled` to false. Neither caller options nor inherited environment can enable Claude Code auto memory.
+
+### Why
+
+- Claude Code loads its private auto-memory index independently of `settingSources`, injecting notes from another tool into the subscription session. The policy is permanently off without a user-facing switch.
+
+### Why an extension could not handle it
+
+- The bundled subscription adapter owns the final child environment and SDK dispatch for every authentication lane.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-attempt.ts`, immediately before the resident/auxiliary dispatch split.
+
+## 2026-10-24 - An assistant_rewritten decision names the first diverged path (senpi#1975)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-commit-divergence.ts` (new): the semantic projection type, a depth-capped snapshot of the provider-final projection, and a bounded walk that returns the first diverged path: `content.length`, then per block `type`, its semantic fields (`text`, `thinking` / `thinkingSignature`, `id` / `name`), then toolCall `arguments.<path>` (objects dot-separated, arrays `[n]`), then `api` / `provider` / `model`. Only the path leaves the walk, never a value.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-commit-boundary.ts`: `captureProviderFinal` keeps a snapshot of the projection next to its digest, and `commit()` returns `{ outcome, divergedPath? }`. The digest input is unchanged, so stored and sidecar hashes stay comparable.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-registry-wiring.ts`: on `rewritten`, the path goes to `recordPendingFork` and onto the binding-invalidation ledger record.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-registry.ts`, `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-entry-annotations.ts`: entries carry `pendingForkDivergedPath`; a pending fork recorded without a path (compaction) clears it.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-observability.ts`: `ContinuityObservation.divergedPath`, passed through `observeSessionSyncDecision` and logged on `claude_sdk_oauth_session_continuity` when present.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-stream.ts`: the resident attempt passes the entry's path into the observation only when the observed reason is `assistant_rewritten`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-binding.ts`: `BindingInvalidation.divergedPath?` (records without it still validate).
+
+### Why
+
+- The decision said only that the committed assistant differed from what the provider streamed, not where. Each new member of the rewrite class (#691, #1472) had to be found by hand-diffing transcripts; the path turns the next one into a one-line diagnosis.
+
+### Why an extension could not handle it
+
+- The comparison happens inside the `message_end` commit boundary against the in-flight provider-final capture, which no other extension can see; only the boundary can compute the path.
+
+### Expected merge conflict zones
+
+- LOW: `session-commit-boundary.ts` (`AssistantCommitBoundary`), the `message_end` hunk in `session-registry-wiring.ts`, `annotatePendingFork`, the observation type and log line in `session-observability.ts`, one pass-through in `session-stream.ts`, the `BindingInvalidation` type.
+- MEDIUM: the 7925 / 691 / 1472 regressions assert the `{ outcome, divergedPath }` shape.
+
+## 2026-10-24 - Claude SDK requests use their session project (senpi#2848)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream.ts`: resident and auxiliary requests, option construction, SDK query dispatch, and lane-settings reads share a strict session-cwd validator. Missing or relative directories fail clearly instead of selecting the host project. Provider registration uses the extension session's directory, and `/btw` and `look_at` forward their context's directory.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream.ts`: the host directory could select another project's Claude Code memory and disagree with the session's compaction-owner policy. Reported by @jaeheungahn in code-yeongyu/oh-my-openagent#11189.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream.ts`: this is the bundled SDK adapter's own query-options construction.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream.ts`: provider settings resolution and `buildAnthropicSubscriptionQueryOptions` arguments.
+
+## 2026-10-22 - All-accounts refusals are pool verdicts, not auth failures (senpi#2081)
+
+### What changed
+
+- `index.ts`: the provider registers with `ownsAccountSelection: true`, so the generic credential pool no longer wraps the lane. This lane is the one owner of account selection, keeping the pin, the resident account, account order, and per-account and per-model limits.
+- `affinity.ts`: `AllAccountsBlockedError.blockReason` is `auth_error` only when every candidate is auth-blocked. A pool where any account waits on a deadline reports that deadline as a temporary block.
+- `guidance.ts`: every all-accounts and single-account refusal ends with the credential pool's `ACCOUNT_POOL_REFUSAL_NOTE`, so the outer pool fails the request instead of blocking the outer slot that ran the attempt.
+- `errors.ts`: an `HTTP 408` or `HTTP 5xx` result is a transient failure even when its text says "unauthorized".
+
+### Why
+
+senpi#2081: a mixed pool (one revoked account, one briefly rate-limited) was reported as an authentication error, persisted as `auth_error` on every outer slot, and refused all requests until a re-login.
+
+### Why an extension could not handle it
+
+This is the bundled Anthropic Subscription extension itself; the outer pool reads its refusal text before any hook runs.
+
+### Expected merge conflict zones
+
+- The `blockReason` argument at the end of `selectAccount`.
+- The closing lines of `allAccountsBlockedGuidance` and `singleAccountUnavailableGuidance`.
+- The transient branches near the end of `classifyErrorKind`.
+
+## 2026-10-22 - A damaged seat-digest salt is replaced (oh-my-openagent#10304 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: a salt file that is not exactly 32 bytes is removed (only if it is still the file that was read, by inode) and recreated through the same link-into-place path, instead of being ignored in favour of a process-only salt. On a filesystem without hard links (`linkSync` fails with EPERM, ENOTSUP or ENOSYS) the salt is created directly with an exclusive write, so restarts there keep matching too.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: a truncated salt left on disk sent every later process to the process-only fallback forever, so seat digests never matched across restarts on that install (review LOW 2 on senpi#3947); and an agent dir on a filesystem without hard links never stored a salt at all (the senpi#3947 delta review's LOW).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: the salt is private state of this extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: `readOrCreateSalt` and the new `removeDamagedSalt`.
+
+## 2026-10-22 - A same-turn retry on another seat is reported as a seat switch, and every continuity decision names its seat (oh-my-openagent#10304)
+
+### What changed
+
+- `session-continuity.ts`: `decideFromBinding` keeps the retry checkpoint's decision (the same fork boundary and offset, senpi#1973 and senpi#1974) but labels it `account_changed` when the attempt runs on a different account than the binding. A same-seat retry keeps `timeout_retry`.
+- `session-observability.ts`: `ContinuityObservation` gains `seat` (the first 8 hex digits of an HMAC-SHA-256 of the account slot name keyed by a per-install salt, never the name) and `seatChanged` (the attempt runs on another account than the lineage's last one). Both reach the `claude_sdk_oauth_session_continuity` session.log line and the continuity diagnostic.
+- `seat-digest.ts` (new): `seatDigest` keys the digest with 32 random bytes created once under the agent dir (`anthropic-subscription/seat-digest-salt`, mode 0600), written whole to a private file and hard-linked into place, so the final name never exists half-written and processes racing on the first use converge on the first salt linked (EEXIST re-reads it), so the same slot name digests differently on two installs and a guessed name (`env`, an email address) cannot be confirmed without the salt. Only decision observations carry a seat; the terminal `failed` observation and the non-resident `disabled` one do not.
+- `session-stream.ts`: `createResidentAttempt` computes both from the live entry, the in-memory binding or the restored binding, in that order.
+- Tests: `test/anthropic-subscription-seat-digest.test.ts` pins the per-install salt; `test/anthropic-subscription-continuity-retry-checkpoint.test.ts` pins both labels at the same boundary; `test/suite/regressions/1432-anthropic-subscription-failover-reattach.test.ts` and `723-anthropic-subscription-timeout-abort-retry-continuity.test.ts` pin `seatChanged: true` on a failover and `false` on a same-seat retry, and that no slot name reaches the observation.
+
+- Supersedes the label in two older entries of this file: the senpi#1432 entry ("same-turn failover forks at the pre-turn boundary with reason `timeout_retry`") and the #723 retry-checkpoint entry. A checkpoint fork on another account is now `account_changed`; the older entries stay as dated history.
+
+### Why
+
+Prompt caches never cross Anthropic organizations, and each subscription seat is its own organization, so the first request on a new seat writes the whole prefix. A same-turn retry that failed over to another seat was labelled `fork / timeout_retry`, the label of a same-seat retry that reads its cache. In the reported incident every such record read only the 29,319-token system and tool prefix and wrote 0.8-0.9M tokens, and nothing in the logs could tell a seat switch from a same-seat retry or say which seat served it.
+
+### Why an extension could not handle it
+
+The continuity decision and its observation are internal to this builtin.
+
+### Expected merge conflict zones
+
+- `session-continuity.ts`: the `retryCheckpointDecision` call in `decideFromBinding`;
+- `session-observability.ts`: `ContinuityObservation` and `emitContinuityObservation`;
+- `session-stream.ts`: the imports, the top of `createResidentAttempt` and the `stageContinuityDecision` call;
+- `seat-digest.ts` is new.
+
+## 2026-10-21 - Launch-gated Fable 5.5 executable floor (senpi#3893)
+
+### What changed
+
+- `executable-model-support.ts`: reads the optional launch model's Claude Code floor from the one `FABLE55_LAUNCH` block. The floor stays unset until observed; no version is guessed.
+- The real-binary regression checks the launch chain key from the moment `released` is flipped, because the key exists only then; before release the default chains contain no 5.5 key at all. Every existing promoted model and every recovery rung remains checked.
+- Existing family-wide adaptive/xhigh markers in `options.ts` already cover Fable/Mythos 5.5; the usage-credit classifier is not a per-version allowlist. Focused tests verify the new model remains a non-retryable entitlement rather than an account-wide rate limit. The broader classification design in #3752 remains separate.
+
+### Why
+
+- Prepare launch support without falsely declaring that today's Claude Code supports an unreleased model.
+
+### Why an extension could not handle it
+
+- This builtin owns its executable support evidence and subscription request policy.
+
+### Expected merge conflict zones
+
+- `executable-model-support.ts`: imports and the optional floor entry.
+
+## 2026-10-21 - Separate request context from query billing (omo#10792)
+
+### What changed
+
+- `stream-protocol.ts`: usage updates distinguish a new request, a request delta, and cumulative query billing. A request start clears omitted counters; request updates set `Usage.contextUsage`, and terminal billing updates leave that measurement intact. Outputs start with an explicitly unknown context measurement.
+- `stream-events.ts`: routes `message_start` and `message_delta` through their respective request scopes.
+- `stream.ts`: SDK assistant snapshots supply request usage only when partial events are absent; their placeholder output counts never overwrite streamed output. Successful and failed terminal results still update all billing counters and costs.
+
+### Why
+
+The SDK may make more than one model request inside one senpi turn. Its terminal `result.usage` sums those requests, so replacing request usage with that sum doubled context and falsely triggered compaction. A result-only stream cannot provide a measured context, so it now falls back to transcript estimation rather than presenting billing as context. First-response identity remains unchanged for downstream transcript deduplication.
+
+The SDK's [cost-tracking contract](https://code.claude.com/docs/en/agent-sdk/cost-tracking) documents that assistant snapshots have accurate input/cache counts but placeholder output counts. Without partial events the snapshot therefore measures prompt context, not a complete output-token count; cumulative terminal output must not be substituted for it.
+
+### Why an extension could not handle it
+
+This is the builtin provider's own SDK boundary. The shared optional usage field is required because billing and context readers must retain different values through the same persisted message.
+
+### Expected merge conflict zones
+
+`stream-protocol.ts` usage mapping, `stream-events.ts` request boundaries, and `stream.ts` assistant/result branches. These are fork-only paths.
+
 ## 2026-10-20 - Native-1M models are requested by their plain id; only legacy ids use the [1m] opt-in (senpi#3801)
 
 ### What changed

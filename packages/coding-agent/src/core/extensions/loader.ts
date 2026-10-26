@@ -30,6 +30,7 @@ import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type Extens
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
 import { RESERVED_MEMORY_REPORT_KEYS } from "../memory-report/memory-report-registry.ts";
+import type { CustomMessage } from "../messages.ts";
 import { readPiManifest } from "../pi-manifest.ts";
 import { unboundSessionControlActions } from "../session-control-actions.ts";
 import { redactForUpload, type UploadRedactionOptions } from "../share/upload-redaction.ts";
@@ -51,6 +52,7 @@ import {
 	extensionModuleImporter,
 	rememberExtensionFactory,
 } from "./extension-module-cache.ts";
+import { createLifecycleApi } from "./lifecycle-api.ts";
 import { StaleExtensionContextError } from "./stale-context-error.ts";
 import type {
 	AppendEntryOptions,
@@ -76,6 +78,9 @@ import type {
 	RegisteredChildModule,
 	RegisteredCommand,
 	RegisteredMcpServerDeclaration,
+	SendMessageItem,
+	SendMessageOptions,
+	SendMessageReceipt,
 	SessionContext,
 	SessionControlActions,
 	SessionKind,
@@ -643,10 +648,30 @@ function createExtensionAPI(
 		},
 
 		// Action methods - delegate to shared runtime
-		sendMessage(message, options): void {
+		lifecycle: createLifecycleApi(() => {
 			assertActive();
-			runtime.sendMessage(message, options);
-		},
+			if (!runtime.lifecycle) throw new Error("Extension lifecycle is not bound to a session");
+			return runtime.lifecycle;
+		}),
+		// Itemized sends answer receipts (senpi#3811); a plain send stays fire-and-forget.
+		sendMessage: (<T = unknown>(
+			message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+			options?: SendMessageOptions & { items?: readonly SendMessageItem[] },
+		): Promise<readonly SendMessageReceipt[] | undefined> | undefined => {
+			assertActive();
+			const items = options?.items;
+			if (items === undefined) {
+				runtime.sendMessage(message, options);
+				return undefined;
+			}
+			const itemized = runtime.sendItemizedMessage;
+			// A host without item custody delivers the batch plainly and answers no receipts, like an engine without items.
+			if (itemized === undefined) {
+				runtime.sendMessage(message, options);
+				return Promise.resolve(undefined);
+			}
+			return itemized(message, { ...options, items });
+		}) as ExtensionAPI["sendMessage"],
 
 		sendUserMessage(content, options): void {
 			assertActive();
@@ -693,6 +718,17 @@ function createExtensionAPI(
 		getActiveTools(): string[] {
 			assertActive();
 			return runtime.getActiveTools();
+		},
+
+		armToolBarrier(spec) {
+			assertActive();
+			if (!runtime.armToolBarrier) throw new Error("This runtime has no tool barrier (senpi#3717).");
+			runtime.armToolBarrier(spec);
+		},
+
+		releaseToolBarrier(id) {
+			assertActive();
+			return runtime.releaseToolBarrier?.(id) ?? false;
 		},
 
 		getAllTools() {
@@ -781,6 +817,18 @@ function createExtensionAPI(
 				runtime.assertActive();
 				return sessionControlOf(runtime).persistHeaderNow();
 			},
+			relocationOffered() {
+				runtime.assertActive();
+				return sessionControlOf(runtime).relocationOffered();
+			},
+			relocationTargets(signal) {
+				runtime.assertActive();
+				return sessionControlOf(runtime).relocationTargets(signal);
+			},
+			requestRelocation(request, signal) {
+				runtime.assertActive();
+				return sessionControlOf(runtime).requestRelocation(request, signal);
+			},
 		},
 
 		rpc: {
@@ -864,7 +912,13 @@ const importNodeOnlyApi = (specifier: string): Promise<typeof import("jiti/stati
 async function createExtensionModuleImporter(): Promise<ExtensionModuleImporter> {
 	if (usesNativeBunImports) {
 		const { createBunExtensionImporter } = await import("./bun-extension-importer.ts");
-		return createBunExtensionImporter(VIRTUAL_MODULES);
+		return createBunExtensionImporter(
+			VIRTUAL_MODULES,
+			{},
+			{
+				preparedCache: { dir: path.join(getAgentDir(), "cache", "extension-modules"), release: VERSION },
+			},
+		);
 	}
 	const { createJiti } = await importNodeOnlyApi("jiti/static");
 	return createJiti(import.meta.url, {
@@ -1136,7 +1190,9 @@ function discoverExtensionsInDir(dir: string): string[] {
 	const discovered: string[] = [];
 
 	try {
-		const entries = fs.readdirSync(dir, { withFileTypes: true });
+		const entries = fs
+			.readdirSync(dir, { withFileTypes: true })
+			.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
 		for (const entry of entries) {
 			const entryPath = path.join(dir, entry.name);

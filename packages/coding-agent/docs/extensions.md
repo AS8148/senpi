@@ -467,6 +467,62 @@ See [Session Format](session-format.md) for session storage internals and the Se
 
 Fired when a session is started, loaded, or reloaded.
 
+`event.attended === false` marks an unattended open. Automatic turns are held until
+real user input or explicit Resume, not attachment. `ctx.engineTurnsHeld()` reads
+that gate. A source that charges or renders before sending must check it first
+and call `ctx.noteHeldWake("goal")` (or its own source key) instead of charging.
+Source-only notices are consumed on release and reported through
+`held_wakes_released`; they never require a model payload to clear the hold.
+
+#### session_hold_changed
+
+`pi.on("session_hold_changed", (event, ctx) => ...)` fires when this session becomes paused or resumed
+(senpi#3811). `event.change` is `"paused"` or `"resumed"`, `event.pauseSeq` is the session's pause sequence, and
+`event.holds` lists the live records as `{ kind, key, data? }`: `session_hold` for a user Stop, `run_fence` for a
+run the Stop paused, `inherited_hold` while a parent's run keeps this task child paused, and `unattended`. A
+workflow runner uses it to pause the run a stopped session started.
+
+`ctx.getPauseState()` returns the same `{ pauseSeq, holds }` snapshot. `ctx.fenceRun({ kind, id })` keeps wakes
+whose `details.runRef` names that run as notices until the user resumes; untagged wakes are not affected by a
+fence. Human input and `resume_session` release fences together with the user's Stop.
+`ctx.releaseRunFence({ kind, id })` drops that run's fence when the run is cancelled: call it after the run is
+journaled terminal. Later wakes tagged with the run are admitted again, fences for other runs stay, and releasing a
+run that has no fence does nothing. A fence alone does not pause the session, so fencing or releasing only a fence
+emits no `session_paused`/`session_resumed` and no `session_hold_changed`; each pause gets exactly one resume.
+
+#### held_wakes_released
+
+`pi.on("held_wakes_released", (event, ctx) => ...)` receives
+`event.sources: Record<string, number>` after a hold is released. Re-read current
+source state before scheduling work. The goal builtin queues one fresh
+continuation only if the current goal remains active; held goal text is never
+replayed. For user input, other sources are coalesced into that input's context
+before its message, and this event follows the user turn. Explicit Resume runs
+one turn per non-goal source sequentially, then releases the goal last.
+
+The core backstop groups `goal-continuation` as `goal`, `senpi-monitor:*` as
+`monitor`, and `senpi-codemode:*` as `codemode`; other custom types keep their own
+key. It persists counts and only the latest payload per source. A monitor release
+includes the held count and latest event text.
+
+The shared internal ledger exposes `SessionHold { kind, key, since, data?,
+sourceCounts }`. Only `kind: "unattended"` is implemented here.
+`addHold(kind, { key?, data? })` defaults the identity key to the kind and preserves
+opaque metadata. Multiple keys of one kind remain independent records.
+`releaseAll("input" | "resume_session")` releases every current key; attachment
+does not release any. Persisted `session-hold` additions carry `key` and `data`,
+and release entries carry `keys`. Restart restores both identity and metadata.
+
+`getHold(key)` returns the current keyed record, or `undefined`.
+`release(keys, cause)` releases only the named keys and emits `session_resumed`
+only when the session stops being held, once per `session_paused`. `releaseAll(cause)` delegates to that
+operation. The cause union remains `"input" | "resume_session"`.
+`engine-turn-hold-notices.ts` owns notice persistence, coalescing, counts, and
+consumption; the ledger delegates to that one custody path.
+Each delivered snapshot acknowledges its own notice IDs. New wakes arriving
+during delivery stay held for the next release, including newer wakes from the
+same source. The goal-release event waits until that non-goal custody is empty.
+
 ```typescript
 pi.on("session_start", async (event, ctx) => {
   // event.reason - "startup" | "reload" | "new" | "resume" | "fork"
@@ -684,6 +740,37 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
+#### session_move_export / session_move_import
+
+Moving a session to another device (`release_session` reason `move`, then RPC `move_session`) carries the session file, its extension sidecars and its resident blobs. State an extension keeps elsewhere (task records, logs, finished child sessions) follows only if the extension hands it over:
+
+```typescript
+pi.on("session_move_export", async (event, ctx) => {
+  // event.moveId - the move
+  // event.dir - an empty folder for this release attempt; write under a subfolder named after your extension
+  // event.signal - aborted when the host stops waiting on this handler; stop writing when it fires
+  // Throwing refuses the move: release_session answers release_failed and nothing is sealed.
+  // Each handler runs under the session_shutdown handler budget (sessionShutdownHandlerWarnMs warns, 2 s by
+  // default; sessionShutdownHandlerTimeoutMs caps, 10 s by default); one still running at the cap refuses the
+  // move the same way. A refused attempt's folder is removed, and only the attempt that seals the session is
+  // bundled, so anything a handler writes after its signal aborted never reaches the move.
+});
+
+pi.on("session_move_import", async (event, ctx) => {
+  // Fired right after session_start of an open that finds state a move brought in.
+  // event.dir - this delivery's own copy of what the sender's extensions wrote
+  // event.redelivered - true when this state was delivered before and not marked restored
+  // event.signal - aborted when the host stops waiting on this handler
+  // The state is marked restored and removed once every handler returned without throwing within the
+  // session_shutdown handler budget. Otherwise the failure is reported as an extension error and the next open
+  // delivers it again to every handler (redelivered: true), as does a crash before the hand-over is recorded.
+});
+```
+
+Import handlers must be idempotent: a handler that already applied the state, or part of it, may see the same state again, and restoring it twice must leave the same result as restoring it once. Use `event.redelivered` to skip work cheaply, for example by checking what you already restored for `event.moveId`.
+
+Setting `sessionShutdownHandlerTimeoutMs` to `0` removes the cap for move handlers too: a hung `session_move_export` handler then holds the `move` release (and, on its `interrupt` path, the session's closed admission) until it returns, and a hung `session_move_import` handler holds the session open.
+
 ### Agent Events
 
 #### before_agent_start
@@ -721,6 +808,8 @@ pi.on("before_agent_start", async (event, ctx) => {
   };
 });
 ```
+
+Messages append after the triggering prompt by default. Set `message.placement` to `"before-prompt"` to persist the message immediately before that prompt instead. This also applies to extension-triggered turns; it does not modify earlier history or the system prompt.
 
 The `systemPromptOptions` field gives extensions access to the same structured data senpi uses to build the system prompt. This lets you inspect what senpi has loaded — custom prompts, guidelines, tool snippets, context files, skills — without re-discovering resources or re-parsing flags. Use it when your extension needs to make deep, informed changes to the system prompt while respecting user-provided configuration.
 
@@ -1365,7 +1454,7 @@ if (usage && usage.tokens > 100_000) {
 
 ### ctx.getCompactionModel()
 
-Optional on hosts that expose session-owned summarization routing. Returns the current session model while its account is usable, preserving builtin compaction behavior even when core compaction has a model override. For a spent account, it tries the held switch target, the configured summary override, then an authenticated alternate with enough context capacity for the active transcript and reserved output. It does not change the active session selection and throws an account-limit error when no usable summary model is available.
+Optional on hosts that expose session-owned summarization routing. While the session account is usable, returns the configured `compaction.model` when it resolves to a model whose provider has credentials and whose account can serve, and the current session model otherwise (an override that cannot serve is logged as `compaction_model_fallback`, once per cause until the cause changes or the override is used; before credential availability is known, the override is kept and builtin summarization falls back to the session model if it has no credentials at request time). For a spent account, it tries the held switch target, the configured summary override, then an authenticated alternate with enough context capacity for the active transcript and reserved output. It does not change the active session selection and throws an account-limit error when no usable summary model is available.
 
 ### ctx.compact()
 
@@ -1735,11 +1824,14 @@ runtime's steering or follow-up queue like the user's queued input. The protocol
 
 | Method | Returns | Behaviour |
 |---|---|---|
-| `registerControlEndpoint({ inboxDir, drain, isSessionReferenced? })` | `Promise<SessionControlRegistration>` | POSIX interactive session: binds the `tui` control endpoint and answers `{ status: "registered", socket, dispose }`. On a multi-session host with a public socket it binds nothing and `socket` is the host's. Otherwise `{ status: "unsupported", reason: "unsupported_platform" \| "unsupported_mode" }`, or `{ status: "failed", reason }` when a registration step failed. `drain(event)` runs on every [`session_control_wake`](#session_control_wake) edge and answers `{ admitted: [{ delivery_id, kind }] }`. `inboxDir` is created 0700 and its entry creations and deletions wake the drain. At clean exit a header-only session file is removed unless `isSessionReferenced()` answers `true`. |
+| `registerControlEndpoint({ inboxDir, drain, isSessionReferenced? })` | `Promise<SessionControlRegistration>` | POSIX interactive session: binds the `tui` control endpoint and answers `{ status: "registered", socket, dispose }`. On a multi-session host with a public socket it binds nothing and `socket` is the host's. Otherwise `{ status: "unsupported", reason: "unsupported_platform" \| "unsupported_mode" }`, or `{ status: "failed", reason }` when a registration step failed. `drain(event)` runs on every [`session_control_wake`](#session_control_wake) edge and answers `{ admitted: [{ delivery_id, kind }] }`. `inboxDir` is created 0700 and its entry creations and deletions wake the drain. At clean exit a header-only session file is removed unless `isSessionReferenced()` answers `true`. An endpoint lives for one extension generation: a reload disposes the endpoints the retiring generation registered (also one whose registration finishes after the reload began, which answers `failed`), so register again from `session_start` with reason `reload`. Repeated failures of `drain` show one notice until a pass succeeds. |
 | `admissionGate()` | `{ can_admit, hold_reason?, editor_revision, turn_epoch }` | Read-only pre-check; `hold_reason` is `draft` while the user composes or their submission is still on its way into the runtime. |
 | `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id?, sender?, display_text?, whenIdle? })` | `{ kind, turn_epoch }` | Decides and acts in one synchronous call. `whenIdle` (`start`, the default, or `queue`) is what an idle session does with it: start a turn, or hold it (`queued`) in the `deliverAs` queue for the next turn. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). `sender` (`{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }`) and `display_text` (the message as written) go to the entry's `details`: the terminal labels the message by its sender over `display_text`, while the model reads `text`. |
 | `listAdmittedDeliveries()` | `{ pending, emitted, failed? }` | The process-lifetime ledger: `pending` is held by the runtime, `emitted` has its transcript entry written, `failed` (present only when non-empty, `[{ delivery_id, error }]`) had its entry refused by the session file: no longer held, still with its sender, admissible again once the run that refused it has settled and the file's last write succeeded. |
 | `persistHeaderNow()` | `Promise<void>` | Writes the session header now, so the session id is durable before anything exposes it. |
+| `relocationOffered()` | `boolean` | Whether the session's host offers continuing it on another computer right now. The builtin relocation tools are active only while it is `true`. |
+| `relocationTargets(signal?)` | `Promise<RelocationTargetsResult>` | The user's other computers the session's host offers to continue on (`listed`), or `unavailable` when no host offers relocation. |
+| `requestRelocation({ target, reason }, signal?)` | `Promise<RelocationRequestResult>` | Asks the host to continue this session on `target` when the current turn ends (`scheduled`); never interrupts the turn. `unavailable` or `refused` leaves the session working here. See `docs/rpc.md` "Continuing a session on another computer". |
 
 ```typescript
 export default function ({ pi }) {
@@ -2019,6 +2111,72 @@ pi.sendMessage({
   - `"followUp"` - Waits for agent to finish. Delivered only when agent has no more tool calls.
   - `"nextTurn"` - Queued for next user prompt. Does not interrupt or trigger anything.
 - `triggerTurn: true` - If agent is idle, trigger an LLM response immediately. Only applies to `"steer"` and `"followUp"` modes (ignored for `"nextTurn"`). Requested from a `session_start` handler, the turn starts once every extension's `session_start` handler has returned.
+- `ticket` - A delivery ticket from `pi.lifecycle.obligations`. Returning from
+  `sendMessage` does not acknowledge model consumption.
+  With `items`, the ticket covers the whole batch. It is admitted before anything is written: an unknown,
+  closed, consumed or in-delivery ticket rejects the promise with `DeliveryTicketRefused` and no item is
+  kept, so a retry never duplicates notices. A held batch hands the ticket to its notices; a batch a user
+  abort (Esc or Stop) drops during admission keeps it when it is decided again; a re-send while the
+  ticket's message is still queued answers that message's receipts when it carries the same items, and is
+  rejected with `DeliveryTicketRefused` (`reason: "different_items"`) when it carries other items; the queued
+  message is written as first sent. When `clearQueue` removes the queued message before it is written, the
+  original send and every joined re-send reject with `QueuedDeliveryCleared` (its `itemIds` name the batch).
+- `items` - Make the message an itemized batch: one `{ itemId, producer, runRef?, content?, details? }` per wake it
+  carries. The call then returns a promise of one receipt per item, `{ itemId, entryId, disposition, noticeId? }`.
+  Admission is atomic: if a pause applies to the batch or to any item (a Stop, a parent's run pause, an unattended
+  hold, or a fence on that item's `runRef`), every item is stored as its own notice (`notice_persisted`, with
+  the item's own `content` and `details`, or the batch content when an item has none), all written in one entry, so
+  the batch is kept whole or not at all: if that write fails the promise rejects and no item is kept; otherwise the batch is
+  delivered as one message and every receipt names that message's entry (`message_persisted`). A held item's notice
+  is delivered on its own when the session resumes, and a later wake from the same producer never replaces it.
+  A host without item custody (an embedder's runtime) delivers the batch as a plain message and the promise
+  answers `undefined`, as an engine without `items` would. The itemized return type also admits `void`, so an
+  `ExtensionAPI` implementation or test double written with a single `sendMessage(...): void` signature stays
+  assignable; treat `void` like `undefined` (no receipts). Without `items`, `sendMessage` returns nothing, as before.
+
+```typescript
+const receipts = await pi.sendMessage(
+  { customType: "my-coordinator:wake", content: "Task A finished\n\nTask B finished", display: false },
+  {
+    triggerTurn: true,
+    deliverAs: "followUp",
+    items: [
+      { itemId: "a", producer: "task", runRef: { kind: "task", id: "t1" }, content: "Task A finished" },
+      { itemId: "b", producer: "task", content: "Task B finished" },
+    ],
+  },
+);
+```
+
+### pi.lifecycle
+
+Use `pi.lifecycle.obligations.open(key, kind, detail?)` to retain unfinished work
+before it can leave a producer. `kind` is `"children"` or `"background"`; opening
+the same live key is idempotent. Keys starting with `delivery:` or `wake-source:` are
+reserved for the engine: `open` and `transfer` refuse them with a `ReservedCustodyKey`
+error. The returned token supports:
+
+- `transfer(nextKey, kind?)`: moves custody synchronously, opening the next owner
+  before closing the current one. Transferring a closed token is an error.
+- `ticket()`: obtains the stable delivery identity for `sendMessage(..., { ticket })`.
+- `heldAsNotice(noticeId)`: closes custody after a durable held notice exists.
+- `close("consumed" | "cancelled" | "passive")`: releases producer-owned work.
+
+The engine acknowledges a ticket when its custom message enters model context
+at `message_start`, including a steer into an existing run. Its work stays in
+that run's custody until `agent_idle`. A failed delivery retains custody for retry;
+a passive message closes immediately; a held message closes against the persisted
+session-notice identity. Restart redelivers unconsumed queued messages once, but
+never replays a consumed result or reruns an interrupted tool.
+
+`pi.lifecycle.reportChild({ taskId, childSessionId, runEpoch, generation, state,
+waitingOn?, terminal? })` persists runner-owned child state. Stale epoch/generation
+pairs are ignored; a higher `runEpoch` clears the old terminal status. Terminal
+values are `completed`, `error`, `lost`, `interrupted`, and `cancelled`. Child UI
+requests remain automatically answered by their runners, not routed to a person.
+
+`pi.lifecycle.markRunCompleted({ runId })` records successful workflow completion
+for the current epoch's label. It does not request automatic thread settlement.
 
 ### pi.sendUserMessage(content, options?)
 
@@ -2351,6 +2509,17 @@ pi.setActiveTools([...new Set([...active, "my_custom_tool"])]); // Keep current 
 pi.setActiveTools(["read", "bash"]); // Switch to read-only
 ```
 
+### pi.armToolBarrier(spec) / pi.releaseToolBarrier(id)
+
+Hold the workspace-changing tools of a turn until you are ready, for example while you capture a checkpoint of the workspace. `pi.armToolBarrier({ id, deadlineMs })` arms the session's tool barrier; while it is armed, every tool not declared `workspaceEffect: "read"` waits before it runs. Armed while the session is idle (for example from `before_agent_start`), it belongs to the next turn. It opens on `pi.releaseToolBarrier(id)` (which returns `false`, a no-op, when no barrier with that id is armed), when its turn ends, or after `deadlineMs` (1..600000), which emits the `tool_barrier_expired` session event. Stop ends the wait. `id` is 1-256 characters; arming again replaces the id and ceiling while calls already waiting keep waiting.
+
+```typescript
+pi.on("before_agent_start", () => {
+  pi.armToolBarrier({ id: "checkpoint", deadlineMs: 30_000 });
+  void captureCheckpoint().finally(() => pi.releaseToolBarrier("checkpoint"));
+});
+```
+
 `pi.getAllTools()` returns `name`, `description`, `parameters`, `promptGuidelines`, `kernelPrelude`, `permissionParser`, and `sourceInfo`.
 
 Typical `sourceInfo.source` values:
@@ -2463,7 +2632,7 @@ Register or override a model provider dynamically. Useful for proxies, custom en
 
 Calls made during the extension factory function are queued and applied once the runner initialises. Calls made after that — for example from a command handler following a user setup flow — take effect immediately without requiring a `/reload`.
 
-Dynamic providers can implement `refreshModels`. Senpi calls it during model refresh, publishes the returned list synchronously through the provider, and passes the canonical credential/stored-catalog/network/signal context. The extension decides whether to persist catalog metadata through generation-checked `context.publish({ persist: entry })`; live servers such as llama.cpp can return models without persisting them.
+Dynamic providers can implement `refreshModels`. Senpi calls it during model refresh, publishes the returned list synchronously through the provider, and passes the canonical credential/stored-catalog/network/signal context. The extension decides whether to persist catalog metadata through generation-checked `context.publish({ persist: entry })`; live servers can return models without persisting them.
 
 `context.signal` is always a concrete signal and provider callbacks must pass it to blocking I/O. Public `ModelRuntime.refresh()` and `ModelRegistry.refresh()` calls accept an optional signal and are unbounded when it is omitted; extensions and applications choose their own deadlines. Cancellation stops the caller waiting even if a provider ignores the signal, but cooperation is still required to stop the underlying work.
 
@@ -2517,8 +2686,8 @@ pi.registerProvider("my-proxy", {
   ]
 });
 
-// Register a live llama.cpp catalog without persisting discovered models
-pi.registerProvider("llama.cpp", {
+// Register a live local catalog without persisting discovered models
+pi.registerProvider("local-server", {
   baseUrl: "http://localhost:8080/v1",
   apiKey: "local",
   api: "openai-completions",
@@ -3133,6 +3302,7 @@ Add these fields to `pi.registerTool(...)`:
 - **`searchKeywords`**: Synonyms or domain terms, indexed with the same weight as the tool name. Never sent to the model.
 - **`searchGroup`**: Organizational filter group. Defaults to your extension's label.
 - **`namespace`** and **`annotations`**: Optional grouping and behavior hints, for example from an MCP server.
+- **`workspaceEffect`**: `"read" | "write"`. A `"read"` tool runs while a tool barrier is armed (see `pi.armToolBarrier`); any other tool, including one that leaves this unset, waits for the barrier's release. Declare `"read"` only for tools that never change files, processes or other workspace state.
 - **`outputSchema`**: Optional schema for `structuredContent`; a result can also set `isError`.
 - **`allowLazyActivation`**: Default `true`. If `false`, the tool is hidden from `tool_search` completely and cannot be lazily activated during code mode execution. Explicit activation via `pi.setActiveTools()` is still allowed.
 
@@ -3337,6 +3507,11 @@ if (confirmed) {
 
 #### Manual Dismissal with AbortSignal
 
+Local terminal `select`, `confirm`, and `input` dialogs also accept
+`ephemeral: true`. Their visible contents remain local; they emit no generic
+blocked events, replacement labels, identifiers, or pending markers. This option is
+not an RPC field or permission to present MCP input on another session.
+
 For more control (e.g., to distinguish timeout from user cancel), use `AbortSignal`:
 
 ```typescript
@@ -3368,6 +3543,10 @@ See [examples/extensions/timed-confirm.ts](../examples/extensions/timed-confirm.
 // Status in footer (persistent until cleared)
 ctx.ui.setStatus("my-ext", "Processing...");
 ctx.ui.setStatus("my-ext", undefined);  // Clear
+
+// Subagent tree spend, shown after the session's own cost: "$0.380 (+1.270)"
+ctx.ui.setSubagentCost(1.27);
+ctx.ui.setSubagentCost(undefined);  // Clear
 
 // Working loader (shown during streaming)
 ctx.ui.setWorkingMessage("Thinking deeply...");

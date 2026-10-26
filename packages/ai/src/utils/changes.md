@@ -1,3 +1,165 @@
+## 2026-10-26 - Capture vocabulary for replaced signatures, redaction and late names (senpi#4285, part of #4272)
+
+### What changed
+
+- `packages/ai/src/utils/assistant-capture.ts` (fork-only): `message_block_metadata` gains `thinkingSignature` and
+  `textSignature` (replacements, beside the appending `thinkingSignatureDelta`), `redacted` and `name`;
+  `pushAssistantSignature` records a changed text/thinking signature and `pushAssistantCompleteBlock` records a block
+  appended complete with no event as an insert and an end sharing one frozen copy.
+
+### Why
+
+- Google and Devin replace signatures rather than append them, Bedrock redacts a block mid-stream and Devin can name
+  a tool after its start; the S02a-1 vocabulary only appended signatures.
+
+### Why an extension could not handle it
+
+- The progress records are internal to the provider stream's ordered queue.
+
+### Expected merge conflict zones
+
+- None upstream: the file is fork-only.
+
+## 2026-10-25 - Assistant streams capture block seeds at emission and keep one ordered progress lane (senpi#4277, part of #4272)
+
+### What changed
+
+- `packages/ai/src/utils/event-stream.ts`: `EventStream` keeps one ordered queue whose entries are public events or
+  internal progress records. Ordinary iteration yields only public events with the same microtask timing as before:
+  a queued progress record is skipped in the same `next()` call, and a waiting reader that receives one keeps
+  waiting. `AssistantMessageEventStream` takes `{ captureBlocks }`; with it, `push(event, hint?)` freezes the event's
+  capture carrier before queuing. Every instance registers a progress writer; a records reader is registered only
+  when the class does not replace `[Symbol.asyncIterator]`. Ordinary iteration drops each event's carrier as it is
+  dequeued, so a wrapper that reads that way can only lose controls, never forward wrong ones. `done` is now
+  `protected`; `mapIterator` and `enqueueProgress` are new protected members.
+- `packages/ai/src/utils/assistant-capture.ts` (fork-only, new): the carrier and record vocabulary. Carriers live in
+  a `WeakMap` keyed by the event object (never enumerable, never serialized) and hold frozen copies: usage, changed
+  message metadata, the public block at start/end (provider scratch and symbols removed), the exact raw argument
+  prefix the adapter emitted, UTF-16 coverage and delta offsets, and the parse frontier `parsedThrough`.
+  Progress records are `message_block_state` (native insert/end), `message_block_metadata` (changed fields only) and
+  `message_tool_arguments_reset` (authoritative raw replacement). `assistantRecords` reads records;
+  `assistantEvents` reads events and hands each record to a callback as it is read.
+
+### Why
+
+- Provider events carry the shared live partial and the queue held references, so a seed read when a consumer
+  resumed could already contain later bytes, and native insertions/ends happened with no event at all. The facts
+  have to be frozen when the producer emits them, and native-only transitions need their own ordered lane
+  (R3.C6.2; contract ruling 05, decisions D1-D5).
+
+### Why an extension could not handle it
+
+- Capture has to run inside the producer's `push`, before the event is queued; extensions only see events after
+  the consumer resumes, when the live partial may already be ahead.
+
+### Expected merge conflict zones
+
+- MEDIUM: `EventStream` queue and iterator internals (`#queue` entry type, `push`/`deliver`, `mapIterator`,
+  `FifoQueue.prepend`) and the `AssistantMessageEventStream` constructor, `push` and iterator overrides.
+
+## 2026-10-25 - Preserve protocol-owned tool arguments (senpi#4191)
+
+### What changed
+
+- `packages/ai/src/utils/validation.ts`: accepts a schema-bound protocol validator before the existing coercion path.
+- `packages/ai/src/utils/tool-argument-validator.ts`: stores protocol validators without serializing them into provider requests.
+- Protocol validation preserves AJV error paths, required-property names, messages, and keywords so the model can correct its call without echoing argument values.
+- `packages/ai/src/utils/tool-argument-coercion.ts`: owns the unchanged primitive coercion extracted from `packages/ai/src/utils/validation.ts`.
+- `packages/ai/src/utils/tool-schema-compat.ts`: documents provider adaptation as a separate, potentially lossy wire step.
+
+### Why
+
+- `packages/ai/src/utils/validation.ts`: modern MCP must validate and send the arguments the model produced, rather than repair them through legacy coercion.
+- `packages/ai/src/utils/tool-schema-compat.ts`: an object-only provider's schema restrictions must not weaken MCP's source schema or rewrite dispatched arguments.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/validation.ts`: validation runs before an extension tool's execute callback.
+- `packages/ai/src/utils/tool-schema-compat.ts`: provider wire conversion occurs after extensions supply their tool definitions.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/validation.ts`: the argument-validation entry and primitive-coercion import.
+- `packages/ai/src/utils/tool-schema-compat.ts`: the module-level documentation.
+
+## 2026-10-22 - Extract the configuration reference error without behavior changes (senpi#3858)
+
+### What changed
+
+- `packages/ai/src/utils/config-reference-error.ts`: holds the unchanged `ConfigReferenceError` and `ConfigReferenceReason`, moved from `config-reference.ts`.
+- `packages/ai/src/utils/config-reference.ts`: imports and re-exports them, so its public entry keeps the same API.
+
+### Why
+
+- Lets the auth resolution path raise the named error without loading the compiled reference schemas.
+
+### Why an extension could not handle it
+
+- The credential pool raises this error before extension processing.
+
+### Expected merge conflict zones
+
+- LOW: the import and re-export at the top of `packages/ai/src/utils/config-reference.ts`.
+
+## 2026-10-21 - Shared configuration reference object grammar (senpi#3858)
+
+### What changed
+
+- `packages/ai/src/utils/config-reference.ts`: exact single-key `$file`, `$env`, and flat `$concat` schemas and runtime unions; named `ConfigReferenceError` and a validator for explicitly declared string-value slots.
+
+### Why
+
+- Auth, model configuration, and MCP must agree on which objects are references without interpreting opaque JSON or changing legacy strings.
+
+### Why an extension could not handle it
+
+- The credential pool and configuration loaders validate these values before extension processing.
+
+### Expected merge conflict zones
+
+- LOW: new standalone shared contract.
+
+## 2026-10-20 - Keep Claude's spent-window reset in provider diagnostics (senpi#3825)
+
+`provider-diagnostic-sources.ts` adds `resetsAt` to a classified quota/rate-limit error from Claude's unified 5h/7d response headers. Only spent windows with future numeric resets contribute, and the latest spent window wins so a goal cannot wake while another cap still blocks it. Authentication and unknown errors do not read reset headers. `anthropic-provider-diagnostic.test.ts` exercises the real adapter against HTTP fixtures.
+
+## 2026-10-21 - reportedCount: absent, null or non-finite provider counts are not reported (senpi#3879)
+
+### What changed
+
+- `packages/ai/src/utils/reported-count.ts` (fork-only): `reportedCount(value)` returns a finite number or undefined; the four adapters that parse a reasoning count use it.
+
+### Why
+
+- Gateways can send `"reasoning_tokens": null`; a `=== undefined` check let that through as `reasoning: null`, which compaction's retained-message check treats as invalid usage (review of senpi#3884).
+
+### Why an extension could not handle it
+
+- Usage parsing happens inside each adapter's stream.
+
+### Expected merge conflict zones
+
+- None: new file.
+
+## 2026-10-21 - Context readers prefer request measurements (omo#10792)
+
+### What changed
+
+- `packages/ai/src/utils/estimate.ts`: `calculateContextTokens` prefers `Usage.contextUsage`; an explicit unknown measurement returns zero so transcript estimation supplies context.
+- `packages/ai/src/utils/overflow.ts`: token-based overflow detection uses request context when present rather than cumulative billed tokens. Error-message classification remains independent. `isRecoverableLength` reads request output when it is measured and falls back to the message output when request context is absent or unknown (`null`), so result-only length stops keep their previous recovery.
+
+### Why
+
+- `packages/ai/src/utils/estimate.ts` and `packages/ai/src/utils/overflow.ts`: the SDK's terminal usage can sum two overlapping full-context requests, exhausting output room or triggering overflow on a conversation that fits.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/estimate.ts` and `packages/ai/src/utils/overflow.ts`: these shared readers run beneath extensions and must understand the additive usage contract for all callers.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/utils/estimate.ts`, `calculateContextTokens`; `packages/ai/src/utils/overflow.ts`, numeric overflow checks.
+
 ## 2026-10-18 - Anthropic compat gains supportsGzipRequestBody (senpi#3643)
 
 ### What changed

@@ -1,3 +1,70 @@
+## 2026-10-24 - RPC monitors authenticate public POSIX hosts before subscribing (senpi#3815)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-observer.ts`: the public POSIX dial runs the challenge-response before `subscribe_sessions` (still marked observing) and accepts a `keyRoot`. Raw-secret TUI and Windows endpoints keep their handshake.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-observer.ts`: an observing connection must also prove the endpoint key once the host enforces authentication, without counting as an attachment.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-observer.ts`: this is the terminal extension's own transport bootstrap.
+
+### Expected merge conflict zones
+
+- LOW: imports and the connect/subscribe setup in `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-observer.ts`.
+
+## 2026-10-18 - Monitor deadline docs, accurate & / nohup guidance, and a killed-at-deadline summary (senpi#3611)
+
+### What changed
+
+- `tools/bash.ts` (`run_in_background` description), `prompt.ts`, and the bun-1-4 skill: state what the code does — a plain `&` job dies with the call's PTY hangup (native backend; the pipe fallback never hangups); `nohup` racily escapes that hangup (a child can still die when the call returns before nohup takes effect) and survives as an untracked orphan (no `bash_id`, no captured log) that the call's timeout group-kill still removes, while `setsid` leaves the process group entirely and survives even that kill (reviewer probe: after `kill(-pgid, SIGKILL)` the setsid child stayed alive, the nohup child died); a non-persistent command watch's `timeout_ms` kills the watched command on both backends (native `session_threads.rs` group kill, pipe `terminateChildTree`).
+- `tools/monitor.ts`: the guidelines list gains the watcher-with-a-deadline line — `timeout_ms` KILLS the watched command of a non-persistent watch, so long jobs belong in `run_in_background` and are only watched from there.
+- `command-monitor-source.ts` `#settle`: a timed-out command watch now summarizes as `watcher killed at deadline (timed_out)`; the exit code is deliberately omitted in this branch (a killed child's code is noise).
+- `rpc-monitor-source.ts`: the deadline summary stays `watcher timed_out` (an RPC watch kills nothing) and both its sites share `RPC_WATCHER_TIMED_OUT_SUMMARY`, so the ended-reason classifier can never drift from the settle string.
+- `test/suite/terminal-monitor.test.ts`: the timed-watch test asserts the machine-read ended reason `timeout` through `MonitorRegistry`'s `onEnded` instead of pinning summary prose, plus the structural no-exit-code-suffix guard.
+- `test/suite/terminal-bash-foreground-exit.test.ts` (new): proves the other side of the contract — a readiness-gated `nohup` job SURVIVES a normal foreground return (nothing signals the group on a normal exit; only the deadline path ever kills), with finally-block cleanup.
+
+### Why
+
+Both behaviors strand or destroy long jobs agents believed they had started, and the old `watcher timed_out` read as an observation rather than the kill it is on the command branch (senpi#3611, reported via KakaoTalk). Verified by real runs under the bash tool: with the child ready before the shell exits, a `nohup sleep` survives a normal foreground return (reparented to init) while the plain `&` sleep dies at PTY hangup — though an IMMEDIATE return can kill the nohup child too, the hangup racing nohup's SIGHUP-ignore (5/5 dead in the reviewer's probe); inside a call that hits its timeout the nohup job dies with the group kill on both backends.
+
+### Why an extension could not handle it
+
+- The tool descriptions, the prompt section, the monitor summaries and the ended-reason classifier are this builtin's own registered contract; an external extension cannot re-describe another extension's tools or re-word its emitted summaries.
+
+### Expected merge conflict zones
+
+- LOW: this tracker's top, the `tools/monitor.ts` guidelines list, the first bullet of the prompt section, and `rpc-monitor-source.ts` around the deadline settle.
+
+## 2026-10-21 - Persistent command monitors are paced instead of muted after 200 lines (senpi#3889)
+
+### What changed
+
+- `command-monitor-source.ts` / `shared.ts`: the rolling fire budget no longer mutes a watch. `DEFAULT_DURABLE_MONITOR_FIRE_BUDGET` and `FIRE_BUDGET_AUTO_MUTE_SUMMARY` are removed; the persisted `fireWindow` is still counted and written (a statistic, and older readers keep parsing). A durable command watch instead carries a runaway guard: more than `monitorRunawayLinesPerMinute` matched lines in each of `monitorRunawayMinutes` consecutive minutes pauses it with one summary starting `paused: runaway output` (`RUNAWAY_PAUSE_SUMMARY_PREFIX`) that names the rearm call. A quiet or skipped minute resets the run; resume clears it.
+- `monitor-notify.ts`: per-monitor wake pacing. A paced monitor (`wakesPerHour` dep) spends one token per wake from a bucket of `wakesPerHour` tokens refilled at `wakesPerHour` an hour; with no token its lines keep batching and the flush is scheduled for the next token. The batch caps (`maxLinesPerInjection`, `maxCharsPerInjection`) now apply per monitor, so a paced monitor holding lines cannot push another monitor's lines into overflow, and once a monitor overflows its later lines overflow too (inline lines stay first). Overflow lines go to the `spillOverflow` dep in chunks of 256, and the wake says `[N more lines in <path>]`; without a path it keeps the `peek bash_output` notice. The session-global wake budget is unchanged; the runaway summary, like the old mute summary, does not reset its streak.
+- Review fixes (same PR): a wake is filled within `maxCharsPerInjection`, measured from the real wrapper (reminder tags, pause notice, each monitor's actual overflow notice) rather than an assumed reserve (`monitor-wake-fit.ts`, new). Monitors with a summary go first, then queue order; a monitor that does not fit whole waits for the next wake; only an oversized first monitor sends a prefix and keeps the rest and its overflow queued. A shared wake is therefore never clipped. A session wake-budget pause pauses only the monitors in that wake and keeps every other monitor's queued lines and unwritten overflow. A paced monitor out of tokens arms its flush for its next token instead of every coalesce window. Pacing, overflow bookkeeping, wake rendering and telemetry details moved to `monitor-wake-pacing.ts`, `monitor-overflow.ts`, `monitor-notify-format.ts` and `monitor-notify-details.ts` (new). The overflow file reports a rotation (the wake then names `<path>.1` too), a failing file warns once per monitor (`extension.ts`), pacing state is dropped when a monitor's summary goes out, and files older than a durable watch's lifetime are swept at session start (`restore-session.ts`).
+- `monitor-overflow-file.ts` (new): appends to `<terminal state dir>/overflow/<mon_id>.log` (0600, dir 0700), rotating to one `.1` copy at 4 MiB. It is outside `SENPI_MONITOR_STATE_DIR`, which is removed when a watch ends, while the agent may still read the overflow after the final wake.
+- `monitor-registry.ts`: `setRunawayGuard(guard)` (settings change across a reload; the registry does not) and `wakePacing(id)` (persistent command watches only, with the watch's own override).
+- `settings.ts` / `core/terminal-settings.ts`: `monitorWakesPerHour` (default 12, max 3600), `monitorRunawayLinesPerMinute` (default 120), `monitorRunawayMinutes` (default 5, max 1440).
+- `tools/monitor-schema.ts` / `tools/monitor.ts`: `wakes_per_hour` (integer 1..3600) on persistent command monitors; rejected on any other watch. It is recorded in the manifest spec (`wakesPerHour`, optional, ignored by older readers), parsed strictly, and re-applied by `durable-command.ts` on restore.
+- `extension.ts`: wires `wakesPerHour` (override or setting), `spillOverflow` and the runaway guard.
+
+### Why
+
+- 200 matched lines a day muted busy but healthy standing watches (chat bridges, CI feeds) mid-day, and every later line was dropped until a rearm. The cost the budget guarded against is wakes, and the notifier already coalesces lines into wakes, so pacing wakes bounds the cost (about 300 wakes a day per watch at the default) without losing a line, and only a sustained flood is paused, visibly.
+
+### Why an extension could not handle it
+
+- Monitor delivery and the registry are this builtin's own.
+
+### Expected merge conflict zones
+
+- MEDIUM: `monitor-notify.ts` `notifyEvent` / `#flush` / `#buildMessage`; `command-monitor-source.ts` `#consume`.
+- LOW: `settings.ts` defaults, `monitor-schema.ts` properties, the manifest model/parse/writer command fields.
+
 ## 2026-10-18 - An unreadable holder start time is reported as unproven (senpi#3658)
 
 ### What changed

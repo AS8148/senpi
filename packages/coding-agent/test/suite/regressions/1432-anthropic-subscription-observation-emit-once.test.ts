@@ -202,7 +202,11 @@ function assistant(text: string, timestamp: number): AssistantMessage {
 }
 
 function runTurn(context: Context): Promise<AssistantMessage> {
-	return streamAnthropicSubscription(model, context, { sessionId: SESSION_ID, streamKind: "main" }).result();
+	return streamAnthropicSubscription(model, context, {
+		cwd: process.cwd(),
+		sessionId: SESSION_ID,
+		streamKind: "main",
+	}).result();
 }
 
 afterEach(() => {
@@ -240,7 +244,8 @@ describe("issue #1432 claude-sdk-oauth failover emits one observation", () => {
 		// Exactly one observation for the turn: the discarded first attempt stays
 		// silent, so the retained fork is the sole observation (not delta + fork).
 		expect(observations).toHaveLength(1);
-		expect(observations[0]).toMatchObject({ kind: "fork", reason: "timeout_retry" });
+		// A failover fork is a seat switch, not a same-seat timeout retry (oh-my-openagent#10304).
+		expect(observations[0]).toMatchObject({ kind: "fork", reason: "account_changed", seatChanged: true });
 		expect(observations.some((observation) => observation.kind === "delta")).toBe(false);
 	}, 10_000);
 });

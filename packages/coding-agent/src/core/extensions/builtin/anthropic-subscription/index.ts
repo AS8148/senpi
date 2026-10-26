@@ -14,6 +14,7 @@ import { plannedContextWindow } from "./context-window.ts";
 import { longContextAvailable, onLongContextAvailabilityChange } from "./long-context.ts";
 import { createOAuthConfig } from "./oauth-login.ts";
 import { registerSessionRegistry } from "./session-registry-wiring.ts";
+import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
 import {
 	type AnthropicSubscriptionProviderSettings,
 	loadAnthropicSubscriptionProviderSettingsFromDisk,
@@ -67,6 +68,7 @@ export function registerAnthropicSubscriptionExtension(
 	pi: ExtensionAPI,
 	deps: AnthropicSubscriptionExtensionDeps = {},
 ): void {
+	const cwd = requireAnthropicSubscriptionCwd(pi.cwd);
 	registerClaudeAccountCommand(pi);
 	registerSessionRegistry(pi);
 	// The lane re-registers whenever the 1M window is refused or offered again, so the session's current
@@ -85,12 +87,15 @@ export function registerAnthropicSubscriptionExtension(
 			try {
 				const settings = deps.readSettings
 					? deps.readSettings()
-					: loadAnthropicSubscriptionProviderSettingsFromDisk(process.cwd());
+					: loadAnthropicSubscriptionProviderSettingsFromDisk(cwd);
 				return settings.enabled !== false;
 			} catch {
 				return true;
 			}
 		},
+		// The lane selects among its accounts itself (pin, resident account, order, per-account and
+		// per-model limits), so the generic credential pool must not choose a second time (senpi#2081).
+		ownsAccountSelection: true,
 		oauth: createOAuthConfig({
 			readCurrent: async () => readStoredCredential(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID),
 			readAmbientAuthStatus: deps.readAmbientAuthStatus,
@@ -98,7 +103,7 @@ export function registerAnthropicSubscriptionExtension(
 				try {
 					const settings = deps.readSettings
 						? deps.readSettings()
-						: loadAnthropicSubscriptionProviderSettingsFromDisk(process.cwd());
+						: loadAnthropicSubscriptionProviderSettingsFromDisk(cwd);
 					return { tokenInjection: settings.tokenInjection, enabled: settings.enabled };
 				} catch {
 					return undefined;

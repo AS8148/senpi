@@ -27,6 +27,10 @@ export const AUTO_TITLE_SESSIONS_CAPABILITY = "auto_title_sessions";
 export const CONTINUE_FROM_LEAF_CAPABILITY = "continue_from_leaf";
 /** HOST capability: the shared router guards foreign holders at every writing RPC admission. */
 export const SESSION_HELD_CAPABILITY = "session_held";
+/** Host supports explicit held-wake release; its command reply acknowledges admission. */
+export const RESUME_SESSION_CAPABILITY = "resume_session";
+/** Host honors open_session.attended:false instead of silently starting unattended work. */
+export const ATTENDED_CAPABILITY = "attended";
 /**
  * Opt-in: the host replaces inline image bytes inside tool results with `image_ref`
  * placeholders for this connection; the client fetches a block on demand with `get_media`.
@@ -34,6 +38,13 @@ export const SESSION_HELD_CAPABILITY = "session_held";
 export const MEDIA_PLACEHOLDERS_CAPABILITY = "media_placeholders";
 /** Opt-in: the client can present a multi-question `extension_ui_request{method:"question"}`. */
 export const QUESTION_CAPABILITY = "question";
+/** HOST capability: `prompt.toolBarrier` and `release_tool_barrier` are honored (senpi#3717). */
+export const TOOL_BARRIER_CAPABILITY = "tool_barrier";
+/**
+ * Both directions, like `media_placeholders`: a host advertises it in `get_protocol_info` (its sessions send
+ * `host_request` / `relocation_due`), and a client sends it in `set_client_info` to offer moving a session elsewhere.
+ */
+export const SESSION_RELOCATION_CAPABILITY = "session_relocation";
 
 /**
  * HOST capability (advertised in `get_protocol_info`, never sent by a client):
@@ -48,6 +59,20 @@ export const RETAIN_ON_DISCONNECT_CAPABILITY = "retain_on_disconnect";
  * no other connection will still see it attached (senpi#3238).
  */
 export const DETACH_CONNECTION_CAPABILITY = "detach_connection";
+/**
+ * Connection role (senpi#3811): the connection may exercise a person's authority (Stop with intent, release a
+ * pause). It does not decide input origin; that comes from the entry point. Declared per connection by the
+ * client's own `set_client_info` and fixed at that first declaration (see `connection-roles.ts`).
+ */
+export const INTERACTIVE_USER_CAPABILITY = "interactive_user";
+/** `get_state` and `get_entries` accept `observe: true` and then never count as an attachment (senpi#4267). */
+export const OBSERVE_READS_CAPABILITY = "observe_reads";
+/** `get_entries` accepts `before` and `tail` and answers `next_before` (senpi#4267). */
+export const ENTRIES_TAIL_CAPABILITY = "entries_tail";
+/** A terminal control endpoint serves the host's observe-and-drive command set (senpi#4267). */
+export const TUI_OBSERVER_CAPABILITY = "tui_observer";
+/** The connection owns this session as a task child; only it may pause or resume the session for its run (senpi#3811). */
+export const TASK_PARENT_CAPABILITY = "task_parent";
 
 /**
  * HOST capability: this host accepts `open_session.context`, hands it to that session's

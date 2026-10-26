@@ -82,6 +82,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			if (targets.length > 0) service.activateSkillMcpTools(targets, pi);
 		};
 		pi.on("input", async (event, ctx) => {
+			service.bindMcpMrtrPresentation(pi, ctx.ui);
 			const match = /^\s*\/skill:([A-Za-z0-9._-]+)/.exec(event.text);
 			if (match) revealSkill(match[1]);
 			// @mcp:<server>/<uri> mention expansion (todo 39): recognized mentions are
@@ -126,6 +127,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			sink,
 		);
 		pi.on("session_start", (event, ctx) => {
+			if (event.sizesOnly) return;
 			const work = onSessionStart(event, ctx);
 			// First paint does not wait for attach; prompt preparation reuses its promise.
 			void work;
@@ -142,8 +144,9 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 					await attachPromise;
 				} else {
 					// Elicitation (todo 41): point mid-call forms at this session's UI.
-					service.setMcpElicitationUiProvider(() => ctx.ui);
+					service.setMcpElicitationUiProvider(() => (ctx.hasUI ? ctx.ui : undefined));
 					await (attachPromise ?? attach({ type: "session_start", reason: "startup" }, ctx));
+					service.bindMcpMrtrPresentation(pi, ctx.ui);
 				}
 				const skills = preview ? [] : ((event.systemPromptOptions.skills ?? []) as readonly SkillLike[]);
 				if (skills.length > 0) {
@@ -153,7 +156,12 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 						...skillDecls.warnings,
 						...(skillDecls.servers.size > 0 ? await service.attachSkillMcpServers(skillDecls.servers, pi) : []),
 					];
-					for (const warning of warnings) createMcpLogger("skills").warn(warning);
+					for (const warning of warnings) {
+						if (!warning.startsWith("Project MCP server")) createMcpLogger("skills").warn(warning);
+						if (warning.startsWith("Blocked skill link")) {
+							pi.events.emit("security_notice", { category: "skill-link-blocked", message: warning });
+						}
+					}
 				}
 				// Use the known instructions now. Deferred catalog registration refreshes
 				// the service for subsequent turns instead of gating this provider request.

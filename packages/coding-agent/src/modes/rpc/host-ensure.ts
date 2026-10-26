@@ -17,9 +17,9 @@ import {
 	writtenByThisProcess,
 } from "./host-daemon-registration.ts";
 import { claimHostOwner } from "./host-daemon-state.ts";
-import { decideHostAction, type HostDecision, HostEnsureRefusedError, type HostProtocolInfo } from "./host-decision.ts";
-import { ensureClient } from "./host-ensure-client.ts";
-import { publicEndpointAccepts, refuseIfStalled, unregisteredEndpointHeld } from "./host-ensure-liveness.ts";
+import { HostEnsureRefusedError } from "./host-decision.ts";
+import { decideEnsureAction as decide } from "./host-ensure-client.ts";
+import { refuseIfForeignHeld, refuseIfStalled, unregisteredEndpointHeld } from "./host-ensure-liveness.ts";
 import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
 import { appendStderr, DEFAULT_READINESS_TIMEOUT_MS, DEFAULT_STOP_TIMEOUT_MS, startHost } from "./host-ensure-start.ts";
 import {
@@ -37,9 +37,9 @@ import { reapOrphanedInternalHostDirs } from "./host-internal-dir-reaper.ts";
 import { retireIdleLegacyHost } from "./host-legacy.ts";
 import type { HostColdStart, HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { holdProtocolInfo, probeSocketReachable } from "./host-probe.ts";
-import { isHostGenerationProcess } from "./host-process-role.ts";
 import { hostChildAlive } from "./host-stalled-evidence.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
+import { rpcKeyRoot, withRpcKeyRoot } from "./rpc-auth-client.ts";
 
 export {
 	createHostDaemonPaths,
@@ -71,6 +71,10 @@ const ENSURE_LOCK_WAIT_MS =
 	10_000;
 const lockOptions = hostEnsureLockOptions(ENSURE_LOCK_WAIT_MS);
 export async function ensureHost(options: EnsureHostOptions): Promise<EnsuredHost> {
+	return withRpcKeyRoot(rpcKeyRoot(options, options.agentDir), () => ensureHostInKeyRoot(options));
+}
+
+async function ensureHostInKeyRoot(options: EnsureHostOptions): Promise<EnsuredHost> {
 	const socket = normalizeSocketPath(options.socket);
 	const paths = createHostDaemonPaths({ socket, ...(options.agentDir ? { agentDir: options.agentDir } : {}) });
 	await createDaemonDirectories(paths);
@@ -191,7 +195,7 @@ async function ensureHostLocked(
 		if (!startedByUs) {
 			// I1: the socket is silent, but the process behind it is alive. Only the process that WROTE
 			// this record may end it - anyone else refuses rather than signalling somebody else's host.
-			if (await publicEndpointAccepts(socket)) throw new HostEnsureRefusedError(socket, "foreign_writer", protocol);
+			await refuseIfForeignHeld(paths, registered, socket, protocol);
 			await refuseIfStalled(paths, registered.instanceId, socket, protocol);
 			// A foreign record whose public endpoint accepts NOTHING names a generation nobody can reach:
 			// its entry was replaced (so it is already draining, #1893) or removed, or a dead listener
@@ -243,19 +247,6 @@ async function ensureHostLocked(
 	return startHost(paths, socket, options);
 }
 
-/** `fallback` belongs to clients that can live without a host; an ensure must produce one or fail. */
-function decide(
-	options: EnsureHostOptions,
-	startedByUs: boolean,
-	protocol: HostProtocolInfo | undefined,
-): Exclude<HostDecision, { action: "fallback" }> {
-	if (options.upgrade !== "if-engine-differs" || isHostGenerationProcess()) {
-		return decideHostAction(ensureClient(options, startedByUs), protocol, "never");
-	}
-	const decision = decideHostAction(ensureClient(options, startedByUs), protocol, "upgrade");
-	return decision.action === "fallback" ? { action: "reuse", reason: "compatible", upgradeable: false } : decision;
-}
-
 /**
  * The upgrade, when the decision allows one: a new generation takes the socket and the running
  * host drains. A refused handoff ATTACHES - an upgrade that cannot happen must never become a stop.
@@ -270,6 +261,8 @@ async function upgradeGeneration(
 		socket,
 		agentDir: options.agentDir ?? getAgentDir(),
 		hostArgs: options.hostArgs ?? [],
+		presenterBootstrap: options.presenterBootstrap,
+		mcpPresenterEnforcement: options.mcpPresenterEnforcement,
 		...(options.env ? { env: options.env } : {}),
 		...(options.policy ? { policy: options.policy } : {}),
 		_test: {

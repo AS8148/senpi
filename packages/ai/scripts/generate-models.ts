@@ -7,6 +7,7 @@ import { fileURLToPath } from "url";
 import { getBaiModels } from "./generate-models-bai.ts";
 import { fetchOpenGatewayModels } from "./generate-models-opengateway.ts";
 import { applyOpenAiInputCap } from "../src/utils/openai-input-cap.ts";
+import { FABLE55_LAUNCH, isFable55ModelId } from "../src/utils/fable55-launch.ts";
 import { MODEL_SHARD_SUFFIX, importedModelShards, isPrunableModelShard } from "./model-shards.ts";
 import { getEffortThinkingLevelMap, type ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
 import { buildOpenRouterCatalog, type OpenRouterCatalog, type OpenRouterModelListItem } from "./openrouter-catalog.ts";
@@ -57,6 +58,7 @@ const packageRoot = join(__dirname, "..");
 
 function readGeneratorOptions(args: string[]): {
 	strict: boolean;
+	keepLastGoodOpenGateway: boolean;
 	dataOnly: boolean;
 	jsonOnly: boolean;
 	jsonOutputDir: string | undefined;
@@ -65,6 +67,7 @@ function readGeneratorOptions(args: string[]): {
 	generatedAt: string | undefined;
 } {
 	let strict = false;
+	let keepLastGoodOpenGateway = false;
 	let dataOnly = false;
 	let jsonOnly = false;
 	let jsonOutputDir: string | undefined;
@@ -76,6 +79,11 @@ function readGeneratorOptions(args: string[]): {
 		const arg = args[index];
 		if (arg === "--strict") {
 			strict = true;
+			continue;
+		}
+		// senpi#4067: release generation keeps the committed OpenGateway catalog when the feed fails.
+		if (arg === "--keep-last-good-opengateway") {
+			keepLastGoodOpenGateway = true;
 			continue;
 		}
 		if (arg === "--data-only") {
@@ -121,7 +129,15 @@ function readGeneratorOptions(args: string[]): {
 	if (providerIds && (dataOnly || jsonOnly || jsonOutputDir)) {
 		throw new Error("--providers cannot be combined with --data-only or JSON catalog output");
 	}
-	return { strict, dataOnly, jsonOnly, jsonOutputDir, pretty, providerIds, generatedAt };
+	// A provider-scoped run is a refresh whose failure must stay visible, never a release regeneration.
+	if (providerIds && keepLastGoodOpenGateway) {
+		throw new Error("--keep-last-good-opengateway cannot be combined with --providers");
+	}
+	// Without --strict every OpenGateway failure already keeps the committed catalog, so the flag would be a no-op.
+	if (keepLastGoodOpenGateway && !strict) {
+		throw new Error("--keep-last-good-opengateway requires --strict");
+	}
+	return { strict, keepLastGoodOpenGateway, dataOnly, jsonOnly, jsonOutputDir, pretty, providerIds, generatedAt };
 }
 
 const generatorOptions = readGeneratorOptions(process.argv.slice(2));
@@ -345,6 +361,7 @@ const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 	"github-copilot:claude-sonnet-4.5",
 ]);
 const ANTHROPIC_ALLOWED_FALLBACK_MODELS = {
+	[FABLE55_LAUNCH.modelId]: [...FABLE55_LAUNCH.refusalFallbackModels],
 	"claude-fable-5-1": ["claude-opus-4-8", "claude-opus-5"],
 	"claude-fable-5": ["claude-opus-4-8", "claude-opus-5"],
 	"claude-opus-5-5": ["claude-opus-4-8", "claude-opus-5"],
@@ -444,6 +461,8 @@ const KIMI_CODING_STABLE_MODELS = {
 // equivalent Moonshot API rates to estimate the value of subscription usage.
 const KIMI_CODING_IMPLIED_COSTS: Record<string, Model<Api>["cost"]> = {
 	k3: KIMI_K3_COST,
+	"k3.1-pro": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 },
+	"k3.1-pro-highspeed": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 4 },
 	"kimi-for-coding": { input: 0.95, output: 4, cacheRead: 0.19, cacheWrite: 0 },
 	"kimi-for-coding-highspeed": { input: 1.9, output: 8, cacheRead: 0.38, cacheWrite: 0 },
 	"kimi-k2-thinking": { input: 0.6, output: 2.5, cacheRead: 0.15, cacheWrite: 0 },
@@ -776,6 +795,36 @@ function withXaiThinkingPin<T extends { reasoning_options?: ModelsDevReasoningOp
 	};
 }
 
+// models.dev marks a model `deprecated` while the provider still serves it. A deprecated row the previous
+// generated catalog already shipped stays, labeled `deprecated: true`, so nobody loses a working model; a
+// deprecated row the catalog did not ship is skipped as before, and a row gone from models.dev drops out.
+const deprecatedUpstreamModels = new Set<string>();
+const previouslyShippedModels = readPreviouslyShippedModelKeys();
+function readPreviouslyShippedModelKeys(): Set<string> {
+	const keys = new Set<string>();
+	const dataDir = join(packageRoot, "src/providers/data");
+	if (!existsSync(dataDir)) return keys;
+	for (const file of readdirSync(dataDir)) {
+		if (!file.endsWith(".json") || file === MODEL_DATA_MANIFEST_FILE) continue;
+		const groups = JSON.parse(readFileSync(join(dataDir, file), "utf8")) as Record<string, Record<string, { id?: unknown; provider?: unknown }>>;
+		for (const rows of Object.values(groups)) {
+			for (const row of Object.values(rows)) {
+				if (typeof row.id === "string" && typeof row.provider === "string") keys.add(`${row.provider}:${row.id}`);
+			}
+		}
+	}
+	return keys;
+}
+function keepDeprecatedUpstream(provider: string, modelId: string): boolean {
+	const key = `${provider}:${modelId}`;
+	if (!previouslyShippedModels.has(key)) return false;
+	deprecatedUpstreamModels.add(key);
+	return true;
+}
+function applyDeprecatedUpstreamMetadata(model: Model<Api>): void {
+	if (deprecatedUpstreamModels.has(`${model.provider}:${model.id}`)) model.deprecated = true;
+}
+
 function recordModelsDevReasoningOptions(provider: string, id: string, sourceModel: ModelsDevModel): void {
 	if (sourceModel.reasoning_options !== undefined) {
 		modelsDevReasoningOptions.set(`${provider}:${id}`, sourceModel.reasoning_options);
@@ -887,6 +936,7 @@ const MID_CONVO_EFFORT_UNSUPPORTED_ANTHROPIC_MODELS = new Set(["openrouter:anthr
 function supportsAnthropicMidConvoEffort(modelId: string): boolean {
 	const id = modelId.toLowerCase().replace(/^~?anthropic\//, "");
 	return (
+		isFable55ModelId(id) ||
 		/^claude-opus-5(?:[.-]5)?(?:-\d{8})?$/.test(id) ||
 		/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/.test(id) ||
 		/^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$/.test(id)
@@ -901,6 +951,7 @@ function supportsAnthropicMidConvoEffort(modelId: string): boolean {
 // whose thinking-off shape (unset + effort `low`) is valid either way.
 function isAnthropicAdaptiveOnlyModel(modelId: string): boolean {
 	return (
+		isFable55ModelId(modelId) ||
 		modelId.includes("fable-5") ||
 		modelId.includes("opus-5-5") ||
 		modelId.includes("opus-5.5") ||
@@ -913,6 +964,7 @@ function isAnthropicAdaptiveOnlyModel(modelId: string): boolean {
 
 function supportsAnthropicMidConvoSystemMessages(modelId: string): boolean {
 	return (
+		isFable55ModelId(modelId) ||
 		/^claude-opus-(?:4[.-]8|5(?:[.-]5)?)(?:-\d{8})?$/.test(modelId) ||
 		/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/.test(modelId) ||
 		/^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$/.test(modelId)
@@ -921,6 +973,7 @@ function supportsAnthropicMidConvoSystemMessages(modelId: string): boolean {
 
 function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 	return (
+		isFable55ModelId(modelId) ||
 		modelId.includes("opus-4-6") ||
 		modelId.includes("opus-4.6") ||
 		modelId.includes("opus-4-7") ||
@@ -1975,7 +2028,7 @@ function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Ap
 	const models: Model<Api>[] = [];
 
 	for (const [modelId, model] of Object.entries(provider.models)) {
-		if (model.status === "deprecated") continue;
+		if (model.status === "deprecated" && !keepDeprecatedUpstream("baseten", modelId)) continue;
 
 		const reasoning = model.reasoning === true;
 		const reasoningOptions = model.reasoning_options ?? [];
@@ -2244,6 +2297,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data.anthropic.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream("anthropic", modelId)) continue;
 
 				models.push({
 					id: modelId,
@@ -2677,7 +2731,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(togetherProvider.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream("together", modelId)) continue;
 
 				const reasoning = m.reasoning === true;
 				const thinkingLevelMap = getTogetherThinkingLevelMap(modelId, reasoning);
@@ -2711,7 +2765,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data.venice.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream("venice", modelId)) continue;
 
 				models.push({
 					id: modelId,
@@ -2754,7 +2808,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data[variant.key].models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream(variant.provider, modelId)) continue;
 
 				const npm = m.provider?.npm;
 				let api: Api;
@@ -2857,7 +2911,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data["github-copilot"].models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream("github-copilot", modelId)) continue;
 
 				// Claude 4.x and 5.x models route to Anthropic Messages API
 				const isCopilotClaude = /^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/.test(modelId);
@@ -3091,7 +3145,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(providerModels)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream(provider, modelId)) continue;
 
 				models.push({
 					id: modelId,
@@ -3397,7 +3451,7 @@ async function generateModels() {
 	const radiusModels = await fetchRadiusModels();
 	const openGatewayModels = await fetchOpenGatewayModels(
 		(id, source) => recordModelsDevReasoningOptions("opengateway", id, withXaiThinkingPin(id, source)),
-		{ strict: generatorOptions.strict },
+		{ strict: generatorOptions.strict, keepLastGoodOnFailure: generatorOptions.keepLastGoodOpenGateway },
 	);
 
 	// Combine chat models (models.dev has priority where sources overlap).
@@ -4294,6 +4348,7 @@ async function generateModels() {
 	allModels.push(...azureOpenAiModels);
 
 	for (const model of allModels) {
+		applyDeprecatedUpstreamMetadata(model);
 		applyOpenAiInputCap(model);
 		applyOpenAICompletionsCompatMetadata(model);
 		applyAnthropicMessagesCompatMetadata(model);
