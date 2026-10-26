@@ -1,3 +1,22 @@
+## 2026-10-25 - Terminal control endpoints: host drive set and every platform (senpi#4267)
+
+### What changed
+
+- `session-control-rpc-commands.ts`, `session-control-commands.ts`, `session-control-attach.ts`: `get_entries`, `set_client_info`, `attach_session`, `release_attachment`, `abort` with the host's role rule, admission receipts and their replay, `tui_observer`.
+- `session-control-server.ts`, `session-control-registry.ts`, `../../core/session-control-actions.ts`: registration on win32 over the host transport's named pipe.
+
+### Why
+
+- A client observes and drives a terminal session exactly as a host session, on every platform.
+
+### Why an extension could not handle it
+
+- The terminal endpoint's command surface and listener are core interactive-mode code.
+
+### Expected merge conflict zones
+
+- LOW: the command list and `get_protocol_info` capabilities in `session-control-commands.ts`.
+
 ## 2026-10-25 - Local terminal forms use private final settlement (#4197)
 
 ### What changed
