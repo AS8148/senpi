@@ -1,4 +1,5 @@
-import { type Agent, subscribeInternalAgent } from "@earendil-works/pi-agent-core";
+import type { Agent } from "@earendil-works/pi-agent-core";
+import { subscribeInternalAgent } from "@earendil-works/pi-agent-core/internal-events";
 import { type AssistantProgress, carryAssistantCapture } from "@earendil-works/pi-ai";
 import type { AgentSessionEvent } from "./agent-session.ts";
 
