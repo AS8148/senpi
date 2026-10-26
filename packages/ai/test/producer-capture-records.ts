@@ -1,3 +1,4 @@
+import { afterEach, beforeEach } from "vitest";
 import type { AssistantMessageEvent } from "../src/types.ts";
 import {
 	type AssistantProgress,
@@ -5,8 +6,18 @@ import {
 	assistantRecords,
 	getAssistantCapture,
 	isAssistantProgress,
+	subscribeAssistantCapture,
 } from "../src/utils/assistant-capture.ts";
 import type { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
+
+/** Holds a capture subscription around each test of the calling file, as an internal agent listener does. */
+export function subscribeCaptureForEachTest(): void {
+	let release = () => {};
+	beforeEach(() => {
+		release = subscribeAssistantCapture();
+	});
+	afterEach(() => release());
+}
 
 /** Settles first: every start and delta is emitted before the reader resumes, so late seeds would hold later bytes. */
 export async function drainRecords(stream: AssistantMessageEventStream): Promise<AssistantRecord[]> {

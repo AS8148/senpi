@@ -48,7 +48,10 @@ import {
 	publicBytes,
 	publicEvents,
 	recordKinds,
+	subscribeCaptureForEachTest,
 } from "./producer-capture-records.ts";
+
+subscribeCaptureForEachTest();
 
 const context = normalizeContext({ messages: [{ role: "user", content: "fixture", timestamp: 1 }] });
 const args = { text: "a  b", n: 1 };

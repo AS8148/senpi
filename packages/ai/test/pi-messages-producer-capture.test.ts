@@ -12,7 +12,10 @@ import {
 	publicBytes,
 	publicEvents,
 	recordKinds,
+	subscribeCaptureForEachTest,
 } from "./producer-capture-records.ts";
+
+subscribeCaptureForEachTest();
 
 const argumentDeltas = ['{ "text": ', "", '"\\u00e9" }'];
 const usage = {

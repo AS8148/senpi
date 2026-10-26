@@ -14,7 +14,10 @@ import {
 	publicBytes,
 	publicEvents,
 	recordKinds,
+	subscribeCaptureForEachTest,
 } from "./producer-capture-records.ts";
+
+subscribeCaptureForEachTest();
 
 type InteractionMessage = NonNullable<MessageInitShape<typeof InteractionUpdateSchema>["message"]>;
 

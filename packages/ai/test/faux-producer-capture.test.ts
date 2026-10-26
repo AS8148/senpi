@@ -10,7 +10,10 @@ import {
 	publicBytes,
 	publicEvents,
 	recordKinds,
+	subscribeCaptureForEachTest,
 } from "./producer-capture-records.ts";
+
+subscribeCaptureForEachTest();
 
 function capture() {
 	const core = createFauxCore({ api: "faux-capture", tokenSize: { min: 1, max: 1 } });

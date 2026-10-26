@@ -55,7 +55,10 @@ import {
 	publicBytes,
 	publicEvents,
 	recordKinds,
+	subscribeCaptureForEachTest,
 } from "./producer-capture-records.ts";
+
+subscribeCaptureForEachTest();
 
 const model: Model<"bedrock-converse-stream"> = {
 	id: "global.openai.gpt-5.6-terra",

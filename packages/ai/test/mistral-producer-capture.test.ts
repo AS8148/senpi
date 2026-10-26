@@ -12,7 +12,10 @@ import {
 	publicBytes,
 	publicEvents,
 	recordKinds,
+	subscribeCaptureForEachTest,
 } from "./producer-capture-records.ts";
+
+subscribeCaptureForEachTest();
 
 const model = getModel("mistral", "devstral-medium-latest");
 const context = normalizeContext({ messages: [{ role: "user", content: "fixture", timestamp: 1 }] });
