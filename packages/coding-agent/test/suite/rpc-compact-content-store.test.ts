@@ -33,8 +33,9 @@ async function current(state: CompactSessionState) {
 	}
 }
 
+/** Spilled leaf files only; the spool also holds the store's ownership marker. */
 async function spoolFiles(dir: string): Promise<string[]> {
-	return (await readdir(dir)).sort();
+	return (await readdir(dir)).filter((name) => name.startsWith("leaf-")).sort();
 }
 
 function start(messageId: string, seed: string) {

@@ -31,7 +31,10 @@ export type CompactTransition =
 			readonly type: "block_start";
 			readonly kind: CompactBlockKind;
 			readonly seed: string;
-			/** Leading seed code units that later deltas replay from offset 0; 0 means deltas continue after the seed. */
+			/**
+			 * The whole seed when later deltas replay it from offset 0, or 0 when they continue after it. Partial
+			 * coverage is refused: the uncovered seed tail would make every later delta overlap or leave a gap.
+			 */
 			readonly coveredCodeUnits: number;
 	  })
 	| (BlockAddress & { readonly type: "block_delta"; readonly offset: number; readonly text: string })
@@ -44,7 +47,6 @@ type CompactRejection =
 	| "duplicate_block"
 	| "invalid_coverage"
 	| "non_contiguous"
-	| "uncovered_overlap"
 	| "conflicting_overlap"
 	| "unknown_message";
 
@@ -62,6 +64,8 @@ interface FrozenBlock {
 	readonly contentIndex: number;
 	readonly kind: CompactBlockKind;
 	readonly leaves: readonly LeafId[];
+	/** A cut shares the immutable active tail string (under one leaf) instead of minting a leaf per freeze. */
+	readonly tail: string;
 }
 
 interface ActiveBlock {
@@ -103,6 +107,7 @@ export class CompactSessionState {
 	private readonly settled = new Map<string, SettledRow>();
 	private readonly active = new Map<string, Map<number, ActiveBlock>>();
 	private sequence = 0;
+	private frozenTailBytes = 0;
 
 	constructor(options: CompactContentStoreOptions) {
 		this.store = new CompactContentStore(options);
@@ -135,7 +140,7 @@ export class CompactSessionState {
 
 	freeze(): FrozenCompactState {
 		const active = new Map<string, FrozenBlock[]>();
-		for (const [messageId, blocks] of this.active) active.set(messageId, this.sealAll(blocks));
+		for (const [messageId, blocks] of this.active) active.set(messageId, this.seal(blocks, false));
 		const settled = new Map(this.settled);
 		for (const blocks of active.values()) this.pin(blocks, 1);
 		for (const row of settled.values()) this.pin(row.blocks, 1);
@@ -161,6 +166,8 @@ export class CompactSessionState {
 
 	storageStatus(): CompactStorageStatus & {
 		readonly residentTailBytes: number;
+		/** Active tails held by unreleased cuts; may share storage with `residentTailBytes`. */
+		readonly frozenTailBytes: number;
 		readonly hotWitnessBytes: number;
 		/** Settled rows kept resident: S03a-1 has no paged row index, so every row header stays in RAM. */
 		readonly residentSettledRows: number;
@@ -173,7 +180,13 @@ export class CompactSessionState {
 				hotWitnessBytes += block.witness.length * 2;
 			}
 		}
-		return { ...this.store.status(), residentTailBytes, hotWitnessBytes, residentSettledRows: this.settled.size };
+		return {
+			...this.store.status(),
+			residentTailBytes,
+			frozenTailBytes: this.frozenTailBytes,
+			hotWitnessBytes,
+			residentSettledRows: this.settled.size,
+		};
 	}
 
 	idle(): Promise<void> {
@@ -189,7 +202,7 @@ export class CompactSessionState {
 			throw new CompactTransitionError("duplicate_block", `${t.messageId}#${t.contentIndex}`);
 		}
 		const covered = t.coveredCodeUnits;
-		if (!Number.isInteger(covered) || covered < 0 || covered > t.seed.length) {
+		if (!Number.isInteger(covered) || (covered !== 0 && covered !== t.seed.length)) {
 			throw new CompactTransitionError("invalid_coverage", `${covered} of ${t.seed.length} seed code units`);
 		}
 		const emitted = covered > 0 ? 0 : t.seed.length;
@@ -201,16 +214,16 @@ export class CompactSessionState {
 		this.active.set(t.messageId, blocks);
 	}
 
-	/** Appends only the uncovered suffix; overlap is legal only inside the producer-declared coverage. */
+	/**
+	 * Appends only the new suffix. Overlap exists only while a fully covered seed is being replayed
+	 * (`emitted < covered == units`), so it always lies inside the producer-declared coverage.
+	 */
 	private delta(block: ActiveBlock, offset: number, text: string): void {
 		if (offset !== block.emitted) {
 			throw new CompactTransitionError("non_contiguous", `offset ${offset}, expected ${block.emitted}`);
 		}
 		const overlapEnd = Math.min(offset + text.length, block.units);
 		const overlap = Math.max(0, overlapEnd - offset);
-		if (overlap > 0 && overlapEnd > block.covered) {
-			throw new CompactTransitionError("uncovered_overlap", `[${offset}, ${overlapEnd}) beyond ${block.covered}`);
-		}
 		if (overlap > 0 && text.slice(0, overlap) !== block.witness.slice(offset, overlapEnd)) {
 			throw new CompactTransitionError("conflicting_overlap", `[${offset}, ${overlapEnd})`);
 		}
@@ -232,7 +245,7 @@ export class CompactSessionState {
 	private setPersistence(messageId: string, persistence: CompactPersistence): void {
 		const blocks = this.active.get(messageId);
 		if (blocks) {
-			this.settled.set(messageId, { persistence, blocks: this.sealAll(blocks) });
+			this.settled.set(messageId, { persistence, blocks: this.seal(blocks, true) });
 			this.active.delete(messageId);
 			return;
 		}
@@ -272,23 +285,29 @@ export class CompactSessionState {
 		block.tail += rest;
 	}
 
-	private sealAll(blocks: Map<number, ActiveBlock>): FrozenBlock[] {
+	/** Settling mints the final tail into a spillable leaf; a freeze of an active block shares the tail. */
+	private seal(blocks: Map<number, ActiveBlock>, settle: boolean): FrozenBlock[] {
 		return [...blocks].sort(byContentIndex).map(([contentIndex, block]) => {
-			if (block.tail.length > 0) block.leaves.push(this.store.createLeaf(block.tail));
-			block.tail = "";
-			return { contentIndex, kind: block.kind, leaves: [...block.leaves] };
+			if (settle && block.tail.length > 0) {
+				block.leaves.push(this.store.createLeaf(block.tail));
+				block.tail = "";
+			}
+			return { contentIndex, kind: block.kind, leaves: [...block.leaves], tail: block.tail };
 		});
 	}
 
 	private pin(blocks: readonly FrozenBlock[], delta: number): void {
-		for (const block of blocks) for (const id of block.leaves) this.store.adjust(id, 0, delta);
+		for (const block of blocks) {
+			this.frozenTailBytes += delta * block.tail.length * 2;
+			for (const id of block.leaves) this.store.adjust(id, 0, delta);
+		}
 	}
 
 	private async texts(blocks: readonly FrozenBlock[]): Promise<CompactMessageView["blocks"]> {
 		return Promise.all(
-			blocks.map(async ({ contentIndex, kind, leaves }) => {
+			blocks.map(async ({ contentIndex, kind, leaves, tail }) => {
 				const parts = await Promise.all(leaves.map((id) => this.store.readLeaf(id)));
-				return { contentIndex, kind, text: parts.join("") };
+				return { contentIndex, kind, text: parts.join("") + tail };
 			}),
 		);
 	}
