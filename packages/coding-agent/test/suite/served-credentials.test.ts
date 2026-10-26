@@ -53,6 +53,18 @@ describe("served credentials", () => {
 		expect(message.credentialServedRecently).toBeUndefined();
 	});
 
+	it("ignores a stream that settles without a final message", async () => {
+		let now = 0;
+		const table = new ServedCredentials(() => now);
+		const result = Promise.resolve(undefined);
+		table.observe(result, credential);
+		await result;
+		now = 1;
+		const message = failed();
+		await observe(table, message);
+		expect(message.credentialServedRecently).toBeUndefined();
+	});
+
 	it("does not renew the window on a failure", async () => {
 		let now = 0;
 		const table = new ServedCredentials(() => now);

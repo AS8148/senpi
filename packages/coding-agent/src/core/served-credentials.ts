@@ -26,12 +26,14 @@ export class ServedCredentials {
 	}
 
 	/** Reads the request's final message before any consumer does: the result promise settles them in order. */
-	observe(result: Promise<AssistantMessage>, credential: RequestCredential): void {
+	observe(result: Promise<AssistantMessage | undefined>, credential: RequestCredential): void {
 		const key = credentialKey(credential);
 		result.then((message) => this.settle(key, message), ignoreFailedRequest);
 	}
 
-	private settle(key: string, message: AssistantMessage): void {
+	private settle(key: string, message: AssistantMessage | undefined): void {
+		// An extension-provided stream may settle without a final message; that proves nothing about the credential.
+		if (message === undefined) return;
 		const now = this.now();
 		for (const [recordedKey, servedAt] of this.servedAt) {
 			if (now - servedAt > CREDENTIAL_SERVED_WINDOW_MS) this.servedAt.delete(recordedKey);
