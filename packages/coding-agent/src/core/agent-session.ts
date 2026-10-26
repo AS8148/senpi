@@ -385,6 +385,7 @@ import {
 	getSessionContextEntryId,
 	type SessionHeader,
 	SessionManager,
+	type SessionRecoveryCause,
 } from "./session-manager.ts";
 import { SessionThinkingMemory, type ThinkingLevelSource } from "./session-thinking-memory.ts";
 import { restoreMovedState } from "./session-move/extension-state.ts";
@@ -569,6 +570,18 @@ export type AgentSessionEvent =
 			tokensBefore: number;
 			tokensAfter: number;
 			droppedEntries: number;
+			notice: string;
+	  }
+	/**
+	 * The session file's tail was torn by an interrupted write (a full disk) and was set aside in `backupPath`; every
+	 * complete record is kept (senpi#4295). Emitted live once, and replayed to each surface that attaches before the
+	 * next prompt, so the person is told once wherever they look.
+	 */
+	| {
+			type: "session_recovered";
+			cause: SessionRecoveryCause;
+			backupPath: string;
+			droppedBytes: number;
 			notice: string;
 	  }
 	| { type: "continuation_error"; errorMessage: string }
@@ -1326,6 +1339,9 @@ export class AgentSession {
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
+	/** The last repair of the session file, replayed to surfaces that attach before the next prompt (senpi#4295). */
+	private _standingRecovery: Extract<AgentSessionEvent, { type: "session_recovered" }> | undefined;
+	private _unsubscribeRecovery: (() => void) | undefined;
 	readonly securityNotices = new SecurityNoticeSnapshot();
 	private _unsubscribeSecurityNotices?: () => void;
 	private _unsubscribeSettingsSource?: () => void;
@@ -1709,6 +1725,10 @@ export class AgentSession {
 			this._agentEventQueue = this._agentEventQueue.then(deliver, deliver);
 		});
 		this.sessionManager = config.sessionManager;
+		this._unsubscribeRecovery = this.sessionManager.onRecovery((recovery) => {
+			this._standingRecovery = { type: "session_recovered", ...recovery };
+			this._emit(this._standingRecovery);
+		});
 		this._sessionThinkingMemory = new SessionThinkingMemory(config.sessionManager);
 		this._thinkingLevelSource = config.initialThinkingLevelSource ?? "default";
 		this._pendingInputs = new SessionPendingInputs({
@@ -4575,6 +4595,7 @@ export class AgentSession {
 		if (this._resumeSlice !== undefined) {
 			listener(this._resumeSliceEvent(this._resumeSlice));
 		}
+		if (this._standingRecovery !== undefined) listener(this._standingRecovery);
 		for (const source of this.settingsManager.getSelectedSettingsSources()) {
 			listener({ type: "settings_source_selected", ...source });
 		}
@@ -4667,6 +4688,8 @@ export class AgentSession {
 		this._unsubscribeWakeSources?.();
 		this._unsubscribeWakeSources = undefined;
 		this._lifecycleBinding.dispose();
+		this._unsubscribeRecovery?.();
+		this._unsubscribeRecovery = undefined;
 		this._eventListeners = [];
 		this._structuredLane.dispose();
 		cleanupSessionResources(this.sessionId);
@@ -5607,6 +5630,7 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		this._standingRecovery = undefined;
 		const barrierError = options?.toolBarrier === undefined ? undefined : toolBarrierSpecError(options.toolBarrier);
 		if (barrierError !== undefined) throw new Error(barrierError);
 		if (isHumanInput(options) && options?.humanInputReported !== true) this._humanInputAdmitted(promptKind(options));
