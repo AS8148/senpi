@@ -10,7 +10,8 @@ type Listener = (record: OrderedAgentRecord) => Promise<void> | void;
 const channels = new WeakMap<object, { sequence: number; listeners: Set<Listener> }>();
 
 /**
- * S02a owner seam: deliberately not exported by the package barrel or subscribed by a host.
+ * The internal-only agent channel (senpi#4272): its one host subscriber is AgentSession's structured lane, while
+ * the engine-socket compact-updates flag is on.
  * A listener holds a capture subscription, so provider streams that first push after it build capture records.
  */
 export function subscribeInternalAgent(owner: object, listener: Listener): () => void {

@@ -153,6 +153,7 @@ export * from "./harness/utils/truncate.ts";
 export * from "./proxy.ts";
 export * from "./response-timing.ts";
 export * from "./search/index.ts";
+export { type OrderedAgentRecord, subscribeInternalAgent } from "./internal-events.ts";
 export { setDefaultStreamFn } from "./stream-fn.ts";
 export { prepareToolArguments } from "./tool-arguments.ts";
 export { resolveToolNameAlias } from "./tool-name-alias.ts";
