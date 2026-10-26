@@ -6,12 +6,13 @@
  * every other session's requests for seconds (senpi#3518). `loadEntriesFromFileAsync` reads
  * with asynchronous I/O and hands the loop back whenever its slice budget is spent.
  */
-import { closeSync, existsSync, fstatSync, ftruncateSync, openSync, readSync, statSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readSync, statSync, writeSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { StringDecoder } from "node:string_decoder";
 import { normalizePath } from "../utils/paths.ts";
 import { EventLoopSlicer } from "./event-loop-slicer.ts";
 import type { FileEntry } from "./session-manager.ts";
+import { type SessionRecovery, setAsideTail } from "./session-write-recovery.ts";
 
 export const SESSION_READ_BUFFER_SIZE = 1024 * 1024;
 
@@ -150,25 +151,41 @@ export async function loadEntriesFromFileAsync(
 	return acceptSessionEntries(entries);
 }
 
+/** A torn final line was set aside, or could not be (the copy was refused) and must be set aside before the next append. */
+export type FinalLineRepair =
+	| { readonly kind: "set_aside"; readonly recovery: SessionRecovery }
+	| { readonly kind: "deferred" };
+
 /**
  * Make this process's appends start on a new line. A final line with no newline is either a whole entry written
  * without one (it parses: it is terminated and kept) or a line a crash tore part-way (it does not parse: it was
- * never committed, so the file is cut back to its last complete line, senpi#3549). Terminating a torn line instead
- * would turn it into a complete, corrupt line that no reader can tell from real corruption. Only the final
- * segment is read, never the whole transcript; anything but a regular file is left to the loader, as before.
+ * never committed, so it is copied to `<file>.torn-<time>` and the file is cut back to its last complete line,
+ * senpi#3549, senpi#4295). Terminating a torn line instead would turn it into a complete, corrupt line that no reader
+ * can tell from real corruption. Only the final segment is read, never the whole transcript; anything but a regular
+ * file is left to the loader, as before.
  */
-export function terminateFinalSessionLine(filePath: string): void {
-	if (!existsSync(filePath) || !statSync(filePath).isFile()) return;
+export function terminateFinalSessionLine(filePath: string): FinalLineRepair | undefined {
+	if (!existsSync(filePath) || !statSync(filePath).isFile()) return undefined;
 	const fd = openSync(filePath, "r+");
 	try {
 		const size = fstatSync(fd).size;
 		const segmentStart = finalSegmentStart(fd, size);
-		if (segmentStart === size) return;
+		if (segmentStart === size) return undefined;
 		const segment = Buffer.alloc(size - segmentStart);
 		readSync(fd, segment, 0, segment.length, segmentStart);
+		if (parseSessionEntryLine(segment.toString("utf8")) !== null) {
+			writeSync(fd, "\n", size);
+			return undefined;
+		}
 		// Not synced on purpose: a lost truncate only brings back an uncommitted tail, and the next append syncs.
-		if (parseSessionEntryLine(segment.toString("utf8")) === null) ftruncateSync(fd, segmentStart);
-		else writeSync(fd, "\n", size);
+		try {
+			return { kind: "set_aside", recovery: setAsideTail(filePath, fd, segmentStart, size, "unknown") };
+		} catch (error) {
+			// Deferred, not dropped: a full disk can refuse the copy, so the file is left as it is and the writer
+			// sets the tail aside before its first append, which fails with this error if the disk is still full.
+			if (error instanceof Error) return { kind: "deferred" };
+			throw error;
+		}
 	} finally {
 		closeSync(fd);
 	}

@@ -5613,6 +5613,10 @@ export class InteractiveMode {
 				this.ui.requestRender();
 				break;
 
+			case "session_recovered":
+				this.showWarning(sanitizeTerminalLabel(event.notice));
+				break;
+
 			case "continuation_error":
 				this.showError(sanitizeTerminalLabel(event.errorMessage));
 				break;
