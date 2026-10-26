@@ -3,7 +3,8 @@ import { AssistantMessageEventStream } from "../../../ai/src/utils/event-stream.
 import { ProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { AgentSessionRuntime } from "../../src/core/agent-session-runtime.ts";
 import type { RpcSessionEntry } from "../../src/modes/rpc/session-registry.ts";
-import { createHarness, type Harness, type HarnessOptions } from "./harness.ts";
+import type { HarnessOptions } from "./harness.ts";
+import { createStructuredHarness, type StructuredHarness } from "./structured-lane-sdk-harness.ts";
 
 /** One scripted provider turn on a capture-enabled stream; a script that ends the stream itself gets no `done`. */
 export type Script = (stream: AssistantMessageEventStream, partial: AssistantMessage) => Promise<void> | void;
@@ -64,7 +65,7 @@ export const allControls: Script = (stream, partial) => {
 };
 
 /** Replaces the agent's provider with `scripts`, one per request; requests past the end answer "ok". */
-export function scriptProvider(harness: Harness, scripts: Script[]): void {
+export function scriptProvider(harness: StructuredHarness, scripts: Script[]): void {
 	harness.agent.streamFunction = (model) => {
 		const stream = new AssistantMessageEventStream({ captureBlocks: true });
 		const partial: AssistantMessage = {
@@ -95,7 +96,7 @@ export function scriptProvider(harness: Harness, scripts: Script[]): void {
 }
 
 export interface ScriptedSession {
-	readonly harness: Harness;
+	readonly harness: StructuredHarness;
 	readonly scope: ProviderScope;
 	readonly runtime: AgentSessionRuntime;
 	readonly entry: RpcSessionEntry;
@@ -103,9 +104,12 @@ export interface ScriptedSession {
 	close(): Promise<void>;
 }
 
-export async function scriptedSession(scripts: Script[], options: HarnessOptions = {}): Promise<ScriptedSession> {
+export async function scriptedSession(
+	scripts: Script[],
+	options: Pick<HarnessOptions, "extensionFactories"> = {},
+): Promise<ScriptedSession> {
 	const scope = new ProviderScope();
-	const harness = await runWithProviderScope(scope, () => createHarness(options));
+	const harness = await runWithProviderScope(scope, () => createStructuredHarness(options));
 	scriptProvider(harness, scripts);
 	const runtime = new AgentSessionRuntime(
 		harness.session,

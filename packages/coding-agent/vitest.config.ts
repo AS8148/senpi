@@ -5,7 +5,6 @@ import baseConfig, { workspaceSourcePaths } from "../../vitest.base.ts";
 
 const aiSrcProviderScope = fileURLToPath(new URL("../ai/src/node/provider-scope.ts", import.meta.url));
 const ptySrcIndex = fileURLToPath(new URL("../pty/src/index.ts", import.meta.url));
-const agentSrcInternalEvents = fileURLToPath(new URL("../agent/src/internal-events.ts", import.meta.url));
 
 quarantineVitestAgentDir();
 
@@ -62,7 +61,6 @@ export default mergeConfig(
 				{ find: /^@code-yeongyu\/senpi$/, replacement: workspaceSourcePaths.codingAgentIndex },
 				{ find: /^@earendil-works\/pi-ai\/node\/provider-scope$/, replacement: aiSrcProviderScope },
 				{ find: /^@earendil-works\/pi-ai$/, replacement: workspaceSourcePaths.aiIndex },
-				{ find: /^@earendil-works\/pi-agent-core\/internal-events$/, replacement: agentSrcInternalEvents },
 				{ find: /^@earendil-works\/pi-agent-core$/, replacement: workspaceSourcePaths.agentIndex },
 				{ find: /^@earendil-works\/pi-pty$/, replacement: ptySrcIndex },
 				{

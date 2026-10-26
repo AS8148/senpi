@@ -1,11 +1,17 @@
-import type { Agent } from "@earendil-works/pi-agent-core";
-import { subscribeInternalAgent } from "@earendil-works/pi-agent-core/internal-events";
+import type { InternalAgentChannel } from "@earendil-works/pi-agent-core";
 import { type AssistantProgress, carryAssistantCapture } from "@earendil-works/pi-ai";
 import type { AgentSessionEvent } from "./agent-session.ts";
 
 /** One record of a session's internal structured lane: a session event or a block control, in session order. */
 export type AgentSessionStructuredRecord = AgentSessionEvent | AssistantProgress;
 type StructuredListener = (record: AgentSessionStructuredRecord) => void;
+
+export class StructuredLaneUnavailableError extends Error {
+	constructor() {
+		super("Structured lane unavailable: Agent was constructed outside the session layer");
+		this.name = "StructuredLaneUnavailableError";
+	}
+}
 
 /**
  * The AgentSession end of the internal-only agent channel (senpi#4272, R3.C6.2). While a structured listener is
@@ -19,13 +25,13 @@ type StructuredListener = (record: AgentSessionStructuredRecord) => void;
  */
 export class StructuredSessionLane {
 	private readonly listeners = new Set<StructuredListener>();
-	private readonly agent: Agent;
-	private readonly enqueue: (deliver: () => void) => void;
+	readonly #channel: InternalAgentChannel | undefined;
+	readonly #enqueue: (deliver: () => void) => void;
 	private releaseChannel: (() => void) | undefined;
 
-	constructor(agent: Agent, enqueue: (deliver: () => void) => void) {
-		this.agent = agent;
-		this.enqueue = enqueue;
+	constructor(channel: InternalAgentChannel | undefined, enqueue: (deliver: () => void) => void) {
+		this.#channel = channel;
+		this.#enqueue = enqueue;
 	}
 
 	get active(): boolean {
@@ -33,9 +39,10 @@ export class StructuredSessionLane {
 	}
 
 	subscribe(listener: StructuredListener): () => void {
+		if (!this.#channel) throw new StructuredLaneUnavailableError();
 		this.listeners.add(listener);
-		this.releaseChannel ??= subscribeInternalAgent(this.agent, (record) => {
-			if ("progress" in record) this.enqueue(() => this.emit(record.progress));
+		this.releaseChannel ??= this.#channel.subscribe((record) => {
+			if ("progress" in record) this.#enqueue(() => this.emit(record.progress));
 		});
 		return () => {
 			this.listeners.delete(listener);

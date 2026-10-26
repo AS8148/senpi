@@ -10,10 +10,6 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		},
-		"./internal-events": {
-			"types": "./dist/internal-events.d.ts",
-			"import": "./dist/internal-events.js"
-		},
 		"./node": {
 			"types": "./dist/node.d.ts",
 			"import": "./dist/node.js"

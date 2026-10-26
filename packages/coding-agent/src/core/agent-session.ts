@@ -29,6 +29,7 @@ import type {
 	AgentToolCallOutcome,
 	AgentToolResult,
 	AgentToolUpdateCallback,
+	InternalAgentChannel,
 	PreparedAgentToolCall,
 	PrepareNextTurnContext,
 	ThinkingLevel,
@@ -790,6 +791,8 @@ function withoutDeletedHeaders(headers: ProviderHeaders | undefined): Record<str
 
 export interface AgentSessionConfig {
 	agent: Agent;
+	/** @internal Construction channel for senpi's session layer only; absent for externally supplied Agents. */
+	internalChannel?: InternalAgentChannel;
 	/** Explicit service tier for the initial model. */
 	serviceTier?: ServiceTier;
 	sessionManager: SessionManager;
@@ -1701,7 +1704,7 @@ export class AgentSession {
 		this._promptSurface = config.promptSurface;
 		this._browserEngine = config.browserEngine;
 		this.agent = config.agent;
-		this._structuredLane = new StructuredSessionLane(this.agent, (deliver) => {
+		this._structuredLane = new StructuredSessionLane(config.internalChannel, (deliver) => {
 			if (!this._unsubscribeAgent) return;
 			this._agentEventQueue = this._agentEventQueue.then(deliver, deliver);
 		});
