@@ -39,8 +39,10 @@ export interface AssistantCapture {
 	/** The block's own index where the event's public `contentIndex` names another block; internal readers prefer it. */
 	readonly contentIndex?: number;
 	/**
-	 * First block index whose earlier records are no longer valid; readers MUST drop every block record at or above it
-	 * for that message; absent = no rewrite.
+	 * First block index whose earlier records no longer name the terminal's blocks (block index/identity only); readers
+	 * MUST drop every block record at or above it for that message; absent = no rewrite. The terminal message always
+	 * wins for CONTENT: readers replace each block's content from the terminal (or the block's end event), never
+	 * append-only from live records.
 	 */
 	readonly rewrittenFrom?: number;
 }
