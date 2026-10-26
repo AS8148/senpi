@@ -200,7 +200,11 @@ describe("invoke recovery capture remap #4272", () => {
 	});
 });
 
-type StrayControls = { beforeStart?: AssistantProgress; beforeProse?: AssistantProgress; afterProse?: AssistantProgress };
+type StrayControls = {
+	beforeStart?: AssistantProgress;
+	beforeProse?: AssistantProgress;
+	afterProse?: AssistantProgress;
+};
 
 /** Signed thinking at 0 and invoke prose at 1, plus stray controls; the source never has a block at 2. */
 function proseTurnWithStrays(strays: StrayControls): AssistantMessageEventStream {

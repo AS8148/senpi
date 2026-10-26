@@ -125,7 +125,11 @@ function kimiThinkingThenSignedText(thinkingText: string, options: { endThinking
 	const stream = new AssistantMessageEventStream({ captureBlocks: true });
 	const output = createAssistantMessage([], "pending");
 	if (options.strays)
-		pushAssistantProgress(stream, { type: "message_block_metadata", contentIndex: 0, thinkingSignatureDelta: "early" });
+		pushAssistantProgress(stream, {
+			type: "message_block_metadata",
+			contentIndex: 0,
+			thinkingSignatureDelta: "early",
+		});
 	stream.push({ type: "start", partial: output });
 	const thinking: ThinkingContent = { type: "thinking", thinking: "" };
 	output.content.push(thinking);
@@ -175,7 +179,9 @@ describe("Kimi thinking recovery drops controls it cannot place #4272", () => {
 	});
 
 	it("drops a later block's control when the thinking before it splits: index 1 live, index 2 in the terminal", async () => {
-		const records = await drainRecords(wrapStreamWithKimiThinkingRecovery(kimiThinkingThenSignedText(leakedThinking)));
+		const records = await drainRecords(
+			wrapStreamWithKimiThinkingRecovery(kimiThinkingThenSignedText(leakedThinking)),
+		);
 		const done = firstEvent(publicEvents(records), "done");
 		expect(done.message.content).toEqual([
 			{ type: "thinking", thinking: "plan", thinkingSignature: "sig" },
