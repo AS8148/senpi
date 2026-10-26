@@ -1,4 +1,5 @@
 import type { AssistantMessageEventStream } from "../../../types.ts";
+import { assistantEvents, carryAssistantCapture, pushAssistantProgress } from "../../../utils/assistant-capture.ts";
 import { AssistantMessageEventStream as AssistantMessageEventStreamImpl } from "../../../utils/event-stream.ts";
 import { recoverKimiXtmlThinking } from "./thinking-recovery.ts";
 
@@ -9,10 +10,13 @@ export function wrapStreamWithKimiThinkingRecovery(
 
 	void (async (): Promise<void> => {
 		try {
-			for await (const event of innerStream) {
+			// Every record but the terminal crosses unchanged: same event objects, same indices, controls in order.
+			for await (const event of assistantEvents(innerStream, (progress) =>
+				pushAssistantProgress(outerStream, progress),
+			)) {
 				if (event.type === "done") {
 					const message = recoverKimiXtmlThinking(event.message);
-					outerStream.push({ type: "done", reason: event.reason, message });
+					outerStream.push(carryAssistantCapture(event, { type: "done", reason: event.reason, message }, message));
 					outerStream.end();
 					return;
 				}
