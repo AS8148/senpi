@@ -5,10 +5,23 @@ import { AgentSessionRuntime } from "../../src/core/agent-session-runtime.ts";
 import type { RpcSessionEntry } from "../../src/modes/rpc/session-registry.ts";
 import { createHarness, type Harness, type HarnessOptions } from "./harness.ts";
 
-/** One scripted provider turn; it pushes onto a capture-enabled stream as a real adapter does. */
+/** One scripted provider turn on a capture-enabled stream; a script that ends the stream itself gets no `done`. */
 export type Script = (stream: AssistantMessageEventStream, partial: AssistantMessage) => Promise<void> | void;
 
 export const CONTROL_TYPES = ["message_block_state", "message_block_metadata", "message_tool_arguments_reset"];
+
+export type Lane = {
+	type?: string;
+	message?: { role?: string; content?: object[] };
+	assistantMessageEvent?: { type?: string; contentIndex?: number; seed?: unknown; offset?: unknown };
+	invalidatedBlocks?: number[];
+};
+
+export function firstAssistantMessage(records: readonly Lane[]): Lane[] {
+	const start = records.findIndex((record) => record.type === "message_start" && record.message?.role === "assistant");
+	const end = records.findIndex((record, index) => index > start && record.type === "message_end");
+	return start === -1 || end === -1 ? [] : records.slice(start, end + 1);
+}
 
 export function textReply(text: string): Script {
 	return (stream, partial) => {
