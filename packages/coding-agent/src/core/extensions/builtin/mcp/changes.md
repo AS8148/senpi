@@ -1,3 +1,170 @@
+## 2026-10-25 - Listen for modern MCP catalog and resource changes (#4234)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/subscriptions.ts`: own the long-lived listen request, capability-derived filters, acknowledgment subsets, subscription ID correlation, complete paginated resource URI sets, cancellation, and bounded reconnect backoff. Matching response IDs end streams even without subscription metadata. Accepted resource URIs gate delivery; an acknowledged replacement takes over before canceling its predecessor. Missing acknowledgment filters fail with backoff, which resets only after an accepted notification. Each resource sweep owns its URI buffer, with only the latest sweep allowed to publish.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/sdk-bridge.ts`: route HTTP subscription messages separately from finite SDK requests and dispose streams with the bridge.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`: reestablish subscriptions on each negotiated stdio connection and correlate their notifications alongside ordinary in-flight request IDs.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: modern resource lists supply the listen filter instead of sending the removed resources/subscribe method; legacy subscriptions are unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: keep subscription retry scheduling and cancellation on the shared clock, resolving the current runtime timers so deterministic fake-timer coverage exercises the same lifecycle.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/subscriptions.ts`: modern servers cannot push catalog or resource changes without an explicit listen request. Graceful completion must not reconnect, filter replacement must not create a delivery gap, unsupported resource updates must not refresh the catalog, and concurrent listings must not mix or republish stale resource sets.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/sdk-bridge.ts`: a listen stream must not expire with the SDK's ordinary request timeout or block tool calls.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`: notifications on a shared stdio channel must match an acknowledged subscription ID.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: the modern subscription filter replaces the legacy per-resource RPC.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: raw subscription retry timers bypassed the MCP async-source guard.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/subscriptions.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/modern/sdk-bridge.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`: the builtin transport owns negotiation, wire request IDs, stream lifetime, and disconnect.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: the builtin resource helper chooses the protocol-specific subscription mechanism.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: the builtin owns the shared scheduler used by transport lifecycles.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/subscriptions.ts`: subscription state and filter updates.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/sdk-bridge.ts`: message delivery and close hooks.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`: modern send and receive wrappers.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: resource subscription helper.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: shared clock scheduling and cancellation.
+
+## 2026-10-25 - Preserve modern MCP tool schemas and JSON results (senpi#4191)
+
+### What changed
+
+- Introduced explicit modern tool/result contracts and era-specific operations over the existing connection and MRTR request owner. Modern lists and calls bypass the SDK's legacy tool helpers.
+- Catalogs and persistent caches retain raw input/output schemas and the negotiated era. Modern exposure retains additional properties constraints and reference siblings.
+- Draft 2020-12 validates schemas, arguments, and structured output without coercion, network reference fetching, or shared schema identifiers. Schema depth and node counts are bounded.
+- Discovery and cache loading reject only tools with invalid or unsupported input/output schemas, warning with the tool name and a fixed reason, never argument values. Cached registration uses the connected client's era, including caches written before the era flag existed; an invalid current schema returns a structured refusal.
+- Modern tool operations use static imports and the service uses a top-level tool-contract type import. SDK schemas still load through the existing documented `sdk.lazy.ts` boundary, preserving the startup import budget.
+- Legacy cache entries retain the absent modern flag after connection, so unchanged metadata does not invalidate an existing once-only permission approval.
+- Legacy SDK helpers and legacy exposure conversion remain unchanged.
+
+### Why
+
+- The SDK's object-root schemas and draft-07 validator rejected valid modern definitions and falsy/non-object structured results before model exposure.
+- MCP 2026-07-28 `basic/index.mdx:255-258,291-293` requires 2020-12 and graceful unsupported-dialect errors, not draft-07 support. The explicit draft-07 example is rejected per tool rather than removing the server's valid tools.
+
+### Why an extension could not handle it
+
+- The builtin owns discovery, catalog persistence, request dispatch, and model-tool registration before third-party extensions can repair the rejected results.
+
+### Expected merge conflict zones
+
+- Catalog/cache tool types, exposure registration and invocation validation, and the shared service's wire-tool type alias.
+
+## 2026-10-25 - Fixed processing error for ambiguous legacy origins (#4248)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/elicitation.ts`: reuse the private processing-error helper for ambiguous legacy origins, returning code `-32603`, message `Elicitation processing unavailable`, and no `data`.
+
+### Why
+
+- The approved presenter contract requires ambiguity and presenter unavailability to expose the same body-free error. The previous branch exposed an explanatory message and reason field.
+- This supersedes #4210's explanatory-error and `data.reason: "ambiguous_legacy_origin"` descriptions in the private legacy routing entry. No form is displayed or human answer admitted; enforcement-off behavior is unchanged.
+
+### Why an extension could not handle it
+
+- The builtin MCP request handler owns the JSON-RPC error response before any form is displayed.
+
+### Expected merge conflict zones
+
+- LOW: the ambiguous-origin branch in `packages/coding-agent/src/core/extensions/builtin/mcp/elicitation.ts`. Enforcement-off behavior is unchanged.
+
+## 2026-10-25 - Modern HTTP parameter headers (#4229)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/parameter-headers.ts`: validate schema annotations, retain exact property paths per connection, encode primitive values, and omit absent or invalid values.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/transport.ts`: filter invalid tool definitions on JSON and SSE catalog responses and derive parameter headers from the matching call arguments.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/wire.ts`: use standard UTF-8 Base64 with the exact sentinel for unsafe or ambiguous routing names.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/http-fetch.ts`: discard configured parameter headers before merging body-derived metadata.
+
+### Why
+
+- Modern HTTP peers require annotated parameters in routing headers and reject names encoded with the former nonstandard sentinel.
+- Configured headers and unrelated arguments must not become tool parameter metadata. Legacy HTTP and stdio behavior remains unchanged.
+
+### Why an extension could not handle it
+
+- The builtin transport owns HTTP headers and must reject invalid catalog definitions before the SDK exposes them.
+
+### Expected merge conflict zones
+
+- Request header derivation and catalog delivery in `modern/transport.ts`, configured-header merging in `modern/http-fetch.ts`, and routing-name encoding in `modern/wire.ts`.
+
+## 2026-10-25 - Private legacy and modern MCP form routing (#4197)
+
+### What changed
+
+- `elicitation.ts`: route enforced legacy requests through private validation and settlement, with body-free processing failures when no presenter is available.
+- `elicitation.ts` and `request-origin.ts`: explicitly report `-32603` with `data.reason: "ambiguous_legacy_origin"` when concurrent legacy tools/call requests have no safely attributable parent; recommend sequential calls or MRTR without displaying or admitting a form.
+- `modern/request.ts` and `request-origin.ts`: retain exact operation origins, recheck private presenter readiness at attempts, and distinguish operation termination from presenter cancellation.
+- `modern/consent-queue.ts`: share the existing abort-aware FIFO with the opt-in local authority while preserving the default MRTR queue.
+- `modern/form-schema.ts` and `modern/elicitation.ts`: share whole-form validation and actual-presentation acknowledgement with RPC and local presenters.
+- `service.ts`, `shared-connection.ts`, and `host-registry.ts`: propagate live readiness subscriptions and private origins. Enforced shared pools observe any ready owner instead of freezing eligibility in their creation-time key; per-operation authority still selects the presenter.
+- `service.ts`: capture the declaring session's binding and UI references while its extension context is live. Readiness checks keep observing the binding's presenter without dereferencing a stale context after release or degrading the connection still used by a peer.
+- `connection.ts` and `modern/client.ts`: record the negotiated legacy capability and reconnect when a grant or revocation makes it stale, rechecking readiness before publishing an initialization. Modern MRTR connections keep per-attempt capabilities without reconnecting.
+- `modern/request.ts`: leave the SDK request method untouched for default legacy clients, preserving their origin and concurrent-call behavior.
+- `transport-sdk.ts`: retain private stderr diagnostic records and allowlisted system error codes while redacting arbitrary server text that may echo forms; preserve ordinary legacy stderr.
+
+### Why
+
+- A session's ordinary UI provider cannot authenticate a human or safely select an owner for an unsolicited legacy form.
+- A shared connection can outlive its original declarer. Re-reading that released session's `ctx.ui` during an ordinary connect check threw `StaleExtensionContextError` and made the peer's tools unavailable despite unchanged legacy-form eligibility.
+
+### Key decisions
+
+- Modern capability metadata remains request-scoped. Legacy capability advertisement is fixed within each connection and renegotiated when live readiness changes; every elicitation still checks its origin and presenter.
+- The SDK's received legacy handler metadata has no reliable parent tool-call ID. Ambiguous concurrent legacy operations fail with a clear coded processing error under enforcement; they are not assigned to a guessed owner.
+- A no-human request is a processing failure, explicit refusal is decline, and dismissal after actual presentation is cancel.
+- Private schemas and submitted content are validated before the terminal latch; rejected submissions never admit human input.
+
+### Why an extension could not handle it
+
+- The MCP service owns transport initialization, request origins, shared leases, and continuation dispatch.
+
+### Expected merge conflict zones
+
+- MEDIUM: the stacked MRTR request executor and shared elicitation validator.
+- LOW: service connection creation and stderr classification.
+
+## 2026-10-25 - Private terminal consent for modern MCP continuations (#4207)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: interpret intermediate results before method-result validation, replace continuation state, issue fresh request IDs, and bound rounds, bytes, consent, and operation lifetime.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/client.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/modern/consent-queue.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/modern/inputs.ts`: separate negotiated client construction, binding-owned consent scheduling, and bounded batch parsing from operation execution.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/elicitation.ts`: collect flat primitive forms with explicit defaults, unset choices, review, editing, submission, and cancellation.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/form-schema.ts`: keep schema validation and typed value checks separate from private consent collection.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/consent-queue.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/modern/errors.ts`: reject unpresented aborted jobs with a local processing error and retain numeric remote error codes without server messages.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/request-origin.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/prompts.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: carry host-issued session and authority ownership through tool, prompt, resource, and shared-client paths.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/connection.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/shared-lease.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/health.ts`: terminate pending consent on observed lifecycle invalidation and prevent automatic replay of logical MRTR errors.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/transport-sdk.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/modern/dispatch.ts`: activate the adapter only after positive modern negotiation while preserving the legacy SDK request method and legacy stderr diagnostics.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/transport.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/modern/http-fetch.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/modern/wire.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/modern/diagnostics.ts`: cancel by request ID, fence dispatch, suppress raw modern diagnostics, and avoid authenticated continuation replay.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: an intermediate `input_required` result is not a completed tool, resource, or prompt result and must not reach the model.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/elicitation.ts`: form acceptance requires the originating terminal human; unpresented requests terminate, explicit refusal declines, and presented dismissal cancels.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/request-origin.ts`: a pooled physical connection must not lend one session another session's human capability, consent, credentials, or continuation state.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/transport-sdk.ts`: modern diagnostic privacy must not discard legacy startup and reconnect diagnostics.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: ordinary extensions receive SDK-validated method results after the point where intermediate control results must be intercepted.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/request-origin.ts`: only the host can issue nonserializable session ownership and recheck the existing observed authority boundary.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/transport-sdk.ts`: transport dispatch, request cancellation, protocol negotiation, and raw diagnostic delivery precede extension callbacks.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/transport-sdk.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/modern/dispatch.ts`: reconcile independent legacy/headless capability changes without restoring a connection-global modern human capability.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: method-result interception, operation budgets, and dispatch authority checks.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/request-origin.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/prompts.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: request-local origin propagation.
+
 ## 2026-10-24 - Error on unavailable elicitation and omit print/json capability (senpi#4185, PR #4196)
 
 ### What changed
