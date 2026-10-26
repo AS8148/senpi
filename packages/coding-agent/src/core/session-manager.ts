@@ -64,7 +64,7 @@ import {
 	type SessionRecovery,
 	type SessionRecoveryCause,
 	sessionRecoveryCause,
-	setAsideIncompleteTail,
+	truncateToLastCompleteLine,
 } from "./session-write-recovery.ts";
 import {
 	hasOtherLiveSessionWriter,
@@ -1768,7 +1768,7 @@ export class SessionManager {
 
 		if (this.flushed) {
 			if (this.tailMayBeTorn) {
-				const recovery = setAsideIncompleteTail(this.sessionFile, this.tornTailCause);
+				const recovery = truncateToLastCompleteLine(this.sessionFile, this.tornTailCause);
 				this.tailMayBeTorn = false;
 				if (recovery !== undefined) this._reportRecovery(recovery);
 			}

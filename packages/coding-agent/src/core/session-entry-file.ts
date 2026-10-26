@@ -6,13 +6,13 @@
  * every other session's requests for seconds (senpi#3518). `loadEntriesFromFileAsync` reads
  * with asynchronous I/O and hands the loop back whenever its slice budget is spent.
  */
-import { closeSync, existsSync, fstatSync, openSync, readSync, statSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, ftruncateSync, openSync, readSync, statSync, writeSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { StringDecoder } from "node:string_decoder";
 import { normalizePath } from "../utils/paths.ts";
 import { EventLoopSlicer } from "./event-loop-slicer.ts";
 import type { FileEntry } from "./session-manager.ts";
-import { type SessionRecovery, setAsideTail } from "./session-write-recovery.ts";
+import { backupTornBytes, type SessionRecovery } from "./session-write-recovery.ts";
 
 export const SESSION_READ_BUFFER_SIZE = 1024 * 1024;
 
@@ -177,15 +177,18 @@ export function terminateFinalSessionLine(filePath: string): FinalLineRepair | u
 			writeSync(fd, "\n", size);
 			return undefined;
 		}
-		// Not synced on purpose: a lost truncate only brings back an uncommitted tail, and the next append syncs.
+		let recovery: SessionRecovery;
 		try {
-			return { kind: "set_aside", recovery: setAsideTail(filePath, fd, segmentStart, size, "unknown") };
+			recovery = backupTornBytes(filePath, segment, "unknown");
 		} catch (error) {
 			// Deferred, not dropped: a full disk can refuse the copy, so the file is left as it is and the writer
 			// sets the tail aside before its first append, which fails with this error if the disk is still full.
 			if (error instanceof Error) return { kind: "deferred" };
 			throw error;
 		}
+		// Not synced on purpose: a lost truncate only brings back an uncommitted tail, and the next append syncs.
+		ftruncateSync(fd, segmentStart);
+		return { kind: "set_aside", recovery };
 	} finally {
 		closeSync(fd);
 	}

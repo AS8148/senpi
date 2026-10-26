@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, fstatSync, ftruncateSync, openSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, fstatSync, ftruncateSync, openSync, readSync, rmSync } from "node:fs";
 import { type FileHandle, rm } from "node:fs/promises";
+import { replaceFileAtomically } from "./session-file-replace.ts";
 
 const NEWLINE = 0x0a;
 const SCAN_CHUNK_BYTES = 64 * 1024;
@@ -39,41 +40,27 @@ function recoveryNotice(cause: SessionRecoveryCause, backupPath: string): string
 }
 
 /**
- * Copies the bytes of `fd` from `start` to its end into `<path>.torn-<time>` (temp file and rename, so a full disk
- * leaves no partial copy) and then cuts them. A refused copy throws before anything is cut.
+ * Copies torn bytes to `<path>.torn-<time>-<id>` through the atomic session-file writer (temp file, fsync, rename),
+ * so a full disk leaves no partial copy, and returns the recovery to report. Throws when the copy is refused.
  */
-export function setAsideTail(
-	path: string,
-	fd: number,
-	start: number,
-	size: number,
-	cause: SessionRecoveryCause,
-): SessionRecovery {
-	const bytes = Buffer.alloc(size - start);
-	readSync(fd, bytes, 0, bytes.length, start);
+export function backupTornBytes(path: string, bytes: Buffer, cause: SessionRecoveryCause): SessionRecovery {
 	const backupPath = `${path}.torn-${Date.now()}-${randomUUID().slice(0, 8)}`;
-	const temporary = `${backupPath}.tmp`;
-	try {
-		writeFileSync(temporary, bytes, { flag: "wx", mode: 0o600 });
-		renameSync(temporary, backupPath);
-	} catch (error) {
-		rmSync(temporary, { force: true });
-		throw error;
-	}
-	ftruncateSync(fd, start);
+	replaceFileAtomically(backupPath, [bytes.toString("utf8")]);
 	return { cause, backupPath, droppedBytes: bytes.length, notice: recoveryNotice(cause, backupPath) };
 }
 
 /**
- * Sets aside everything after a JSONL session file's last complete line. An append that failed part-way (ENOSPC)
- * can leave a partial line, and the next append would be glued onto it, losing both entries on reload. A file that
- * already ends in a newline is left untouched and returns undefined.
+ * Cuts a JSONL session file back to its last complete line, first copying what it cuts aside (senpi#4295). An append
+ * that failed part-way (ENOSPC) can leave a partial line, and the next append would be glued onto it, losing both
+ * entries on reload. A file that already ends in a newline is left untouched and returns undefined; a refused copy
+ * throws before anything is cut.
  */
-export function setAsideIncompleteTail(path: string, cause: SessionRecoveryCause): SessionRecovery | undefined {
+export function truncateToLastCompleteLine(path: string, cause: SessionRecoveryCause): SessionRecovery | undefined {
 	const fd = openSync(path, "r+");
 	try {
 		const size = fstatSync(fd).size;
 		const chunk = Buffer.alloc(Math.min(SCAN_CHUNK_BYTES, size));
+		const tail: Buffer[] = [];
 		let end = size;
 		while (end > 0) {
 			const start = Math.max(0, end - chunk.length);
@@ -81,8 +68,13 @@ export function setAsideIncompleteTail(path: string, cause: SessionRecoveryCause
 			const newline = chunk.subarray(0, read).lastIndexOf(NEWLINE);
 			if (newline >= 0) {
 				const completeLength = start + newline + 1;
-				return completeLength < size ? setAsideTail(path, fd, completeLength, size, cause) : undefined;
+				if (completeLength >= size) return undefined;
+				tail.unshift(Buffer.from(chunk.subarray(newline + 1, read)));
+				const recovery = backupTornBytes(path, Buffer.concat(tail), cause);
+				ftruncateSync(fd, completeLength);
+				return recovery;
 			}
+			tail.unshift(Buffer.from(chunk.subarray(0, read)));
 			end = start;
 		}
 		return undefined;

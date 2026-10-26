@@ -27,11 +27,9 @@ vi.mock("fs", async (importOriginal) => {
 			actual.appendFileSync(path, data.slice(0, keep));
 			throw noSpace();
 		},
-		writeFileSync: (...args: Parameters<typeof actual.writeFileSync>) => {
+		openSync: (...args: Parameters<typeof actual.openSync>) => {
 			const [file] = args;
-			if (typeof file !== "string" || fault.failWritesMatching?.test(file) !== true) {
-				return actual.writeFileSync(...args);
-			}
+			if (typeof file !== "string" || fault.failWritesMatching?.test(file) !== true) return actual.openSync(...args);
 			fault.failWritesMatching = undefined;
 			throw noSpace();
 		},
