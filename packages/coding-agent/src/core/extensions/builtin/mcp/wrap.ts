@@ -18,8 +18,8 @@ export interface McpClock {
 /** The modern operation uses one injectable monotonic clock and scheduler. */
 export const mcpElapsedClock: McpClock = {
 	now: () => performance.now(),
-	schedule: setTimeout,
-	cancel: clearTimeout,
+	schedule: (callback, ms) => setTimeout(callback, ms),
+	cancel: (timer) => clearTimeout(timer),
 };
 
 type MaybePromise<T> = T | Promise<T>;

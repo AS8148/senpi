@@ -81,6 +81,7 @@ export async function startHost(
 			socket,
 			...(options.owner ? ["--owner-fd", String(OWNER_WATCH_FD)] : []),
 			...(options.presenterBootstrap ? ["--mcp-presenter-fd", "4"] : []),
+			...(options.mcpPresenterEnforcement ? ["--mcp-presenter-enforcement"] : []),
 			...(options.hostArgs ?? []),
 		];
 		const launch = testOptions?.spawn ?? testOptions?.launch?.(supervisorArgs) ?? defaultHostLaunch(supervisorArgs);

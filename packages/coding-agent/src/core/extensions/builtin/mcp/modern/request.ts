@@ -44,7 +44,7 @@ export function getModernDispatchGuard(params: unknown): ((credential?: string) 
 		: undefined;
 }
 
-/** One instance-local adapter. Captured SDK requests retain ID allocation and final output-schema validation. */
+/** One instance-local adapter. Captured SDK requests retain ID allocation; the caller supplies its era's result contract. */
 export function installModernRequestAdapter(
 	client: Client,
 	protocol: ModernProtocolState,

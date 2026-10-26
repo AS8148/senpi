@@ -1,3 +1,87 @@
+## 2026-10-25 - Terminal snapshot cursors and answer receipts (#4266)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts`: answers `get_snapshot` through the shared synchronous capture and connection FIFO marker path.
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: advertises snapshot and UI-answer receipt support and settles named answers through the session-local receipt ledger.
+
+### Why
+
+- Both endpoints must identify snapshot cuts by source order and distinguish a retried answer from another answer to an already settled request.
+
+### Why an extension could not handle it
+
+- The control endpoint owns command replies and its connection FIFO; an extension cannot insert a cursor atomically with state capture.
+
+### Expected merge conflict zones
+
+- Additive imports, capability names, snapshot dispatch, and answer receipt handling in the two named control-command files.
+
+## 2026-10-25 - Terminal control endpoints: host drive set and every platform (senpi#4267)
+
+### What changed
+
+- `session-control-rpc-commands.ts`, `session-control-commands.ts`, `session-control-attach.ts`: `get_entries`, `set_client_info`, `attach_session`, `release_attachment`, `abort` with the host's role rule, admission receipts and their replay, `tui_observer`.
+- `session-control-server.ts`, `session-control-registry.ts`, `../../core/session-control-actions.ts`: registration on win32 over the host transport's named pipe.
+
+### Why
+
+- A client observes and drives a terminal session exactly as a host session, on every platform.
+
+### Why an extension could not handle it
+
+- The terminal endpoint's command surface and listener are core interactive-mode code.
+
+### Expected merge conflict zones
+
+- LOW: the command list and `get_protocol_info` capabilities in `session-control-commands.ts`.
+
+## 2026-10-25 - Local terminal forms use private final settlement (#4197)
+
+### What changed
+
+- `mcp-local-presenter.ts`: register the terminal internally, queue whole forms within their original deadlines, and route review through the host terminal latch. Collector failure terminates only that form.
+- `interactive-mode.ts`: register one local private authority per session binding only with enforcement enabled. Preserve default per-field human admission and scheduled ephemeral-select rendering; enforced forms admit through the final authority latch.
+
+### Why
+
+- Editing one field is not approval of the complete form. A remote attachment must not acquire the terminal's authority.
+
+### Key decisions
+
+- Actual rendering acknowledges presentation; final accept, decline, or explicit cancel admits once. Timeout, replacement, and disposal never fabricate human activity.
+- Default terminals keep the base MRTR queue, legacy origin rules, and legacy stderr handling.
+
+### Why an extension could not handle it
+
+- The terminal host owns modal rendering, the actual input callbacks, and presentation disposal.
+
+### Expected merge conflict zones
+
+- LOW: extension UI context construction and private selector rendering.
+
+## 2026-10-25 - Bind private MCP forms to the live terminal presentation (#4207)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: issue the real terminal's MRTR presentation lifetime and forward ephemeral select/input options without generic blocked events, labels, identifiers, or pending markers.
+- `packages/coding-agent/src/modes/interactive/components/extension-selector.ts`: ignore answers from disposed selectors so duplicate or delayed prior-round input cannot dismiss the current dialog.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a fabricated UI object or RPC capability declaration must not grant modern form-answering authority, and private interaction state must not enter ordinary status publication.
+- `packages/coding-agent/src/modes/interactive/components/extension-selector.ts`: a completed dialog's callback must not remove another input round's selector or admit a duplicate human answer.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: only the terminal host owns its actual UI object, dialog wrappers, session replacement, and presentation disposal.
+- `packages/coding-agent/src/modes/interactive/components/extension-selector.ts`: the terminal component owns keyboard delivery and disposal; an extension cannot fence an already-retired widget's callback.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: extension UI context creation, presentation-lifetime disposal, and the private-dialog branch of `withBlockedHostDialog`.
+- `packages/coding-agent/src/modes/interactive/components/extension-selector.ts`: selector input admission and disposal.
+
 ## 2026-10-24 - Identify interrupted sessions in the pause footer (senpi#4204)
 
 ### What changed

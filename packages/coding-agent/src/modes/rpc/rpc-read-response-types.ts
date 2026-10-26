@@ -21,7 +21,10 @@ import type {
 	RpcSessionState,
 } from "./rpc-session-state-types.ts";
 
+import type { RpcSnapshot } from "./snapshot-types.ts";
+
 export type RpcReadResponse =
+	| { id?: string; type: "response"; command: "get_snapshot"; success: true; data: RpcSnapshot }
 	| { id?: string; type: "response"; command: "get_state"; success: true; data: RpcSessionState }
 	| {
 			id?: string;
@@ -89,7 +92,14 @@ export type RpcReadResponse =
 			type: "response";
 			command: "get_entries";
 			success: true;
-			data: { entries: SessionEntry[]; leafId: string | null; hasMore?: boolean; nextSince?: string };
+			data: {
+				entries: SessionEntry[];
+				leafId: string | null;
+				hasMore?: boolean;
+				nextSince?: string;
+				/** A `tail` page's oldest entry id while older entries remain (senpi#4267). */
+				next_before?: string;
+			};
 	  }
 	| {
 			id?: string;

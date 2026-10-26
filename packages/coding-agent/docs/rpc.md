@@ -1644,6 +1644,7 @@ A multi-session host advertising the capability `session_status` pushes one `ses
 - `include_context`: carry each session's published `context` on its records; default `false`.
 - `mirror`: `"none"` (default), `"all"` or an array of record types (`["message_update", "tool_execution_start"]`). The matched sessions' records of those types are also delivered to this connection. Mirroring is an explicit opt-in open to every subscriber of the host (the socket is per user, mode 0600): it is not an attachment and does not keep a session alive. Worker content is mirrored only with `include_workers: true`.
 - `effects`: also deliver `effect_status` receipts of matched sessions; default `true` for `childrenOf`, `false` otherwise. Each `effect_status` is enqueued after the record that caused the transition and shares the subscription's `seq`.
+- `dialogs`: with capability `dialog_observer`, also deliver the `ui_request_pending` and `ui_request_settled` records of matched sessions; default `false`. It takes effect only together with a `mirror` selection, stays observing, and grants no answering authority (see "UI-answer receipts and dialog observation").
 
 Response:
 
@@ -1957,13 +1958,17 @@ Environment overrides beat the file, and invalid values fall through to the next
 
 The host exits only after the window elapses with NO attached client connections and NO active turns — continuously.
 Any attached connection or agent turn resets the window, so a busy host never exits. A connection attaches with its
-first request line, unless that line is an OBSERVING read: `get_protocol_info` or `list_sessions` carrying
-`"observe": true`, or a `warm` (marked or not - see "Warming a host"). A connection that only ever sends observing reads never counts and never resets the window, so a
+first request line, unless that line is an OBSERVING read: a side-effect-free read carrying `"observe": true` -
+`get_protocol_info`, `list_sessions`, `subscribe_sessions`, `unsubscribe_sessions`, `get_effect_status`,
+`get_pending_inputs`, `get_subscription_limits`, and the session reads `get_state` and `get_entries` (capability
+`observe_reads`) - or a `warm` (marked or not - see "Warming a host"). A connection that only ever sends observing reads never counts and never resets the window, so a
 poller (`senpi host status [--all]`, which marks both of its reads, a doctor loop, a runtime panel) can look at every
 endpoint as often as it likes without keeping any of them alive; the first request that is anything else attaches the
 connection from then on, and `observe` on any other command is ignored. While a connection has not sent its first
 line yet the host does not exit, and the window keeps running. Hosts that predate the field ignore it, so a marked read
-works against every generation.
+works against every generation. A watcher can therefore read a session's state and history (`get_state`,
+`get_entries` with `observe: true`) as often as it likes: the host's attached count stays at 0 and its idle window
+keeps running.
 
 A connection from one of the host's OWN sessions is DEPENDENT and never counts either. A host exports its generation
 id (`SENPI_RPC_HOST_INSTANCE_ID`) to the sessions it runs, and `RpcClient` sends that id as `"origin_host_instance"`
@@ -2170,8 +2175,10 @@ one with `pi.session.registerControlEndpoint({ inboxDir, drain, isSessionReferen
 [pi.session](extensions.md#pisession)). OmO's thread component registers one at startup; a plain `senpi` with no
 registrant opens no socket and writes no registry directory.
 
-- **Platform.** POSIX terminals only. On win32 the registration answers
-  `{ status: "unsupported", reason: "unsupported_platform" }` and registers nothing. On a multi-session host the
+- **Platform.** Every platform. On win32 the socket path below is the endpoint's logical address: the secret is
+  written beside it, and the listener binds the named pipe the host transport derives from the path and the secret
+  (`\\.\pipe\senpi-rpc-<32hex>`), the address every client already connects to after reading the secret. It is
+  registered and listed like a POSIX terminal. On a multi-session host the
   same call binds nothing - the host's public socket is the endpoint - see "Waking a host session (`wake`)".
 - **Socket and auth.** The endpoint listens on `<agentDir>/rpc/tui/t-<16hex>.sock` (16 hex of the SHA-256 of a
   fresh instance id). When that path is longer than a Unix socket path allows, it moves to
@@ -2192,13 +2199,16 @@ registrant opens no socket and writes no registry directory.
 - **Commands.** Anything not listed below is answered `unsupported` as data. No command opens another session or
   runs a command; input goes through the terminal's admission (`steer`/`follow_up`/`prompt` below), so the
   user's draft still holds it.
-  - `get_protocol_info`: `mode: "tui"`, `endpoint_kind: "tui"`, `capabilities: ["tui_control", "session_status"]`, `generation: 0`, the endpoint's
+  - `get_protocol_info`: `mode: "tui"`, `endpoint_kind: "tui"`, `capabilities: ["tui_control", "session_status",
+    "tui_observer", "observe_reads", "entries_tail"]` (`tui_observer`: the observe-and-drive set below), `generation: 0`, the endpoint's
     `instanceId`, and `commands`: every command this endpoint accepts. A terminal from before the session
     controls below lists no `commands`.
   - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`.
   - `get_state`: the RPC session state plus `turn_epoch`, `blocking_question`, `compacting`,
     `editor_has_draft` and `state_version`.
   - `get_messages`.
+  - `get_entries { since?, before?, limit?, tail?, maxBytes? }`: the host's answer, pages and tail pages included
+    (see `get_entries`).
   - `set_session_name { name }`: a blank name is refused.
   - `subscribe { cursor? }`: a feed of `session_control_event { seq, kind, data }` records, where `kind` is
     `state`, `report` (an assistant message's text), `question` (pending question ids) or `completion` (the
@@ -2220,10 +2230,25 @@ registrant opens no socket and writes no registry directory.
     `queued`; `held_draft` (the user is composing) and `turn_conflict` are refusals with a reason and an action.
     Unlike a host's input, the message lands as a remote delivery (a `session_control_delivery` entry the
     terminal renders as "remote message"), not a user message: there are no prompt templates, slash commands or
-    skills, no admission receipt, and a repeated `clientMessageId` answers `duplicate: true`. Frames carrying
+    skills. Input sent with a `clientMessageId` is answered with an admission receipt,
+    `admission { clientMessageId, durableSessionId, disposition }`; a retry with the same id and the same input is
+    answered from it, with `replayed: true` (and `duplicate: true`) and the original `disposition`, and delivers
+    nothing; the same id with different input is refused `client_message_id_conflict`. Frames carrying
     `images`, `thinkingLevel`, `expandPromptTemplates`, `unknownCommandAsText`, `sessionTitlePrompt` or
     `enqueueOrder` are refused `unsupported_field`, naming them.
   - `get_effect_status { effectId, sessionPath? }`: the same effect ledger as a host.
+  - `set_client_info { width, capabilities? }`: declares the connection's roles (`interactive_user`,
+    `task_parent`), fixed once declared (`connection_role_fixed`), as on a host.
+  - `attach_session { sessionId, durableSessionId, expectedHostInstance? }`: a live attachment, as on a host:
+    `sessionId` is the terminal's session id from `list_sessions`, `durableSessionId` the same id, and
+    `expectedHostInstance`, when sent, this endpoint's `instanceId`. Answers `{ sessionId, attached: true }` after the
+    replay of the in-flight snapshot, then the session's records follow; another session is `unknown_session`, an
+    identity that does not match is `session_identity_mismatch`.
+  - `release_attachment { sessionId }`: drops this connection's attachment, answered `{ deferred: false }`;
+    `session_not_attached` when it holds none.
+  - `abort { intent?, effectId?, awaitIdle?, clearQueue?, graceMs? }`: the host's `abort` and effect receipts.
+    `intent: "stop"` is refused `stop_requires_interactive_client: declare interactive_user with set_client_info first`
+    until the connection declared `interactive_user`.
   - `wake { delivery_ids? }`: one drain pass, answered `{ admitted: [{ delivery_id, kind }] }`.
   - `extension_ui_response`: answers only a question this session asked and still waits on
     (`unknown_request` / `question_incomplete` / `invalid_response` otherwise). `uiRequestId` names the
@@ -2246,7 +2271,6 @@ registrant opens no socket and writes no registry directory.
       settles before the answer. Answers `{ interrupted: true, turnId }` with the `turn_epoch` it stopped. An idle
       session answers `{ interrupted: false }`; a `turnId` that is not the running turn answers
       `{ interrupted: false, turnId }` with the running one and leaves it alone. The session stays open.
-  - `prompt`, `steer` and `follow_up` are `unsupported`.
 - **Admission.** A message from another session enters only through the registrant's drain, which calls
   `pi.session.admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id? })`. One synchronous call
   decides and acts:
@@ -3402,6 +3426,14 @@ If an extension cancelled:
 
 ### State
 
+#### get_snapshot
+
+Atomic snapshot cursor (capability `snapshot_cursor`). Subscribe with `mirror` before taking a snapshot to cut the live record stream at a source-issued cursor rather than at response arrival. Terminal control endpoints support the same command.
+
+`get_snapshot {sessionId, tail?, maxBytes?, observe?: true}` returns `{state, entries, next_before, history_truncated, markerId}`. `state` uses the existing `get_state` projection, including `pendingDialogs` and `pendingQuestions`. `entries` is the newest tail, in chronological order. `tail` defaults to 100 and accepts non-negative integers; `maxBytes` defaults to 8 MiB and accepts positive integers, capped at 48 MiB. The byte bound applies to serialized history entries. An entry that does not fit ends the tail; it is never silently skipped. `history_truncated` reports omitted history; `next_before` is the oldest returned entry's id when older history remains, otherwise null (also null when no entry fits).
+
+State capture, history capture, and enqueueing `{type: "snapshot_marker", sessionId, markerId}` are one synchronous operation. The marker goes only to the requesting connection, only when a matching subscription has `mirror` enabled (including a list of selected record types). Other subscribers never receive that marker. Apply the snapshot and then records after its marker; a post-marker record can arrive **before** the correlated response. A reader without a mirrored subscription receives the snapshot response but no marker record. `observe: true` does not attach or refresh activity.
+
 #### get_state
 
 Get current session state.
@@ -4457,6 +4489,15 @@ Response:
 
 An unpaged request (neither bound) answers exactly as before while the whole history fits in 48 MiB. A longer history is refused with `errorCode: "response_too_large"` instead of an answer that would close the connection; read it in pages.
 
+**Tail pages** (capability `entries_tail`). Pass `tail` (a positive integer) to read the NEWEST entries first: the answer holds the newest `tail` entries of the range, in append order, under the same `maxBytes` rule (8 MiB when only `tail` is given, capped at 48 MiB), and always at least the newest one. While older entries remain it carries `hasMore: true` and `next_before`, the id of the oldest entry it returned; ask again with `before: next_before` to walk back until `hasMore` is `false`. `before` (an entry id) limits any read to entries strictly before it; an id that names no entry is refused with `errorCode: "not_found"`. `since` is unchanged, and `since` and `before` may bound one range together. `tail` and `limit` cannot be combined (`invalid_argument`): `limit` pages forward from the range's start, `tail` backward from its end.
+
+```json
+{"type": "get_entries", "tail": 200, "observe": true}
+{"type": "get_entries", "tail": 200, "before": "<next_before>", "observe": true}
+```
+
+`get_entries` and `get_state` may carry `observe: true`: on a host such a read never counts as an attachment (see the idle-exit window).
+
 A single entry larger than 48 MiB cannot travel in any answer, so a read whose next entry is that large (paged or not) is refused with `response_too_large` naming the entry. While a walk has more pages, the host keeps the session's full history in memory for the next page; it lets it go 30 s after the last page request, so a client that stops mid-walk does not pin the history.
 
 #### get_tree
@@ -5458,6 +5499,22 @@ With enforcement, only the authority's winning whole-form action admits once.
 The host advertises `mcp_form_presenter_v1` only when enforcement is enabled;
 the capability reports protocol support, not authority to present or answer a form.
 
+The public `host ensure` and `host handoff` commands accept the same deployment option,
+separately from `--launch-spec`. Add `--mcp-presenter-fd 4` with a live inherited duplex
+channel to enroll the launch owner of a new host. The runtime-selecting CLI re-exec,
+supervisor and host child preserve that channel. The option alone enables enforcement,
+not a presenter; fd 4 alone does not enable enforcement.
+
+An enforcing predecessor keeps enforcement in its successor, including when an older
+handoff caller omits the option. Conditional `handoff --when idle` carries the non-secret
+`mcp_presenter_enforcement` boolean in `begin_handover`, independently of the launch
+specification and environment. It uses only the existing authenticated owner's channel
+for fresh successor enrollment; the CLI cannot enroll itself into the predecessor.
+Reuse and already-current handover answers report the serving host's actual capabilities.
+Neither a successful CLI exit nor an equal `runtimeBuildId` proves enforcement or
+enrollment. A deployment requesting enforcement against an unenforced existing host must
+coordinate a replacement, not force-restart another owner's busy host.
+
 The native launch owner enrolls an Ed25519 public key through an inherited private
 bootstrap channel. Descriptor 4 is reserved for this channel; descriptor 3 remains
 the separate owner-lifetime channel. Enrollment and management proofs sign the
@@ -5500,9 +5557,9 @@ reconnect for this purpose because their capability metadata is per request.
 
 Legacy elicitation has no reliable parent tool-call identifier in the received SDK
 handler metadata. With multiple `tools/call` operations in flight on one physical
-legacy client, enforced elicitation fails closed with JSON-RPC `-32603` and
-`data.reason: "ambiguous_legacy_origin"`. The error explains that concurrent legacy
-calls make the origin ambiguous and recommends sequential calls or an MRTR server.
+legacy client, enforced elicitation fails closed with the same fixed JSON-RPC
+processing error as an unavailable presenter: code `-32603`, message
+`Elicitation processing unavailable`, and no `data`.
 No form is displayed and no human answer is admitted. Without enforcement, legacy
 clients keep the SDK request method, origin handling, and concurrent-call behavior.
 
@@ -5868,6 +5925,25 @@ Dismiss any dialog method. The extension receives `undefined` (for select/input/
 ```json
 {"type": "extension_ui_response", "id": "uuid-3", "cancelled": true}
 ```
+
+### UI-answer receipts and dialog observation
+
+With capability `ui_answer_ledger`, `extension_ui_response` accepts an optional `answerId` string of 1-256 characters. The response preserves the frame's correlation `id` and adds `disposition`:
+
+- `applied`: success; the pending request was settled once.
+- `replay`: success; this `(uiRequestId, answerId)` pair was already applied, with no repeated delivery.
+- `already_answered`: failure; the request was already settled with a different answer id.
+- `unknown`: failure; no pending request or receipt exists (`unknown_extension_ui_request`).
+
+A malformed answer (for example `invalid_answer_id` or `question_incomplete`) is refused without a `disposition` and leaves its request pending. A single-session stdio connection still ignores an unnamed response that matches no request; a named response always gets a reply.
+
+`get_state.answeredUiRequests` contains the latest 64 receipts, oldest first, as `{uiRequestId, answerId?}`. Receipts are session-local and memory-only, retained for that session's life in the host generation. The ledger evicts FIFO beyond 1,024 requests; replay does not extend retention. Omitting `answerId` keeps the short-form answer contract but provides no named replay identity. A restart, unloaded session, or evicted receipt is not proof of non-execution.
+
+With capability `dialog_observer`, `subscribe_sessions` accepts `dialogs?: boolean` (default false). A matching `dialogs: true` subscription must also enable `mirror`. It receives these new records on its connection FIFO:
+
+`{type: "ui_request_pending", sessionId, uiRequestId, method, request}` when a dialog or question is registered, with its original request frame; `{type: "ui_request_settled", sessionId, uiRequestId, disposition: "answered" | "cancelled"}` when it settles. Timeout and lifecycle teardown count as cancellation. The feed survives the command connection's departure while the session remains loaded. A dialog already present in the snapshot is not emitted again.
+
+The subscription remains observing: it creates no attachment and carries no correlated `response` records. The original select, confirm, input, and editor `extension_ui_request` records remain targeted, not mirrored. Use a separate attached command connection for answers; dialog observation grants no answering authority.
 
 ## Error Handling
 
