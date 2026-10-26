@@ -6,7 +6,7 @@ import type { SecurityNoticeSnapshot, SecurityNoticeState } from "../../core/sec
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { normalizeJsonValue } from "./json-normal-value.ts";
 import { serializeJsonLine } from "./jsonl.ts";
-import { type MediaPersister, omitInlineMedia } from "./media-placeholders.ts";
+import { type MediaPersister, omitNormalInlineMedia } from "./media-placeholders.ts";
 import type {
 	RpcHostLifecycleEvent,
 	RpcOpenQueuedEvent,
@@ -443,7 +443,9 @@ export class SessionEventWriter {
 		const hasPlaceholderTarget = targets.some((target) =>
 			this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY),
 		);
-		const redacted = hasPlaceholderTarget ? omitInlineMedia(tagged, this.mediaPersisters.get(sessionId)) : tagged;
+		const redacted = hasPlaceholderTarget
+			? omitNormalInlineMedia(tagged, this.mediaPersisters.get(sessionId))
+			: tagged;
 		const placeholderLine = redacted === tagged ? undefined : serializeJsonLine(redacted);
 		if (!isTargeted) this.fanout.rememberSnapshot(sessionId, tagged, line, placeholderLine);
 		for (const target of targets) {

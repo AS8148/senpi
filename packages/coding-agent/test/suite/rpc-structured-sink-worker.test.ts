@@ -14,7 +14,11 @@ export default function (pi) {
 	JSON.stringify = function(value, ...args) {
 		const line = stringify(value, ...args);
 		if (value?.type === "message_update" && value.sessionId) {
+			// Classify by the whole stack: the default 10-frame limit can cut off the worker frame.
+			const limit = Error.stackTraceLimit;
+			Error.stackTraceLimit = Infinity;
 			const stack = new Error().stack;
+			Error.stackTraceLimit = limit;
 			if (stack.includes("/session-worker.ts:") || stack.includes("/session-worker.js:")) workerBytes += Buffer.byteLength(line);
 			else sessionBytes += Buffer.byteLength(line);
 		}

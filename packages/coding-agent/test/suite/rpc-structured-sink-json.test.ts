@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { expect, it, vi } from "vitest";
 import { normalizeJsonValue } from "../../src/modes/rpc/json-normal-value.ts";
 import { omitInlineMedia } from "../../src/modes/rpc/media-placeholders.ts";
@@ -196,6 +198,35 @@ it("snapshots getters once before later getters can mutate earlier properties", 
 		writer.unregisterConnection("peer");
 	}
 });
+
+// Part of #4272: deep nesting must succeed or fail exactly where native JSON.stringify does. A fresh
+// process keeps the walk cold: warmed-up code uses smaller frames and hides the earlier overflow.
+it("normalizes deeply nested arrays like the JSON round trip", async () => {
+	const source = new URL("../../src/modes/rpc/json-normal-value.ts", import.meta.url).href;
+	const script = `
+		const { normalizeJsonValue } = await import(${JSON.stringify(source)});
+		const deep = (depth) => { let nested = []; for (let level = 0; level < depth; level++) nested = [nested]; return nested; };
+		let low = 1;
+		let high = 200000;
+		while (low < high) {
+			const middle = Math.ceil((low + high) / 2);
+			try { JSON.stringify(deep(middle)); low = middle; } catch { high = middle - 1; }
+		}
+		const outcome = (run) => { try { return JSON.stringify(run()); } catch (error) { return error.name; } };
+		const results = [low - 16, 20000].map((depth) => {
+			const input = { type: "tool_execution_end", result: { content: [], details: deep(depth) } };
+			const reference = outcome(() => JSON.parse(JSON.stringify(input)));
+			const normalized = outcome(() => normalizeJsonValue(input).value);
+			return { depth, same: normalized === reference, reference: reference.slice(0, 48), normalized: normalized.slice(0, 48) };
+		});
+		process.stdout.write(JSON.stringify(results));`;
+	const args = process.versions.bun ? ["-e", script] : ["--input-type=module", "-e", script];
+	const { stdout } = await promisify(execFile)(process.execPath, args, { timeout: 60_000 });
+	const results: { depth: number; same: boolean; reference: string; normalized: string }[] = JSON.parse(stdout);
+	expect(results).toHaveLength(2);
+	for (const { depth, same, reference, normalized } of results)
+		expect({ depth, same, normalized }).toEqual({ depth, same: true, normalized: reference });
+}, 90_000);
 
 it.each(["BigInt", "cycle"])("throws the reference error class for %s", (kind) => {
 	const make = () => {

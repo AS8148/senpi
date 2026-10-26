@@ -1,6 +1,6 @@
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { serializeJsonLine } from "./jsonl.ts";
-import { omitInlineMedia } from "./media-placeholders.ts";
+import { carriesMedia, omitNormalInlineMedia } from "./media-placeholders.ts";
 import { SocketEventSinkActor } from "./socket-event-fanout.ts";
 import { EVENT_RESYNC_CAPABILITY, type ResyncReason, type RpcSessionResyncRequired } from "./socket-peer-recovery.ts";
 
@@ -40,20 +40,23 @@ type RegisteredConnection = {
  * a capable connection was already attached when the record was emitted; a connection that
  * attaches later still needs it, so the frozen line supplies the source on the first
  * capable replay. Only the derived line is memoized; no provider object is retained.
- * Records with no media resolve
- * `placeholderLine` to `line`, so replay stays O(1) and never re-serializes twice.
+ * `mayCarryMedia` is the type gate taken at acceptance: a record whose type cannot carry
+ * media (every `message_update` partial) replays its `line` with no parse at all; only
+ * media-bearing records parse their frozen line, once.
  */
 type SnapshotRecord = {
 	readonly line: string;
 	placeholderLine?: string;
 	readonly hasMessage: boolean;
+	readonly mayCarryMedia: boolean;
 };
 
 /** The placeholder variant of a remembered record, derived and memoized on first use. */
 function snapshotPlaceholderLine(record: SnapshotRecord): string {
 	if (record.placeholderLine !== undefined) return record.placeholderLine;
+	if (!record.mayCarryMedia) return record.line;
 	const source = JSON.parse(record.line) as Record<string, unknown>;
-	const redacted = omitInlineMedia(source);
+	const redacted = omitNormalInlineMedia(source);
 	record.placeholderLine = redacted === source ? record.line : serializeJsonLine(redacted);
 	return record.placeholderLine;
 }
@@ -212,7 +215,12 @@ export class SessionEventFanout {
 	}
 
 	rememberSnapshot(sessionId: string, value: Record<string, unknown>, line: string, placeholderLine?: string): void {
-		const record: SnapshotRecord = { line, placeholderLine, hasMessage: value.message != null };
+		const record: SnapshotRecord = {
+			line,
+			placeholderLine,
+			hasMessage: value.message != null,
+			mayCarryMedia: carriesMedia(value),
+		};
 		if (value.type === "session_lifecycle") {
 			this.lifecycleSnapshots.set(sessionId, record);
 			return;
@@ -274,7 +282,7 @@ export class SessionEventFanout {
 				message: typeof frozen === "object" && frozen !== null && "message" in frozen ? frozen.message : null,
 				...(!current.has(sessionId) ? { closed: true as const } : {}),
 			};
-			return placeholders ? omitInlineMedia(record) : record;
+			return placeholders ? omitNormalInlineMedia(record) : record;
 		});
 	}
 }

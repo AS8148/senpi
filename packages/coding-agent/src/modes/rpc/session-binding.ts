@@ -79,8 +79,8 @@ export async function createRpcSessionBinding(
 		};
 		const taggedSink: RpcConnectionSink = {
 			writeRecord,
-			writeRaw: (chunk) => {
-				for (const line of chunk.split("\n")) if (line) writeRecord(JSON.parse(line) as object);
+			writeRaw: () => {
+				throw new Error("Shared session bindings deliver records through writeRecord, never writeRaw");
 			},
 			waitForBackpressure: bindToProviderScope(async () => {}),
 		};

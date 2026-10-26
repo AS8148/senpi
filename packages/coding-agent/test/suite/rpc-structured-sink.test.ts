@@ -3,6 +3,7 @@ import { ProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/
 import { expect, it, vi } from "vitest";
 import type { AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { AgentSessionRuntime } from "../../src/core/agent-session-runtime.ts";
+import * as connectionHandler from "../../src/modes/rpc/connection-handler.ts";
 import * as eventBuffer from "../../src/modes/rpc/event-output-buffer.ts";
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "../../src/modes/rpc/custom-capability.ts";
 import { omitInlineMedia } from "../../src/modes/rpc/media-placeholders.ts";
@@ -101,6 +102,7 @@ it("delivers faux streaming records by reference before the event output buffer"
 	});
 	writer.attachConnectionToSession("client", "session");
 	const buffered = vi.spyOn(eventBuffer, "createRpcEventOutputBuffer");
+	const handlers = vi.spyOn(connectionHandler, "createRpcConnectionHandler");
 	const binding = await createRpcSessionBinding("session", entry, writer, () => {});
 	try {
 		harness.setResponses([fauxAssistantMessage("x".repeat(16 * 1024), { timestamp: 1 })]);
@@ -113,7 +115,19 @@ it("delivers faux streaming records by reference before the event output buffer"
 		expect(buffered, "shared delivery must not construct the event output buffer").not.toHaveBeenCalled();
 		expect(sessionBytes, "SESSION serialized bytes before writer").toBe(0);
 		expect(actual).toEqual(expected);
+		const sink = handlers.mock.calls[0]?.[1];
+		expect(sink?.writeRecord).toBeTypeOf("function");
+		const parse = vi.spyOn(JSON, "parse");
+		try {
+			expect(() => sink?.writeRaw('{"type":"probe"}\n'), "writeRaw is unreachable beside writeRecord").toThrowError(
+				/writeRecord/,
+			);
+			expect(parse).not.toHaveBeenCalled();
+		} finally {
+			parse.mockRestore();
+		}
 	} finally {
+		handlers.mockRestore();
 		buffered.mockRestore();
 		serialize.mockRestore();
 		random.mockRestore();

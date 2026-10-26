@@ -165,7 +165,7 @@ function omitToolExecutionEndImages(record: RpcRecord, persist: MediaPersister |
 }
 
 /** True when this record type can carry a tool result at all (cheap gate). */
-function carriesMedia(record: RpcRecord): boolean {
+export function carriesMedia(record: RpcRecord): boolean {
 	if (typeof record.type !== "string") return false;
 	if (MEDIA_BEARING_RECORD_TYPES.has(record.type)) return true;
 	return record.type === "response" && typeof record.command === "string"
@@ -181,9 +181,15 @@ function carriesMedia(record: RpcRecord): boolean {
  */
 export function omitInlineMedia<T extends object>(record: T, persist?: MediaPersister): T {
 	const { value, changed } = normalizeJsonValue(record);
-	const typed = (changed ? value : record) as RpcRecord;
-	if (!carriesMedia(typed)) return changed ? (typed as T) : record;
+	if (!changed) return omitNormalInlineMedia(record, persist);
+	return omitNormalInlineMedia(value as T, persist);
+}
+
+/** `omitInlineMedia` for a value that is already JSON-normal: type gate first, no normalization walk. */
+export function omitNormalInlineMedia<T extends object>(record: T, persist?: MediaPersister): T {
+	const typed = record as unknown as RpcRecord;
+	if (!carriesMedia(typed)) return record;
 	const scrubbed = typed.type === "tool_execution_end" ? omitToolExecutionEndImages(typed, persist) : typed;
 	const walked = walk(scrubbed, persist);
-	return (walked === typed && !changed ? record : walked) as T;
+	return (walked === typed ? record : walked) as T;
 }

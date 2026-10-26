@@ -73,7 +73,14 @@ export function normalizeJsonValue(input: unknown): { value: unknown; changed: b
 			ancestors.delete(value);
 		}
 	};
-	const value = visit(input, "");
+	let value: unknown;
+	try {
+		value = visit(input, "");
+	} catch (error) {
+		// The recursive walk overflows the stack before native JSON does; let native JSON decide.
+		if (!(error instanceof RangeError)) throw error;
+		return { value: JSON.parse(JSON.stringify(input)), changed: true };
+	}
 	if (value === undefined) throw new SyntaxError("JSON input has no representation");
 	return { value, changed };
 }
