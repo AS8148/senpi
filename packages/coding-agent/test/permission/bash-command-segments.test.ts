@@ -87,11 +87,15 @@ const CHAINED_SHAPES: ReadonlyArray<readonly [string, string]> = [
 	["loop body", `for f in a; do cd src; ${TARGET}; done`],
 	["after a redirection", `cd src 2>/dev/null && ${TARGET}`],
 	["after a test", `[[ -d src && -d out ]] && ${TARGET}`],
+	["substitution that starts with a subshell", `cd $((cd src) ; ${TARGET})`],
 ];
 
 /** Wrappers that run TARGET; granting the wrapper alone must not allow what it runs. */
 const WRAPPER_SHAPES: ReadonlyArray<readonly [string, string]> = [
 	["env", `env FOO=1 ${TARGET}`],
+	["env with a quoted assignment", `env 'FOO=1' ${TARGET}`],
+	["su --command", `su --command='${TARGET}' root`],
+	["eval --", `eval -- '${TARGET}'`],
 	["command", `command ${TARGET}`],
 	["exec", `exec ${TARGET}`],
 	["builtin", `builtin eval '${TARGET}'`],
@@ -210,6 +214,8 @@ describe("analyzeBashCommand", () => {
 		["ls # && a", [["ls"]]],
 		["X=1 Y=$(a) b", [["a"], ["b"]]],
 		["[ -f x ] && a", [["[", "-f", "x", "]"], ["a"]]],
+		["echo $((a) ; b)", [["a"], ["b"], ["echo", ""]]],
+		["echo $((1 + 2))", [["echo", ""]]],
 	])("splits %j", (command, segments) => {
 		expect(analyzeBashCommand(command)).toEqual({ kind: "parsed", segments });
 	});

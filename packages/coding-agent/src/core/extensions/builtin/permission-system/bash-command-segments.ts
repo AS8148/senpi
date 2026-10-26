@@ -162,6 +162,16 @@ function matchBrace(source: string, start: number): number {
 	return fail();
 }
 
+/**
+ * Whether the `((` whose first `(` is at `open` is arithmetic: its inner `(` must close right before the
+ * outer one. Otherwise bash reads it as a command substitution or subshell that starts with a subshell.
+ */
+function isArithmetic(source: string, open: number): boolean {
+	const outerEnd = matchParen(source, open + 1);
+	const innerEnd = matchParen(source, open + 2);
+	return innerEnd === outerEnd - 1;
+}
+
 /** The unescaped body of a backtick substitution (bash removes `\` before `$`, `` ` `` and `\`). */
 function unescapeBackticks(body: string): string {
 	return body.replace(/\\([$`\\])/g, "$1");
@@ -401,7 +411,7 @@ class Lexer {
 	private readDollar(): void {
 		const source = this.source;
 		const next = source[this.index + 1];
-		if (next === "(" && source[this.index + 2] === "(") {
+		if (next === "(" && source[this.index + 2] === "(" && isArithmetic(source, this.index + 1)) {
 			const end = matchParen(source, this.index + 2);
 			this.nestedText(source.slice(this.index + 3, end - 2));
 			this.append("", { dynamic: true });
@@ -463,7 +473,8 @@ class Lexer {
 			}
 			if (char === "$" && text[index + 1] === "(") {
 				const end = matchParen(text, index + 2);
-				if (text[index + 2] === "(") this.nestedText(text.slice(index + 3, end - 2));
+				if (text[index + 2] === "(" && isArithmetic(text, index + 1))
+					this.nestedText(text.slice(index + 3, end - 2));
 				else this.nested(text.slice(index + 2, end - 1));
 				index = end;
 				continue;
@@ -518,7 +529,7 @@ class Lexer {
 			this.index = end;
 			return;
 		}
-		if (source[this.index + 1] === "(") {
+		if (source[this.index + 1] === "(" && isArithmetic(source, this.index)) {
 			const end = matchParen(source, this.index + 1);
 			this.nestedText(source.slice(this.index + 2, end - 2));
 			this.index = end;
@@ -553,7 +564,7 @@ class Lexer {
 const RESERVED_LEADERS = new Set(["!", "{", "}", "if", "then", "else", "elif", "fi", "do", "done", "while", "until"]);
 const UNSUPPORTED_LEADERS = new Set(["case", "esac", "function", "coproc"]);
 const LOOP_HEADERS = new Set(["for", "select"]);
-const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
+const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "mksh", "ash", "yash", "posh", "fish", "csh", "tcsh"]);
 
 type Expand = (words: readonly Word[], out: string[][]) => void;
 
@@ -706,15 +717,20 @@ const expandSimpleCommand: Expand = (input, out) => {
 	if (name === "eval") {
 		out.push([name]);
 		if (rest.some((word) => word.dynamic)) fail();
-		for (const segment of lexSegments(rest.map((word) => word.text).join(" "))) expandSimpleCommand(segment, out);
+		const args = rest[0]?.text === "--" ? rest.slice(1) : rest;
+		for (const segment of lexSegments(args.map((word) => word.text).join(" "))) expandSimpleCommand(segment, out);
 		return;
 	}
-	if (name === "trap" || name === "su") {
+	if (name === "su") {
 		out.push([name]);
-		const scriptIndex =
-			name === "trap"
-				? rest.findIndex((word) => !word.text.startsWith("-"))
-				: rest.findIndex((word, index) => index > 0 && ["-c", "--command"].includes(rest[index - 1].text));
+		const script = suCommand(rest);
+		if (script === undefined) return;
+		for (const segment of lexSegments(script)) expandSimpleCommand(segment, out);
+		return;
+	}
+	if (name === "trap") {
+		out.push([name]);
+		const scriptIndex = rest.findIndex((word) => !word.text.startsWith("-"));
 		const script = scriptIndex < 0 ? undefined : rest[scriptIndex];
 		if (script === undefined) return;
 		if (script.dynamic) fail();
@@ -725,7 +741,8 @@ const expandSimpleCommand: Expand = (input, out) => {
 		out.push([name]);
 		if (rest.some((word) => !word.dynamic && (word.text === "-S" || word.text.startsWith("--split-string")))) fail();
 		let index = skipOptions(rest, 0, ENV_OPTIONS);
-		while (index < rest.length && isAssignment(rest[index])) index += 1;
+		// env itself, not the shell, reads these: any NAME=VALUE word, quoted or not, is an assignment.
+		while (index < rest.length && !rest[index].dynamic && /^[^=]+=/.test(rest[index].text)) index += 1;
 		expandSimpleCommand(rest.slice(index), out);
 		return;
 	}
@@ -761,6 +778,28 @@ const expandSimpleCommand: Expand = (input, out) => {
 	}
 	out.push(line);
 };
+
+/** The command string `su` runs (`-c`, `--command`, `--session-command`, or `c` in a flag cluster), if any. */
+function suCommand(rest: readonly Word[]): string | undefined {
+	for (let index = 0; index < rest.length; index += 1) {
+		const word = rest[index];
+		const text = word.text;
+		const long = /^--(session-)?command(=|$)/.exec(text);
+		if (long) {
+			const value = long[2] === "=" ? text.slice(long[0].length) : rest[index + 1]?.text;
+			const source = long[2] === "=" ? word : rest[index + 1];
+			if (value === undefined || source === undefined || source.dynamic) fail();
+			return value;
+		}
+		if (/^-[A-Za-z]*c/.test(text) && !text.startsWith("--")) {
+			const attached = text.slice(text.indexOf("c") + 1);
+			const source = attached === "" ? rest[index + 1] : word;
+			if (source === undefined || source.dynamic) fail();
+			return attached === "" ? source.text : attached;
+		}
+	}
+	return undefined;
+}
 
 /** The index (in `rest`) of a shell's `-c` command string, or undefined when it reads a file or stdin. */
 function shellCommandIndex(rest: readonly Word[]): number | undefined {
