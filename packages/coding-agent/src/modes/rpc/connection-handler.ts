@@ -207,6 +207,8 @@ export interface RpcConnectionOptions {
  */
 export interface RpcConnectionSink {
 	writeRaw(chunk: string): void;
+	/** Shared bindings accept correlated records synchronously, before JSONL buffering. */
+	writeRecord?(record: object): void;
 	waitForBackpressure(): Promise<void>;
 	/** Tears the transport down once its event queue can no longer deliver (overflow, write failure). */
 	close?(): void;
@@ -381,7 +383,9 @@ export function createRpcConnectionHandler(
 	let loadedSurfacesDigest: string | undefined;
 	let rpcCommandsDigest: string | undefined;
 	let suppressLoadedSurfaceEvents = false;
-	const eventOutput = createRpcEventOutputBuffer(sink.writeRaw, options.eventFlushScheduler);
+	const eventOutput = sink.writeRecord
+		? undefined
+		: createRpcEventOutputBuffer(sink.writeRaw, options.eventFlushScheduler);
 
 	const effectContext = (): EffectCommandContext => ({
 		session,
@@ -393,11 +397,15 @@ export function createRpcConnectionHandler(
 		routingSessionId === undefined ? value : { ...value, sessionId: routingSessionId };
 
 	const output = (obj: RpcResponse | RpcExtensionUIRequest | object) => {
-		eventOutput.writeImmediate(tagSessionRecord(obj));
+		const record = tagSessionRecord(obj);
+		if (sink.writeRecord) sink.writeRecord(record);
+		else eventOutput?.writeImmediate(record);
 	};
 
 	const outputEvent = (event: object) => {
-		eventOutput.enqueueEvent(tagSessionRecord(event));
+		const record = tagSessionRecord(event);
+		if (sink.writeRecord) sink.writeRecord(record);
+		else eventOutput?.enqueueEvent(record);
 	};
 
 	const currentLoadedSurfaces = (): {
@@ -465,7 +473,7 @@ export function createRpcConnectionHandler(
 	});
 
 	const waitForRpcBackpressure = async (): Promise<void> => {
-		eventOutput.flushEvents();
+		eventOutput?.flushEvents();
 		await sink.waitForBackpressure();
 	};
 
@@ -2197,9 +2205,7 @@ export function createRpcConnectionHandler(
 	// session's handler (it has a routing `sessionId`) does not: the host broadcasts the record once.
 	const stopLimitEvents =
 		options.sessionId === undefined
-			? subscriptionLimits.subscribe((limits) =>
-					eventOutput.enqueueEvent({ type: "subscription_limits", ...limits }),
-				)
+			? subscriptionLimits.subscribe((limits) => outputEvent({ type: "subscription_limits", ...limits }))
 			: () => {};
 	const dispose = async (disposeOptions: { readonly processExit?: boolean } = {}): Promise<void> => {
 		unbindMcpForms?.();
