@@ -44,6 +44,7 @@ const MAX_STEPS = 4_000_000;
 /** Words a best-effort candidate needs: the longest `BashArity` prefix is three words. */
 const CANDIDATE_WORDS = 3;
 
+// Module state, safe because `analyzeBashCommand` is synchronous and never re-enters itself.
 let steps = 0;
 /** Counts lexer work; overrunning the budget makes the command `unparsed`, never slow. */
 const step = (count = 1) => {
@@ -874,8 +875,8 @@ function lexSegments(command: string): Word[][] {
  * source order; or `unparsed` when any part of the command is outside what this lexer understands.
  */
 export function analyzeBashCommand(command: string): BashCommandAnalysis {
-	if (command.length > MAX_COMMAND_LENGTH) return { kind: "unparsed" };
 	steps = 0;
+	if (command.length > MAX_COMMAND_LENGTH) return { kind: "unparsed" };
 	try {
 		const out: string[][] = [];
 		for (const segment of lexSegments(command)) expandSimpleCommand(segment, out);
@@ -903,12 +904,4 @@ export function bestEffortCommandLines(command: string): string[][] {
 		.map(pathBasename)
 		.filter((word) => word !== "");
 	return words.map((_word, index) => words.slice(index, index + CANDIDATE_WORDS));
-}
-
-/**
- * A rule target that matches only itself: `*` and `?` are wildcards in rule patterns, so a command's own
- * `*`, `?` (and the escape `%`) are percent-encoded before it becomes a pattern or an "Allow always" rule.
- */
-export function literalPattern(text: string): string {
-	return text.replace(/[%*?]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
 }

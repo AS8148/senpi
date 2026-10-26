@@ -273,7 +273,8 @@ describe("bounded work and fail-closed limits", () => {
 	});
 
 	it("refuses a command longer than the lexer accepts", () => {
-		expect(analyzeBashCommand(`echo ${"a".repeat(MAX_COMMAND_LENGTH)}`)).toEqual({ kind: "unparsed" });
+		expect(MAX_COMMAND_LENGTH).toBeLessThan(100_000);
+		expect(analyzeBashCommand(`echo ${"a".repeat(100_000)}`)).toEqual({ kind: "unparsed" });
 	});
 
 	it("unwraps a quoted find action and refuses an expanded one", () => {
@@ -288,9 +289,9 @@ describe("bounded work and fail-closed limits", () => {
 	});
 });
 
-describe("an Allow always answer stores a literal", () => {
+describe("an Allow always answer never widens", () => {
 	it.each(ASKING_PRESETS)(
-		"%s: an unparsed command approved always does not match a different command",
+		"%s: an unparsed command holding its own * is not stored, so it matches nothing else",
 		async (preset) => {
 			const approvedCommand = "case $1 in *) echo hi;; esac";
 			const remembered: Rule[] = registry
@@ -298,10 +299,50 @@ describe("an Allow always answer stores a literal", () => {
 				.flatMap((request) =>
 					request.always.map((pattern) => ({ permission: "bash", pattern, action: "allow" as const })),
 				);
-			expect(await decide(preset, approvedCommand, { approved: remembered })).toBe("allow");
+			expect(remembered).toEqual([]);
 			expect(await decide(preset, `case $1 in x) ${TARGET};; *) echo hi;; esac`, { approved: remembered })).toBe(
 				"ask",
 			);
 		},
 	);
+
+	it.each(ASKING_PRESETS)("%s: an unparsed command without wildcards is remembered exactly", async (preset) => {
+		const approvedCommand = "case $1 in a) echo hi;; esac";
+		const remembered: Rule[] = registry
+			.parse("bash", { command: approvedCommand }, cwd)
+			.flatMap((request) =>
+				request.always.map((pattern) => ({ permission: "bash", pattern, action: "allow" as const })),
+			);
+		expect(await decide(preset, approvedCommand, { approved: remembered })).toBe("allow");
+		expect(await decide(preset, `case $1 in a) ${TARGET};; esac`, { approved: remembered })).toBe("ask");
+	});
+});
+
+describe("existing rules keep their glob meaning", () => {
+	it.each([
+		["a deny rule with ?", "npm run t?st", { bash: { "npm *": "allow", "npm run t?st": "deny" } }, "deny"],
+		["a deny rule with a literal %", "npm run a%b", { bash: { "npm *": "allow", "npm run a%b": "deny" } }, "deny"],
+		["an allow rule with ?", "npm run t?st", { bash: { "npm run t?st": "allow" } }, "allow"],
+	])("%s matches the same raw command as before", async (_case, command, config, expected) => {
+		expect(await decide("accept-edits", command, { config: config as PermissionConfig })).toBe(expected);
+	});
+
+	it("never stores an Allow always target that holds its own * or ?", () => {
+		const requests = registry.parse("bash", { command: "npm run 'x*y' && ls" }, cwd);
+		expect(requests.flatMap((request) => request.always)).toEqual(["ls", "ls *"]);
+	});
+});
+
+describe("a user's wildcard deny rule still matches literal patterns", () => {
+	it.each([
+		["quoted ? inside the prefix", "npm run 't?st'", { bash: { "npm *": "allow", "npm run t?st": "deny" } }],
+		["quoted * inside the prefix", "npm run 'x*y'", { bash: { "npm *": "allow", "npm run x?y": "deny" } }],
+		["literal % inside the prefix", "npm run 'a%b'", { bash: { "npm *": "allow", "npm run a%b": "deny" } }],
+	])("denies a %s", async (_case, command, config) => {
+		expect(await decide("accept-edits", command, { config: config as PermissionConfig })).toBe("deny");
+	});
+
+	it("keeps a glob outside the rule words parsed", () => {
+		expect(analyzeBashCommand("ls *.ts")).toEqual({ kind: "parsed", segments: [["ls", "*.ts"]] });
+	});
 });

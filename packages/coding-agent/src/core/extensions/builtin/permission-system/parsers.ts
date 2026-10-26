@@ -3,11 +3,7 @@ import { realpathWithoutOpen } from "../../../../utils/paths.ts";
 import type { ToolInfo } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { BashArity } from "../permission-system/arity.ts";
-import {
-	analyzeBashCommand,
-	bestEffortCommandLines,
-	literalPattern,
-} from "../permission-system/bash-command-segments.ts";
+import { analyzeBashCommand, bestEffortCommandLines } from "../permission-system/bash-command-segments.ts";
 import {
 	type AlwaysScope,
 	extractExternalPaths,
@@ -111,6 +107,13 @@ function withExternalDirectoryRequests(
 
 const uniq = (values: readonly string[]): string[] => [...new Set(values)];
 
+/**
+ * The targets an "Allow always" answer may store. Stored rules are matched as globs, so a target holding
+ * its own `*` or `?` would be remembered as a wildcard that matches other commands; such a target is
+ * allowed once and never stored. Request patterns stay raw, so existing rules match exactly as before.
+ */
+const rememberable = (targets: readonly string[]): string[] => targets.filter((target) => !/[*?]/.test(target));
+
 /** Marks a bash request target that no command-specific rule can match: only a `*` rule decides it. */
 export const UNPARSED_BASH_PREFIX = "(unparsed) ";
 
@@ -124,7 +127,7 @@ export const UNPARSED_BASH_PREFIX = "(unparsed) ";
 function bashCommandRequests(command: string): PermissionRequest[] {
 	const analysis = analyzeBashCommand(command);
 	if (analysis.kind === "unparsed") {
-		const target = `${UNPARSED_BASH_PREFIX}${literalPattern(command)}`;
+		const target = `${UNPARSED_BASH_PREFIX}${command}`;
 		const candidates = uniq(
 			bestEffortCommandLines(command)
 				.map((words) => BashArity.prefix(words).join(" "))
@@ -135,19 +138,16 @@ function bashCommandRequests(command: string): PermissionRequest[] {
 			...(candidates.length === 0
 				? []
 				: [{ permission: "bash", patterns: candidates, always: [], autoApproveAsk: true as const }]),
-			{ permission: "bash", patterns: [target], always: [target] },
+			{ permission: "bash", patterns: [target], always: rememberable([target]) },
 		];
 	}
-	const prefixes = uniq(
-		analysis.segments.map((words) => literalPattern(BashArity.prefix([...words]).join(" "))).filter(Boolean),
-	);
-	if (prefixes.length === 0)
-		return [{ permission: "bash", patterns: [literalPattern(command)], always: [literalPattern(command)] }];
+	const prefixes = uniq(analysis.segments.map((words) => BashArity.prefix([...words]).join(" ")).filter(Boolean));
+	if (prefixes.length === 0) return [{ permission: "bash", patterns: [command], always: rememberable([command]) }];
 	return [
 		{
 			permission: "bash",
 			patterns: prefixes,
-			always: prefixes.flatMap((prefix) => [prefix, `${prefix} *`]),
+			always: rememberable(prefixes).flatMap((prefix) => [prefix, `${prefix} *`]),
 		},
 	];
 }
