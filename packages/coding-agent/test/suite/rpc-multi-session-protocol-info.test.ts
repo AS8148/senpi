@@ -46,6 +46,8 @@ describe("multi-session RPC protocol info", () => {
 					"session_held",
 					"resume_session",
 					"attended",
+					"observe_reads",
+					"entries_tail",
 					"retain_on_disconnect",
 					"detach_connection",
 					"unload_session",
