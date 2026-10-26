@@ -16,6 +16,7 @@ export class RecoveryAssistantMessageEventStream extends AssistantMessageEventSt
 	private cancellationPromise: Promise<void> | undefined;
 	private sourceClosed = false;
 	private relaySource: AssistantMessageEvent | undefined;
+	private relayed = false;
 
 	constructor() {
 		super({ captureBlocks: true });
@@ -34,10 +35,12 @@ export class RecoveryAssistantMessageEventStream extends AssistantMessageEventSt
 
 	/**
 	 * Runs a projection step that copies `source` 1:1 to a new index. The copy is built from source blocks read after
-	 * later deltas landed, so its capture relays the source's emission-time record instead of freezing the copy.
+	 * later deltas landed, so its capture relays the source's emission-time record instead of freezing the copy. Only
+	 * the step's first push of the source's type is that copy; any later one records nothing.
 	 */
 	relaying<T>(source: AssistantMessageEvent, project: () => T): T {
 		this.relaySource = source;
+		this.relayed = false;
 		try {
 			return project();
 		} finally {
@@ -47,7 +50,11 @@ export class RecoveryAssistantMessageEventStream extends AssistantMessageEventSt
 
 	override push(event: AssistantMessageEvent, hint?: CaptureHint): void {
 		const source = this.relaySource;
-		const relay = source?.type === event.type ? { ...hint, carried: getAssistantCapture(source) ?? null } : hint;
+		let relay = hint;
+		if (source?.type === event.type) {
+			relay = { ...hint, carried: this.relayed ? null : (getAssistantCapture(source) ?? null) };
+			this.relayed = true;
+		}
 		super.push(carryAssistantCapture(event, snapshotRecoveryEvent(event)), relay);
 	}
 

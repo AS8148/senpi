@@ -100,10 +100,11 @@ export class RecoveryNativeProjection {
 		this.reservedIds.add(block.id);
 		const outerIndex = this.message.content.length;
 		this.message.content.push(cloneContentBlock(block));
-		if (!this.recordRange(innerIndex, { start: outerIndex, end: outerIndex + 1 }, true)) return "invalid";
 		this.nativeLifecycleByInnerIndex.set(innerIndex, "started");
 		this.stream.push({ type: "toolcall_start", contentIndex: outerIndex, partial: this.message });
-		return "projected";
+		// Recorded after the start, as a thinking copy is, so controls held for the call follow its start event. The
+		// guards above already rule out both reasons recordRange refuses.
+		return this.recordRange(innerIndex, { start: outerIndex, end: outerIndex + 1 }, true) ? "projected" : "invalid";
 	}
 
 	projectNativeDelta(source: AssistantMessage, innerIndex: number, delta: string): boolean {
@@ -157,6 +158,7 @@ export class RecoveryNativeProjection {
 		return this.recordRange(innerIndex, { start: outerIndex, end: outerIndex + 1 }, true);
 	}
 
+	/** Flushes the controls held for `innerIndex`; a copied block with a start event records its range after that start. */
 	private recordRange(innerIndex: number, range: ContentRange, copiesSource: boolean): boolean {
 		if (this.rangesByInnerIndex.has(innerIndex) || innerIndex <= this.highestProjectedInnerIndex) return false;
 		this.rangesByInnerIndex.set(innerIndex, range);

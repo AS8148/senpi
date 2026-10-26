@@ -1,5 +1,10 @@
 import type { AssistantMessage, AssistantMessageEventStream } from "../../../types.ts";
-import { assistantEvents, carryAssistantCapture, pushAssistantProgress } from "../../../utils/assistant-capture.ts";
+import {
+	assistantEvents,
+	carryAssistantCapture,
+	dropAssistantCapture,
+	pushAssistantProgress,
+} from "../../../utils/assistant-capture.ts";
 import { AssistantMessageEventStream as AssistantMessageEventStreamImpl } from "../../../utils/event-stream.ts";
 import { recoverKimiXtmlThinking } from "./thinking-recovery.ts";
 
@@ -10,12 +15,19 @@ export function wrapStreamWithKimiThinkingRecovery(
 	let partial: AssistantMessage | undefined;
 	// Ended thinking index -> whether the terminal rewrite inserts a recovered response block after it.
 	const splitsByThinkingIndex = new Map<number, boolean>();
-	// Live events keep source indices; only the terminal is rewritten. A control crosses only while its source index
-	// names an existing block that no earlier split can move; otherwise it is dropped, never guessed.
+	// Blocks that lost a record once lose all later ones, so a block never carries records without its start.
+	const droppedIndexes = new Set<number>();
+	// Live events keep source indices; only the terminal is rewritten. A record (event capture or control) crosses only
+	// while its source index names an existing block that no earlier split can move; otherwise it is dropped, never
+	// guessed.
 	const keepsIndex = (contentIndex: number): boolean => {
 		if (!partial || contentIndex >= partial.content.length) return false;
+		if (droppedIndexes.has(contentIndex)) return false;
 		for (let index = 0; index < contentIndex; index += 1) {
-			if (partial.content[index]?.type === "thinking" && splitsByThinkingIndex.get(index) !== false) return false;
+			if (partial.content[index]?.type === "thinking" && splitsByThinkingIndex.get(index) !== false) {
+				droppedIndexes.add(contentIndex);
+				return false;
+			}
 		}
 		return true;
 	};
@@ -27,6 +39,8 @@ export function wrapStreamWithKimiThinkingRecovery(
 				if (keepsIndex(progress.contentIndex)) pushAssistantProgress(outerStream, progress);
 			})) {
 				if ("partial" in event) partial = event.partial;
+				// The same event object crosses, so public bytes stay identical; only its record is withheld.
+				if ("contentIndex" in event && !keepsIndex(event.contentIndex)) dropAssistantCapture(event);
 				if (event.type === "thinking_end") {
 					const alone = { ...event.partial, content: [{ type: "thinking" as const, thinking: event.content }] };
 					splitsByThinkingIndex.set(event.contentIndex, recoverKimiXtmlThinking(alone).content.length > 1);

@@ -38,6 +38,11 @@ export interface AssistantCapture {
 	readonly parsedThrough?: number;
 	/** The block's own index where the event's public `contentIndex` names another block; internal readers prefer it. */
 	readonly contentIndex?: number;
+	/**
+	 * Set on a terminal that removed or moved blocks the stream already announced: from this index on, records sent
+	 * before the terminal name another block or none, so a reader drops them (lack, never wrong).
+	 */
+	readonly rewrittenFrom?: number;
 }
 interface CaptureState {
 	positions: Map<number, CapturePosition>;
@@ -211,6 +216,8 @@ export interface CaptureHint {
 	 * nothing, because the source captured nothing.
 	 */
 	readonly carried?: AssistantCapture | null;
+	/** A terminal's `AssistantCapture.rewrittenFrom`. */
+	readonly rewrittenFrom?: number;
 }
 export interface CapturePosition {
 	offset: number;
@@ -286,6 +293,7 @@ function terminalCapture(capture: AssistantCapture, terminal: AssistantMessage):
 		usage: frozenUsage(terminal.usage),
 		metadata: freezeCapture(metadata),
 		message: freezeCapture({ ...terminal, content: terminal.content.map(publicBlock) }),
+		...(capture.rewrittenFrom === undefined ? {} : { rewrittenFrom: capture.rewrittenFrom }),
 	});
 }
 
@@ -316,6 +324,7 @@ function buildCapture(
 			usage,
 			metadata: changedMetadata(state, message),
 			message: freezeCapture({ ...message, content: message.content.map(publicBlock) }),
+			...(hint.rewrittenFrom === undefined ? {} : { rewrittenFrom: hint.rewrittenFrom }),
 		});
 	}
 	const index = hint.contentIndex ?? event.contentIndex;
