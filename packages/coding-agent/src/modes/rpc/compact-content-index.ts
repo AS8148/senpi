@@ -110,7 +110,7 @@ export class CompactContentIndex<Row extends object> {
 	maybeCompact(): void {
 		if (this.compacting || !this.store.spillAllowed || this.overrides.size < this.compactAboveRows) return;
 		this.compacting = true;
-		this.store.enqueue(async () => {
+		this.store.enqueue("page_write", async () => {
 			const progressed = await this.compact();
 			this.compacting = false;
 			if (progressed) this.maybeCompact();

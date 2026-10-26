@@ -5,7 +5,13 @@ import { readFile, unlink, writeFile } from "node:fs/promises";
  * reports. Every spool access goes through `CompactStorageIo`; nothing here blocks the host loop.
  */
 
-export type CompactStorageOperation = "spill_write" | "page_write" | "leaf_read" | "page_read" | "reclaim";
+export type CompactStorageOperation =
+	| "spool_create"
+	| "spill_write"
+	| "page_write"
+	| "leaf_read"
+	| "page_read"
+	| "reclaim";
 
 export interface CompactStorageFailure {
 	readonly operation: CompactStorageOperation;

@@ -1,5 +1,5 @@
-import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { createSpoolDir, removeSpoolDir } from "./compact-spool-dir.ts";
 import {
 	type CompactStorageFailure,
 	type CompactStorageIo,
@@ -21,6 +21,7 @@ import {
 /** 32,768 UTF-16 code units (64 KiB as UTF-16LE), so a split surrogate survives a leaf boundary exactly. */
 export const COMPACT_LEAF_CODE_UNITS = 32_768;
 const RECLAIM_WORK_ALLOWANCE_BYTES = 1024 * 1024;
+const RECLAIM_RETRY_DELAYS_MS = [100, 400, 1_600, 6_400, 25_600];
 const FAILURE_HISTORY = 32;
 
 export type LeafId = number;
@@ -39,7 +40,7 @@ export interface CompactStorageStatus {
 }
 
 export interface CompactContentStoreOptions {
-	/** Private, epoch-owned spool directory (created 0700; files 0600). Not a transcript. */
+	/** Private epoch spool directory the store creates itself (0700, never an existing one; files 0600). Not a transcript. */
 	readonly dir: string;
 	readonly io?: CompactStorageIo;
 	/** Spilling starts above this many resident leaf bytes and stops at the target. */
@@ -62,10 +63,13 @@ export class CompactContentStore {
 	private readonly spillAboveBytes: number;
 	private readonly spillTargetBytes: number;
 	private readonly leaves = new Map<LeafId, Leaf>();
+	/** Resident leaves in creation order, so each spill takes the oldest without rescanning committed ones. */
+	private readonly ramLeaves = new Set<LeafId>();
 	private readonly failures: CompactStorageFailure[] = [];
 	private nextLeafId = 1;
 	private nextFile = 1;
 	private dirReady: Promise<string | undefined> | undefined;
+	private spoolToken: string | undefined;
 	private chain: Promise<void> = Promise.resolve();
 	private queued = 0;
 	private spillQueued = false;
@@ -91,6 +95,7 @@ export class CompactContentStore {
 	createLeaf(text: string): LeafId {
 		const id = this.nextLeafId++;
 		this.leaves.set(id, { text, units: text.length, live: 1, pins: 0, state: "ram" });
+		this.ramLeaves.add(id);
 		this.residentPayloadBytes += text.length * 2;
 		this.scheduleSpill();
 		return id;
@@ -106,6 +111,7 @@ export class CompactContentStore {
 		if (pinnedOnly !== (leaf.live === 0 && leaf.pins > 0)) this.pinnedOnlyBytes += (pinnedOnly ? -2 : 2) * leaf.units;
 		if (leaf.live > 0 || leaf.pins > 0) return;
 		this.leaves.delete(id);
+		this.ramLeaves.delete(id);
 		if (leaf.state === "committed" && leaf.path) {
 			this.spilledLiveBytes -= leaf.units * 2;
 			this.discard(leaf.path, leaf.units * 2);
@@ -131,11 +137,16 @@ export class CompactContentStore {
 		while (this.queued > 0) await this.chain;
 	}
 
-	/** Invalidates spilling, joins owned I/O, then removes only this epoch's directory. */
+	/**
+	 * Invalidates spilling, joins owned I/O, then removes the epoch directory only when this store
+	 * created it and it still passes the ownership checks; otherwise rejects with `CompactSpoolRefusedError`.
+	 */
 	async retire(): Promise<void> {
 		this.retired = true;
 		await this.idle();
-		await rm(this.dir, { recursive: true, force: true });
+		const token = this.spoolToken;
+		this.spoolToken = undefined;
+		if (token !== undefined) await removeSpoolDir(this.dir, token);
 	}
 
 	status(): CompactStorageStatus {
@@ -146,8 +157,10 @@ export class CompactContentStore {
 			spilledLiveBytes: this.spilledLiveBytes,
 			spillBytesWritten: this.spillBytesWritten,
 			reclaimDebtBytes: this.reclaimDebtBytes,
-			spillFailureRetainedBytes: this.halted ? Math.max(0, this.residentPayloadBytes - this.spillTargetBytes) : 0,
-			spillHalted: this.halted,
+			spillFailureRetainedBytes: this.spillStopped
+				? Math.max(0, this.residentPayloadBytes - this.spillTargetBytes)
+				: 0,
+			spillHalted: this.spillStopped,
 			failures: [...this.failures],
 		};
 	}
@@ -172,7 +185,7 @@ export class CompactContentStore {
 		operation: CompactStorageOperation,
 		retainedInMemoryBytes: number,
 	): Promise<string | undefined> {
-		const path = await this.ensureDir(operation, retainedInMemoryBytes);
+		const path = await this.ensureDir(retainedInMemoryBytes);
 		if (path === undefined) return undefined;
 		const file = join(path, `${operation === "spill_write" ? "leaf" : "page"}-${this.nextFile++}.bin`);
 		this.pendingIoCopyBytes += data.byteLength;
@@ -182,69 +195,89 @@ export class CompactContentStore {
 			return file;
 		} catch (cause) {
 			this.fail(operation, file, cause, retainedInMemoryBytes);
+			this.discard(file, data.byteLength);
 			return undefined;
 		} finally {
 			this.pendingIoCopyBytes -= data.byteLength;
 		}
 	}
 
-	/** An unreferenced spool file: counted as reclamation debt until its unlink completes. */
+	/**
+	 * An unreferenced (or partially written) spool file: reclamation debt until its unlink completes or
+	 * finds it gone. Files dropped after retirement started belong to the directory retirement removes.
+	 */
 	discard(path: string, bytes: number): void {
+		if (this.retired) return;
 		this.reclaimDebtBytes += bytes;
-		this.enqueue(async () => {
-			try {
-				await this.io.unlink(path);
-				this.reclaimDebtBytes -= bytes;
-			} catch (cause) {
+		this.enqueue("reclaim", () => this.reclaim(path, bytes, 0));
+	}
+
+	/** A failed unlink keeps its debt and is retried with bounded backoff outside the job chain. */
+	private async reclaim(path: string, bytes: number, attempt: number): Promise<void> {
+		try {
+			await this.io.unlink(path);
+		} catch (cause) {
+			if ((cause as NodeJS.ErrnoException).code !== "ENOENT") {
 				this.fail("reclaim", path, cause, 0);
+				const delay = RECLAIM_RETRY_DELAYS_MS[attempt];
+				if (delay !== undefined) {
+					setTimeout(() => {
+						if (this.retired) this.reclaimDebtBytes -= bytes;
+						else this.enqueue("reclaim", () => this.reclaim(path, bytes, attempt + 1));
+					}, delay).unref?.();
+				}
+				return;
 			}
-			this.scheduleSpill();
-		});
+		}
+		this.reclaimDebtBytes -= bytes;
+		this.scheduleSpill();
 	}
 
 	get spillAllowed(): boolean {
 		return !this.halted && !this.retired;
 	}
 
-	enqueue(job: () => Promise<void>): void {
+	/** True while a storage failure or unreclaimed debt above the work allowance holds spilling back. */
+	private get spillStopped(): boolean {
+		return this.halted || this.reclaimDebtBytes > RECLAIM_WORK_ALLOWANCE_BYTES;
+	}
+
+	enqueue(operation: CompactStorageOperation, job: () => Promise<void>): void {
 		this.queued++;
-		const done = () => {
-			this.queued--;
-		};
-		this.chain = this.chain.then(job).then(done, (cause: unknown) => {
-			done();
-			this.fail("reclaim", this.dir, cause, 0);
-		});
+		this.chain = this.chain
+			.then(job)
+			.catch((cause: unknown) => {
+				if (operation === "spill_write") this.spillQueued = false;
+				this.fail(operation, this.dir, cause, 0);
+			})
+			.finally(() => {
+				this.queued--;
+			});
 	}
 
 	private scheduleSpill(): void {
 		if (this.spillQueued || !this.spillAllowed || this.residentPayloadBytes <= this.spillAboveBytes) return;
 		if (this.reclaimDebtBytes > RECLAIM_WORK_ALLOWANCE_BYTES) return;
 		this.spillQueued = true;
-		this.enqueue(() => this.spillNext());
+		this.enqueue("spill_write", () => this.spillNext());
 	}
 
 	/** Spills one oldest resident leaf per job, so other storage work interleaves fairly. */
 	private async spillNext(): Promise<void> {
-		let id: LeafId | undefined;
-		let leaf: Leaf | undefined;
-		for (const [candidateId, candidate] of this.leaves) {
-			if (candidate.state === "ram") {
-				id = candidateId;
-				leaf = candidate;
-				break;
-			}
-		}
+		const [id] = this.ramLeaves;
+		const leaf = id === undefined ? undefined : this.leaves.get(id);
 		if (id === undefined || !leaf || leaf.text === undefined || !this.spillAllowed) {
 			this.spillQueued = false;
 			return;
 		}
 		const bytes = leaf.units * 2;
 		leaf.state = "pending";
+		this.ramLeaves.delete(id);
 		const path = await this.writeFile(Buffer.from(leaf.text, "utf16le"), "spill_write", bytes);
 		const owned = this.leaves.get(id) === leaf;
 		if (path === undefined) {
 			leaf.state = "ram";
+			if (owned) this.ramLeaves.add(id);
 		} else if (!owned || this.retired) {
 			this.discard(path, bytes);
 		} else {
@@ -258,16 +291,19 @@ export class CompactContentStore {
 		this.spillQueued = false;
 		if (this.residentPayloadBytes > this.spillTargetBytes) {
 			this.spillQueued = this.spillAllowed;
-			if (this.spillQueued) this.enqueue(() => this.spillNext());
+			if (this.spillQueued) this.enqueue("spill_write", () => this.spillNext());
 		}
 	}
 
-	private ensureDir(operation: CompactStorageOperation, retained: number): Promise<string | undefined> {
-		this.dirReady ??= mkdir(this.dir, { recursive: true, mode: 0o700 }).then(
-			() => this.dir,
+	/** Creates the private epoch directory once; a refusal or failure halts spilling and is reported. */
+	private ensureDir(retained: number): Promise<string | undefined> {
+		this.dirReady ??= createSpoolDir(this.dir).then(
+			(token) => {
+				this.spoolToken = token;
+				return this.dir;
+			},
 			(cause: unknown) => {
-				this.dirReady = undefined;
-				this.fail(operation, this.dir, cause, retained);
+				this.fail("spool_create", this.dir, cause, retained);
 				return undefined;
 			},
 		);
@@ -280,7 +316,7 @@ export class CompactContentStore {
 	}
 
 	private fail(operation: CompactStorageOperation, path: string, cause: unknown, retained: number): void {
-		if (operation !== "reclaim") this.halted = true;
+		if (operation === "spill_write" || operation === "page_write" || operation === "spool_create") this.halted = true;
 		this.record({ operation, path, cause: describeCause(cause), retainedInMemoryBytes: retained });
 	}
 

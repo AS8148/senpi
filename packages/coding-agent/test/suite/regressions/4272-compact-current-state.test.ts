@@ -114,7 +114,7 @@ describe("4272 compact current state: declared coverage and exact UTF-16 content
 		expect(await text(state)).toBe("Hello world");
 	});
 
-	it("rejects backwards, uncovered and conflicting overlap with a typed error and no partial apply", async () => {
+	it("rejects backwards, partially covered and conflicting overlap with a typed error and no partial apply", async () => {
 		const { state } = await setup();
 		const seed = (messageId: string, value: string, covered: number): CompactTransition => ({
 			type: "block_start",
@@ -126,15 +126,11 @@ describe("4272 compact current state: declared coverage and exact UTF-16 content
 		});
 		state.accept(seed("plain", "abc", 0));
 		state.accept({ type: "block_delta", messageId: "plain", contentIndex: 0, offset: 3, text: "def" });
-		state.accept(seed("partial", "abcdef", 3));
 		state.accept(seed("replay", "abc", 3));
 
 		const rejected: [CompactTransition, string][] = [
 			[{ type: "block_delta", messageId: "plain", contentIndex: 0, offset: 1, text: "bcdefg" }, "non_contiguous"],
-			[
-				{ type: "block_delta", messageId: "partial", contentIndex: 0, offset: 0, text: "abcdefg" },
-				"uncovered_overlap",
-			],
+			[seed("partial", "abcdef", 3), "invalid_coverage"],
 			[
 				{ type: "block_delta", messageId: "replay", contentIndex: 0, offset: 0, text: "abXd" },
 				"conflicting_overlap",
@@ -144,11 +140,7 @@ describe("4272 compact current state: declared coverage and exact UTF-16 content
 			[seed("bad", "ab", 3), "invalid_coverage"],
 		];
 		const sequence = state.acceptedSequence;
-		const before = {
-			plain: await text(state, "plain"),
-			partial: await text(state, "partial"),
-			replay: await text(state, "replay"),
-		};
+		const before = { plain: await text(state, "plain"), replay: await text(state, "replay") };
 		const resident = state.storageStatus().residentTailBytes;
 		for (const [transition, reason] of rejected) {
 			expect(() => state.accept(transition)).toThrow(
@@ -157,12 +149,44 @@ describe("4272 compact current state: declared coverage and exact UTF-16 content
 		}
 		expect(state.acceptedSequence).toBe(sequence);
 		expect(state.storageStatus().residentTailBytes).toBe(resident);
-		expect({
-			plain: await text(state, "plain"),
-			partial: await text(state, "partial"),
-			replay: await text(state, "replay"),
-		}).toEqual(before);
+		expect({ plain: await text(state, "plain"), replay: await text(state, "replay") }).toEqual(before);
 		expect(await text(state, "bad")).toBeUndefined();
+		expect(await text(state, "partial")).toBeUndefined();
+	});
+
+	it("refuses partial seed coverage at start, so no accepted block can refuse every later delta", async () => {
+		const { state } = await setup();
+		const start = (messageId: string, covered: number): CompactTransition => ({
+			type: "block_start",
+			messageId,
+			contentIndex: 0,
+			kind: "text",
+			seed: "abcdef",
+			coveredCodeUnits: covered,
+		});
+		const delta = (messageId: string, offset: number, value: string): CompactTransition => ({
+			type: "block_delta",
+			messageId,
+			contentIndex: 0,
+			offset,
+			text: value,
+		});
+
+		expect(() => state.accept(start("probe", 3))).toThrow(
+			expect.objectContaining({ name: "CompactTransitionError", reason: "invalid_coverage" }),
+		);
+		expect(state.acceptedSequence).toBe(0);
+		expect(await text(state, "probe")).toBeUndefined();
+
+		state.accept(start("full", 6));
+		for (const [offset, value] of [
+			[0, "abc"],
+			[3, "def"],
+			[6, "g"],
+		] as const) {
+			state.accept(delta("full", offset, value));
+		}
+		expect(await text(state, "full")).toBe("abcdefg");
 	});
 
 	it("preserves a surrogate pair split by a leaf boundary and a lone surrogate through spill", async () => {
