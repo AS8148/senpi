@@ -4,7 +4,8 @@ import {
 	type CompactContentStoreOptions,
 	COMPACT_LEAF_CODE_UNITS as LEAF,
 } from "../../../src/modes/rpc/compact-content-store.ts";
-import { CompactSessionState, type CompactTransition } from "../../../src/modes/rpc/compact-session-state.ts";
+import { CompactSessionState } from "../../../src/modes/rpc/compact-session-state.ts";
+import type { CompactTransition } from "../../../src/modes/rpc/compact-transition.ts";
 import { controlledIo, spoolRoot } from "../compact-storage-support.ts";
 
 // senpi#4272 (R3.C6.4, T6/X07 S03 slice): the compact owner retains current content, not the

@@ -5,7 +5,13 @@ import { readFile, unlink, writeFile } from "node:fs/promises";
  * reports. Every spool access goes through `CompactStorageIo`; nothing here blocks the host loop.
  */
 
-export type CompactStorageOperation = "spool_create" | "spill_write" | "leaf_read" | "reclaim";
+export type CompactStorageOperation =
+	| "spool_create"
+	| "spill_write"
+	| "page_write"
+	| "leaf_read"
+	| "page_read"
+	| "reclaim";
 
 export interface CompactStorageFailure {
 	readonly operation: CompactStorageOperation;
@@ -28,8 +34,13 @@ export const nodeCompactStorageIo: CompactStorageIo = {
 	unlink: (path) => unlink(path),
 };
 
+/** Never throws: a host-supplied cause that cannot be described must not abort the failure report. */
 export function describeCause(cause: unknown): string {
-	return cause instanceof Error ? cause.message : String(cause);
+	try {
+		return cause instanceof Error ? cause.message : String(cause);
+	} catch {
+		return "unprintable failure cause";
+	}
 }
 
 /** Committed storage that can no longer be read: a real error, never empty content. */
