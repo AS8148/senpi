@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { lstat, mkdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { describeCause } from "./compact-storage-io.ts";
 
 /**
  * Ownership of the compact spool's epoch directory (senpi#4272). The store creates the directory
@@ -13,6 +15,7 @@ const MARKER = ".compact-spool-owner";
 
 type CompactSpoolRefusal =
 	| "pre_existing"
+	| "marker_write_failed"
 	| "symlink"
 	| "not_directory"
 	| "marker_missing"
@@ -23,8 +26,11 @@ class CompactSpoolRefusedError extends Error {
 	readonly reason: CompactSpoolRefusal;
 	readonly path: string;
 
-	constructor(reason: CompactSpoolRefusal, path: string) {
-		super(`compact spool directory refused (${reason}): ${path}`);
+	constructor(reason: CompactSpoolRefusal, path: string, cause?: unknown, cleanupFailure?: unknown) {
+		const detail = cause === undefined ? "" : `: ${describeCause(cause)}`;
+		const kept =
+			cleanupFailure === undefined ? "" : `; removing the directory failed: ${describeCause(cleanupFailure)}`;
+		super(`compact spool directory refused (${reason}): ${path}${detail}${kept}`, { cause });
 		this.name = "CompactSpoolRefusedError";
 		this.reason = reason;
 		this.path = path;
@@ -41,19 +47,45 @@ export async function createSpoolDir(dir: string): Promise<string> {
 		throw cause;
 	}
 	const token = randomUUID();
-	await writeFile(join(dir, MARKER), token, { flag: "wx", mode: 0o600 });
+	try {
+		await writeFile(join(dir, MARKER), token, { flag: "wx", mode: 0o600 });
+	} catch (cause) {
+		throw await abandonSpoolDir(dir, cause);
+	}
 	return token;
 }
 
-/** Removes `dir` only while it is still the private, marked directory `createSpoolDir` made. */
+/**
+ * Removes a directory `createSpoolDir` just made but could not mark, so a later store creates it
+ * fresh instead of refusing it as pre-existing. Only a marker this call's exclusive create made (any
+ * failure but EEXIST) is unlinked, then the directory itself, which `rmdir` removes only while empty.
+ */
+async function abandonSpoolDir(dir: string, cause: unknown): Promise<CompactSpoolRefusedError> {
+	try {
+		if ((cause as NodeJS.ErrnoException).code !== "EEXIST") await rm(join(dir, MARKER), { force: true });
+		await rmdir(dir);
+		return new CompactSpoolRefusedError("marker_write_failed", dir, cause);
+	} catch (cleanupFailure) {
+		return new CompactSpoolRefusedError("marker_write_failed", dir, cause, cleanupFailure);
+	}
+}
+
+/**
+ * Removes `dir` only while it is still the private, marked directory `createSpoolDir` made. A
+ * directory that is already gone leaves nothing to remove, so retirement settles as a no-op.
+ */
 export async function removeSpoolDir(dir: string, token: string): Promise<void> {
-	const refusal = await refusalFor(dir, token);
+	const owned = await lstat(dir).catch((cause: unknown) => {
+		if ((cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw cause;
+	});
+	if (owned === undefined) return;
+	const refusal = await refusalFor(dir, owned, token);
 	if (refusal) throw new CompactSpoolRefusedError(refusal, dir);
 	await rm(dir, { recursive: true, force: true });
 }
 
-async function refusalFor(dir: string, token: string): Promise<CompactSpoolRefusal | undefined> {
-	const owned = await lstat(dir);
+async function refusalFor(dir: string, owned: Stats, token: string): Promise<CompactSpoolRefusal | undefined> {
 	if (owned.isSymbolicLink()) return "symlink";
 	if (!owned.isDirectory()) return "not_directory";
 	const markerPath = join(dir, MARKER);

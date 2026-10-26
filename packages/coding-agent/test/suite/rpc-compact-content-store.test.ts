@@ -1,11 +1,8 @@
 import { readdir, stat, truncate, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-	type CompactContentStoreOptions,
-	COMPACT_LEAF_CODE_UNITS as LEAF,
-} from "../../src/modes/rpc/compact-content-store.ts";
-import { CompactSessionState } from "../../src/modes/rpc/compact-session-state.ts";
+import { COMPACT_LEAF_CODE_UNITS as LEAF } from "../../src/modes/rpc/compact-content-store.ts";
+import { CompactSessionState, type CompactSessionStateOptions } from "../../src/modes/rpc/compact-session-state.ts";
 import { controlledIo, spoolRoot } from "./compact-storage-support.ts";
 
 // senpi#4272 (R3.C6.4 / R3.C2.4, ruling 08): storage contracts of the compact current-state owner.
@@ -16,7 +13,7 @@ afterEach(async () => {
 	for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
-async function setup(options: Partial<CompactContentStoreOptions> = {}) {
+async function setup(options: Partial<CompactSessionStateOptions> = {}) {
 	const root = await spoolRoot();
 	cleanups.push(root.cleanup);
 	const control = controlledIo();
@@ -147,7 +144,46 @@ describe("compact content store: failure accounting (ruling 08 conditions 1, 3, 
 	});
 });
 
-describe("compact session state: settled rows as an exact resident map (ruling 16 condition 1)", () => {
+describe("compact content index: coalesced overrides and stale compaction", () => {
+	it("never lets an old compaction erase a newer override or resurrect a removed row", async () => {
+		const { state, control } = await setup({ compactAboveRows: 3 });
+		for (const id of ["m1", "m2", "m3"]) state.accept(start(id, ""));
+		const pageWrite = control.hold("write");
+		for (const id of ["m1", "m2", "m3"])
+			state.accept({ type: "message_status", messageId: id, persistence: "pending" });
+		await pageWrite.entered;
+
+		const before = state.freeze();
+		state.accept({ type: "message_status", messageId: "m1", persistence: "appended" });
+		state.accept({ type: "message_remove", messageId: "m2" });
+		pageWrite.release();
+		await state.idle();
+
+		expect(state.storageStatus()).toMatchObject({ basePages: 1, baseRows: 1, overrideSlots: 1, deletionMasks: 0 });
+		const persistence = async (cut = state.freeze()) => {
+			const view = await state.read(cut);
+			state.release(cut);
+			return Object.fromEntries(view.messages.map((m) => [m.messageId, m.persistence]));
+		};
+		expect(await persistence()).toEqual({ m1: "appended", m3: "pending" });
+		expect(await persistence(before)).toEqual({ m1: "pending", m2: "pending", m3: "pending" });
+
+		for (const id of ["m4", "m5"]) {
+			state.accept(start(id, ""));
+			state.accept({ type: "message_status", messageId: id, persistence: "failed" });
+		}
+		await state.idle();
+		expect(state.storageStatus()).toMatchObject({
+			overrideSlots: 0,
+			deletionMasks: 0,
+			baseRows: 4,
+			reclaimDebtBytes: 0,
+		});
+		expect(await persistence()).toEqual({ m1: "appended", m3: "pending", m4: "failed", m5: "failed" });
+	});
+});
+
+describe("compact session state: exact settled-row transitions", () => {
 	it("replaces and removes spilled settled rows exactly and refuses transitions on a removed message", async () => {
 		const { state, dir } = await setup({ spillAboveBytes: 0, spillTargetBytes: 0 });
 		for (const id of ["m1", "m2", "m3"]) {
@@ -155,7 +191,7 @@ describe("compact session state: settled rows as an exact resident map (ruling 1
 			state.accept({ type: "message_status", messageId: id, persistence: "pending" });
 		}
 		await state.idle();
-		expect(state.storageStatus()).toMatchObject({ residentPayloadBytes: 0, residentSettledRows: 3 });
+		expect(state.storageStatus()).toMatchObject({ residentPayloadBytes: 0, overrideSlots: 3 });
 
 		const before = state.freeze();
 		state.accept({ type: "message_status", messageId: "m1", persistence: "appended" });
@@ -195,10 +231,10 @@ describe("compact session state: settled rows as an exact resident map (ruling 1
 			persistence: "failed",
 			blocks: [{ contentIndex: 0, kind: "text", text: "new" }],
 		});
-		expect(state.storageStatus()).toMatchObject({ residentSettledRows: 3, reclaimDebtBytes: 0 });
+		expect(state.storageStatus()).toMatchObject({ overrideSlots: 3, deletionMasks: 0, reclaimDebtBytes: 0 });
 	});
 
-	it("holds one settled row for 10,000 updates to the same message", async () => {
+	it("holds one override slot for 10,000 updates to the same settled row", async () => {
 		const { state } = await setup();
 		state.accept(start("m1", "abc"));
 		state.accept({ type: "message_status", messageId: "m1", persistence: "pending" });
@@ -207,7 +243,7 @@ describe("compact session state: settled rows as an exact resident map (ruling 1
 			state.accept({ type: "message_status", messageId: "m1", persistence: i % 2 === 0 ? "appended" : "failed" });
 		}
 		expect(state.acceptedSequence).toBe(10_002);
-		expect(state.storageStatus()).toMatchObject({ residentSettledRows: 1, residentPayloadBytes: resident });
+		expect(state.storageStatus()).toMatchObject({ overrideSlots: 1, residentPayloadBytes: resident });
 		expect((await current(state)).messages).toEqual([
 			{ messageId: "m1", persistence: "failed", blocks: [{ contentIndex: 0, kind: "text", text: "abc" }] },
 		]);
