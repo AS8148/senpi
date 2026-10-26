@@ -2,12 +2,15 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { CONFIG_DIR_NAME, CONFIG_FLAT_LAYOUT, getAgentDir } from "../../../../config.ts";
 import { brandEnvNames } from "../../../brand.ts";
+import type { PinSource } from "./affinity.ts";
 import type { AuthenticatedAttemptInput } from "./auth-attempt.ts";
+import { seatDigest } from "./seat-digest.ts";
 import { logContinuityEvent } from "./session-observability.ts";
 
 type AccountContext = {
 	readonly accountLabel: string;
-	readonly accountSource: "login" | "import" | "env" | "ambient";
+	readonly accountSource: "login" | "import" | "env" | "ambient" | "unknown";
+	readonly pinSource?: PinSource;
 };
 
 // Context follows the actual SDK event/error, not the session: overlapping turns and failover
@@ -18,7 +21,11 @@ export function attemptAccountContext(auth: AuthenticatedAttemptInput): AccountC
 	return {
 		// Operational account names, unlike displayName, cannot contain an email or org identifier.
 		accountLabel: /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(auth.accountName) ? auth.accountName : "configured account",
-		accountSource: auth.accounts.find((account) => account.name === auth.accountName)?.source ?? "ambient",
+		accountSource:
+			auth.authLane === "ambient"
+				? "ambient"
+				: (auth.accounts.find((account) => account.name === auth.accountName)?.source ?? "unknown"),
+		...(auth.pinSource === undefined ? {} : { pinSource: auth.pinSource }),
 	};
 }
 
@@ -37,7 +44,7 @@ export function errorAccountContext(error: unknown): AccountContext | undefined 
 	return error !== null && typeof error === "object" ? contexts.get(error) : undefined;
 }
 
-export function logAttemptAccount(context: AccountContext, sessionId: string | undefined): void {
+export function logAttemptAccount(auth: AuthenticatedAttemptInput, sessionId: string | undefined): void {
 	const agentDir = getAgentDir();
 	// This is the config resolver's exact prefix order, including explicitly empty selectors.
 	const selector = brandEnvNames("CODING_AGENT_DIR").find((name) => process.env[name] !== undefined);
@@ -46,8 +53,15 @@ export function logAttemptAccount(context: AccountContext, sessionId: string | u
 		selector !== undefined && process.env[selector] ? selector : agentDir === defaultDir ? "default" : "project";
 	logContinuityEvent("claude_sdk_oauth_session_auth", {
 		...(sessionId === undefined ? {} : { sessionId }),
-		agentDir,
+		agentDir: `dir:${seatDigest(`agent-dir:${agentDir}`, agentDir)}`,
 		agentDirSource,
-		...context,
+		agentDirRule:
+			selector !== undefined && process.env[selector]
+				? "environment"
+				: agentDir === defaultDir
+					? "home-default"
+					: "project-local",
+		seat: seatDigest(auth.accountName, agentDir),
+		accountSource: attemptAccountContext(auth).accountSource,
 	});
 }

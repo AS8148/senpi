@@ -1,7 +1,6 @@
 // Desktop#4753: billing failures must identify the account actually attempted, without credential material.
 import { type Api, InMemoryCredentialStore, type Model } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { getAgentDir } from "../../../src/config.ts";
 import {
 	type AccountSlot,
 	emptyCredential,
@@ -65,6 +64,7 @@ async function failRequest(input: {
 	readonly failure?: string;
 	readonly preferredAccount?: string;
 	readonly eventFailure?: boolean;
+	readonly pinSource?: "cli" | "settings" | "stored";
 }) {
 	const query: SdkQuery = () => ({
 		async *[Symbol.asyncIterator](): AsyncGenerator<SDKMessage> {
@@ -113,7 +113,9 @@ async function failRequest(input: {
 			providerSettings: {
 				tokenInjection: input.ambient ? "ambient" : "oauth-slots",
 				accountFallback: input.accountFallback ?? false,
+				...(input.pinSource === "settings" ? { pinnedAccount: first.name } : {}),
 			},
+			...(input.pinSource === "cli" ? { pinnedAccount: first.name } : {}),
 			preferredAccount: input.preferredAccount,
 			sessionId: "synthetic-session",
 		})) {
@@ -144,7 +146,7 @@ describe("billing account attribution", () => {
 			const { shown } = await failRequest({ ambient: source === "ambient" });
 			expect(shown).toContain(source === "env" ? "env" : source === "ambient" ? "ambient" : account.name);
 			expect(shown).toContain(source);
-			expect(shown).toContain("/claude-account pin");
+			if (source !== "ambient") expect(shown).toContain("/claude-account pin");
 			expect(shown).toContain("claude.ai/settings/usage");
 			expect(shown).not.toContain(first.displayName);
 			expect(shown).not.toContain(first.access);
@@ -177,20 +179,32 @@ describe("billing account attribution", () => {
 			event: "claude_sdk_oauth_session_auth",
 			data: {
 				sessionId: "synthetic-session",
-				agentDir: getAgentDir(),
+				agentDir: expect.stringMatching(/^dir:[0-9a-f]{8}$/),
 				agentDirSource: expect.any(String),
-				accountLabel: first.name,
+				agentDirRule: expect.stringMatching(/^(environment|home-default|project-local)$/),
+				seat: expect.stringMatching(/^[0-9a-f]{8}$/),
 				accountSource: first.source,
 			},
 		});
 		expect(JSON.stringify(events)).not.toContain(first.access);
 		expect(JSON.stringify(events)).not.toContain(first.displayName);
+		expect(JSON.stringify(events)).not.toContain(first.name);
 	});
 
 	it("does not attach billing instructions to an unrelated refusal", async () => {
 		await configure([first]);
 		const { shown } = await failRequest({ failure: "model_not_found" });
 		expect(shown).not.toContain(first.name);
+	});
+	it.each([
+		["cli", "--claude-account"],
+		["settings", "anthropicSubscriptionProvider.pinnedAccount"],
+		["stored", "/claude-account pin"],
+	] as const)("names the effective %s pin action", async (pinSource, action) => {
+		await configure([first]);
+		const { shown } = await failRequest({ pinSource });
+		expect(shown).toContain(action);
+		if (pinSource !== "stored") expect(shown).not.toContain("/claude-account pin");
 	});
 
 	it.each(["main", "auxiliary"] as const)(

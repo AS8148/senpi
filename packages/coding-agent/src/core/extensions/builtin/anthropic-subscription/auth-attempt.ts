@@ -3,6 +3,7 @@ import { claudeWindowsFromSdkEvent } from "../../../subscription-limits/limit-wi
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 import { attemptAccountContext, logAttemptAccount, rememberAccountContext } from "./account-context.ts";
 import type { AccountSlot } from "./accounts.ts";
+import type { PinSource } from "./affinity.ts";
 import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
 import type { AnthropicSubscriptionTokenInjection } from "./settings.ts";
 
@@ -10,6 +11,7 @@ export type AuthenticatedAttemptInput = {
 	accountName: string;
 	accounts: readonly AccountSlot[];
 	authLane: AnthropicSubscriptionTokenInjection;
+	pinSource?: PinSource;
 	options: Options;
 	/**
 	 * Digest of the OAuth access token this attempt authenticates with. A
@@ -59,7 +61,7 @@ export async function createAttemptMessages(
 	auth: AuthenticatedAttemptInput,
 ): Promise<AsyncIterable<SDKMessage>> {
 	const account = attemptAccountContext(auth);
-	logAttemptAccount(account, input.sessionId);
+	logAttemptAccount(auth, input.sessionId);
 	// Claude Code loads auto memory independently of settingSources. Keep its private
 	// notes out of every subscription session, after all auth and caller overrides.
 	auth.options.env = { ...auth.options.env, CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" };
