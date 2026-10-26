@@ -1,3 +1,4 @@
+import { CompactContentIndex, type FrozenIndex } from "./compact-content-index.ts";
 import {
 	COMPACT_LEAF_CODE_UNITS,
 	CompactContentStore,
@@ -11,10 +12,8 @@ import {
  *
  * `accept` is synchronous: it validates a typed transition completely, then publishes the next
  * sequence, or throws and leaves the prior root untouched. Block text lives in owned bounded leaves
- * that spill asynchronously; settled message rows live in a resident map whose persistence status
- * changes only through `message_status`, never through storage success or failure. The map is
- * exact for every transition: a status change replaces the whole row, a removal deletes it, and a
- * transition addressing a removed or unknown message is refused rather than masked. `freeze` pins
+ * that spill asynchronously; settled messages live in a spillable index whose persistence status
+ * changes only through `message_status`, never through storage success or failure. `freeze` pins
  * an immutable cut synchronously, and `read` materializes it asynchronously from RAM or disk.
  */
 
@@ -83,7 +82,7 @@ interface SettledRow {
 interface FrozenCompactState {
 	readonly sequence: number;
 	readonly active: ReadonlyMap<string, readonly FrozenBlock[]>;
-	readonly settled: ReadonlyMap<string, SettledRow>;
+	readonly settled: FrozenIndex<SettledRow>;
 }
 
 interface CompactMessageView {
@@ -96,16 +95,23 @@ interface CompactMessageView {
 	}[];
 }
 
+export interface CompactSessionStateOptions extends CompactContentStoreOptions {
+	/** Index compaction is considered once this many override slots exist (one page by default). */
+	readonly compactAboveRows?: number;
+}
+
 const byContentIndex = ([a]: [number, ActiveBlock], [b]: [number, ActiveBlock]) => a - b;
 
 export class CompactSessionState {
 	private readonly store: CompactContentStore;
-	private readonly settled = new Map<string, SettledRow>();
+	private readonly settled: CompactContentIndex<SettledRow>;
 	private readonly active = new Map<string, Map<number, ActiveBlock>>();
 	private sequence = 0;
 
-	constructor(options: CompactContentStoreOptions) {
+	constructor(options: CompactSessionStateOptions) {
 		this.store = new CompactContentStore(options);
+		const leavesOf = (row: SettledRow) => row.blocks.flatMap((block) => block.leaves);
+		this.settled = new CompactContentIndex(this.store, leavesOf, options.compactAboveRows ?? 128);
 	}
 
 	get acceptedSequence(): number {
@@ -136,21 +142,19 @@ export class CompactSessionState {
 	freeze(): FrozenCompactState {
 		const active = new Map<string, FrozenBlock[]>();
 		for (const [messageId, blocks] of this.active) active.set(messageId, this.sealAll(blocks));
-		const settled = new Map(this.settled);
 		for (const blocks of active.values()) this.pin(blocks, 1);
-		for (const row of settled.values()) this.pin(row.blocks, 1);
-		return { sequence: this.sequence, active, settled };
+		return { sequence: this.sequence, active, settled: this.settled.freeze() };
 	}
 
 	release(frozen: FrozenCompactState): void {
 		for (const blocks of frozen.active.values()) this.pin(blocks, -1);
-		for (const row of frozen.settled.values()) this.pin(row.blocks, -1);
+		this.settled.release(frozen.settled);
 	}
 
 	/** Rejects with the storage error when committed content is gone; never returns empty content for it. */
 	async read(frozen: FrozenCompactState): Promise<{ sequence: number; messages: CompactMessageView[] }> {
 		const messages: CompactMessageView[] = [];
-		for (const [messageId, row] of frozen.settled) {
+		for (const [messageId, row] of await this.settled.entries(frozen.settled)) {
 			messages.push({ messageId, persistence: row.persistence, blocks: await this.texts(row.blocks) });
 		}
 		for (const [messageId, blocks] of frozen.active) {
@@ -159,12 +163,11 @@ export class CompactSessionState {
 		return { sequence: frozen.sequence, messages };
 	}
 
-	storageStatus(): CompactStorageStatus & {
-		readonly residentTailBytes: number;
-		readonly hotWitnessBytes: number;
-		/** Settled rows kept resident: S03a-1 has no paged row index, so every row header stays in RAM. */
-		readonly residentSettledRows: number;
-	} {
+	storageStatus(): CompactStorageStatus &
+		ReturnType<CompactContentIndex<SettledRow>["status"]> & {
+			readonly residentTailBytes: number;
+			readonly hotWitnessBytes: number;
+		} {
 		let residentTailBytes = 0;
 		let hotWitnessBytes = 0;
 		for (const blocks of this.active.values()) {
@@ -173,7 +176,7 @@ export class CompactSessionState {
 				hotWitnessBytes += block.witness.length * 2;
 			}
 		}
-		return { ...this.store.status(), residentTailBytes, hotWitnessBytes, residentSettledRows: this.settled.size };
+		return { ...this.store.status(), ...this.settled.status(), residentTailBytes, hotWitnessBytes };
 	}
 
 	idle(): Promise<void> {
@@ -233,12 +236,10 @@ export class CompactSessionState {
 		const blocks = this.active.get(messageId);
 		if (blocks) {
 			this.settled.set(messageId, { persistence, blocks: this.sealAll(blocks) });
+			for (const block of blocks.values()) for (const id of block.leaves) this.store.adjust(id, -1, 0);
 			this.active.delete(messageId);
-			return;
-		}
-		const row = this.settled.get(messageId);
-		if (row) {
-			this.settled.set(messageId, { ...row, persistence });
+		} else if (this.settled.has(messageId)) {
+			this.settled.patch(messageId, { persistence });
 		} else {
 			throw new CompactTransitionError("unknown_message", messageId);
 		}
@@ -246,12 +247,11 @@ export class CompactSessionState {
 
 	private remove(messageId: string): void {
 		const blocks = this.active.get(messageId);
-		const row = this.settled.get(messageId);
-		if (!blocks && !row) throw new CompactTransitionError("unknown_message", messageId);
+		const settled = this.settled.has(messageId);
+		if (!blocks && !settled) throw new CompactTransitionError("unknown_message", messageId);
 		for (const block of blocks?.values() ?? []) for (const id of block.leaves) this.store.adjust(id, -1, 0);
-		for (const block of row?.blocks ?? []) for (const id of block.leaves) this.store.adjust(id, -1, 0);
 		this.active.delete(messageId);
-		this.settled.delete(messageId);
+		if (settled) this.settled.delete(messageId);
 	}
 
 	private block(address: BlockAddress): ActiveBlock {

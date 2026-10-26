@@ -77,6 +77,8 @@ export class CompactContentStore {
 	private spilledLiveBytes = 0;
 	private spillBytesWritten = 0;
 	private reclaimDebtBytes = 0;
+	/** Called after a leaf commits, so index compaction can include rows that now reference only disk. */
+	onCommitted: (() => void) | undefined;
 
 	constructor(options: CompactContentStoreOptions) {
 		this.dir = options.dir;
@@ -110,6 +112,10 @@ export class CompactContentStore {
 			return;
 		}
 		this.residentPayloadBytes -= leaf.units * 2;
+	}
+
+	isCommitted(id: LeafId): boolean {
+		return this.leaves.get(id)?.state === "committed";
 	}
 
 	/** Reads a leaf the caller still references, from RAM or its committed file. */
@@ -147,7 +153,7 @@ export class CompactContentStore {
 	}
 
 	/** Reads a committed file and rejects a missing, unreadable or short one. */
-	private async readFile(path: string, bytes: number, operation: CompactStorageOperation): Promise<Buffer> {
+	async readFile(path: string, bytes: number, operation: CompactStorageOperation): Promise<Buffer> {
 		let data: Buffer;
 		try {
 			data = await this.io.readFile(path);
@@ -161,14 +167,14 @@ export class CompactContentStore {
 	}
 
 	/** Writes one new spool file; undefined means the write failed, was reported, and spilling halted. */
-	private async writeFile(
+	async writeFile(
 		data: Buffer,
 		operation: CompactStorageOperation,
 		retainedInMemoryBytes: number,
 	): Promise<string | undefined> {
 		const path = await this.ensureDir(operation, retainedInMemoryBytes);
 		if (path === undefined) return undefined;
-		const file = join(path, `leaf-${this.nextFile++}.bin`);
+		const file = join(path, `${operation === "spill_write" ? "leaf" : "page"}-${this.nextFile++}.bin`);
 		this.pendingIoCopyBytes += data.byteLength;
 		try {
 			await this.io.writeFile(file, data);
@@ -183,7 +189,7 @@ export class CompactContentStore {
 	}
 
 	/** An unreferenced spool file: counted as reclamation debt until its unlink completes. */
-	private discard(path: string, bytes: number): void {
+	discard(path: string, bytes: number): void {
 		this.reclaimDebtBytes += bytes;
 		this.enqueue(async () => {
 			try {
@@ -196,11 +202,11 @@ export class CompactContentStore {
 		});
 	}
 
-	private get spillAllowed(): boolean {
+	get spillAllowed(): boolean {
 		return !this.halted && !this.retired;
 	}
 
-	private enqueue(job: () => Promise<void>): void {
+	enqueue(job: () => Promise<void>): void {
 		this.queued++;
 		const done = () => {
 			this.queued--;
@@ -247,6 +253,7 @@ export class CompactContentStore {
 			leaf.text = undefined;
 			this.residentPayloadBytes -= bytes;
 			this.spilledLiveBytes += bytes;
+			this.onCommitted?.();
 		}
 		this.spillQueued = false;
 		if (this.residentPayloadBytes > this.spillTargetBytes) {
