@@ -9,7 +9,7 @@ import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
 import { HeldAnthropicModel, openedSessionId } from "../helpers/rpc-generation-support.ts";
 import { MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "../helpers/rpc-hermetic.ts";
 import { hostCliSandbox, onlyJsonLine, runHostCli, sweepHostCliSandboxes } from "./host-cli-support.ts";
-import { authenticate, Peer, type Wire } from "./rpc-public-auth-harness.ts";
+import { authenticate, HOST_TEST_TIMEOUT_MS, Peer, type Wire } from "./rpc-public-auth-harness.ts";
 
 const sockets: Socket[] = [];
 const models: HeldAnthropicModel[] = [];
@@ -96,7 +96,7 @@ async function heldModel(qa: Awaited<ReturnType<typeof hostCliSandbox>>) {
 }
 
 async function busy(qa: Awaited<ReturnType<typeof hostCliSandbox>>) {
-	const peer = await Peer.connect(qa.socket);
+	const peer = await Peer.connect(qa.socket, { deadlineMs: HOST_TEST_TIMEOUT_MS });
 	sockets.push(peer.socket);
 	await authenticate(peer, qa.agentDir);
 	const sessionId = openedSessionId(
