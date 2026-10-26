@@ -325,7 +325,7 @@ import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from ".
 import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
 import type { PromptSizeInventory } from "./prompt-size-startup.ts";
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
-import { type ProviderFailure, providerFailureOf } from "./provider-failure.ts";
+import { isRequestLevelRefusal, type ProviderFailure, providerFailureOf } from "./provider-failure.ts";
 import { rejectedImageSources } from "./provider-rejected-images.ts";
 import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./provider-timeout-retry.ts";
 import { QueuedInputAges } from "./queued-input-age.ts";
@@ -12547,7 +12547,7 @@ export class AgentSession {
 			!isCursorZeroTokenResourceExhausted(message) &&
 			!isClassifierRefusal(message) &&
 			!message.content.some((content) => content.type === "toolCall") &&
-			this._retryFallback.canTryFallback()
+			this._retryFallback.canTryFallback(isRequestLevelRefusal(message) ? message.provider : undefined)
 		);
 	}
 
@@ -12810,7 +12810,10 @@ export class AgentSession {
 				// Billing-class failures never recover on this account, so the fallback
 				// switch pins as the session model instead of reverting after the cooldown.
 				const reason = isBillingErrorMessage(errorMessage) ? "billing" : "hard-error";
-				switchedFallback = await tryFallback(reason, { errorMessage });
+				switchedFallback = await tryFallback(reason, {
+					errorMessage,
+					...(isRequestLevelRefusal(message) ? { refusedProvider: message.provider } : {}),
+				});
 				if (!switchedFallback) {
 					const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 					if (exhaustedChainKey) {

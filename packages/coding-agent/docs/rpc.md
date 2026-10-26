@@ -5041,6 +5041,7 @@ When the run ended with a provider error (the last assistant message has `stopRe
 | `category` | `action` |
 | --- | --- |
 | `auth` | re-authenticate the provider |
+| `request_refused` | send the message again or choose another model; if it keeps failing, re-authenticate `<provider>` |
 | `rate_limit` | retry later or set a fallback model |
 | `quota` | check the plan or credits |
 | `context_limit` | compact or shorten the conversation |
@@ -5050,6 +5051,10 @@ When the run ended with a provider error (the last assistant message has `stopRe
 | `unknown` | retry once; if it repeats, switch the model or report the code |
 
 `unknown` is used when the error carries no diagnostic or its metadata matches no row; its `reason` names the provider and the code or status, for example `the provider returned an error that could not be classified (openai, status 429)`. A bare 429 stays `unknown` because status alone cannot tell a rate limit from exhausted quota. Retry and fallback decisions do not read `failure`.
+
+`request_refused` is an `auth` failure whose credential (same provider, endpoint and key) served a response within the last 10 minutes: the provider refused this one request, and the key may still be valid. If failures persist, re-authenticate the named provider: a recently working key may have been revoked. The failed assistant message carries `credentialServedRecently: true` and keeps the provider's own `errorMessage`. The in-memory record drops expired entries on each record/check and retains at most 1,024 credentials, evicting the least recently served first. Header-based, ADC and SigV4 authentication do not supply an `apiKey`, so their fingerprint reduces to provider + baseUrl; different credentials on that endpoint share the record.
+
+The fallback chain conservatively skips every other model on that provider for the rest of the turn, including models with a different endpoint or key; models on other providers are still tried. This skip is provider-wide, not fingerprint-matched: the synchronous candidate scan cannot resolve the request's asynchronously prepared credentials. An `auth` failure with no recent success on the credential stays `auth`. A `request_refused` failure follows normal goal provider recovery rather than blocking the goal with login guidance.
 
 ### agent_settled
 
