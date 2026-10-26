@@ -66,20 +66,23 @@ export async function createRpcSessionBinding(
 	let droppedAfterClose = false;
 	const handler: RpcConnectionHandler = await runWithProviderScope(entry.scope, async () => {
 		const writeInScope = bindToProviderScope(enqueueRecord);
+		const dropAfterClose = (): void => {
+			if (!droppedAfterClose)
+				process.stderr.write(
+					`senpi rpc host: dropped a record for closed session ${sessionId} at ${new Date().toISOString()}\n`,
+				);
+			droppedAfterClose = true;
+		};
 		const writeRecord = (record: object): void => {
-			if (entry.scope.state === "closed") {
-				if (!droppedAfterClose)
-					process.stderr.write(
-						`senpi rpc host: dropped a record for closed session ${sessionId} at ${new Date().toISOString()}\n`,
-					);
-				droppedAfterClose = true;
-				return;
-			}
+			if (entry.scope.state === "closed") return dropAfterClose();
 			writeInScope(record);
 		};
 		const taggedSink: RpcConnectionSink = {
 			writeRecord,
+			// A late raw reply after the scope closed is dropped like any record (senpi#2871); while the scope is
+			// open, records arrive only through writeRecord, so a raw write is a wiring bug.
 			writeRaw: () => {
+				if (entry.scope.state === "closed") return dropAfterClose();
 				throw new Error("Shared session bindings deliver records through writeRecord, never writeRaw");
 			},
 			waitForBackpressure: bindToProviderScope(async () => {}),
