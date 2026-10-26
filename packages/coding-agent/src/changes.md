@@ -1,3 +1,43 @@
+## 2026-10-25 - Keep presenter bootstrap through CLI re-execution (senpi#4247)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: explicitly preserves the live reserved presenter descriptor through runtime selection and isolated CLI re-execution, keeping the lifetime descriptor separate.
+
+### Why
+
+- `packages/coding-agent/src/cli.ts`: inheriting only standard I/O dropped fd 4 before the public host command could enroll its caller.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/cli.ts`: runtime re-execution precedes extension loading and owns descriptor inheritance.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli.ts`: the runtime-selection and isolated-process spawn options.
+
+## 2026-10-25 - Host-owned MCP presenter deployment options (#4197)
+
+### What changed
+
+- `main.ts`: pass the deployment switch to the RPC host and interactive terminal, and the reserved bootstrap descriptor to the host without copying the descriptor into session-worker runtime configuration.
+
+### Why
+
+- Presenter enrollment belongs to the launch owner, not a project setting, ordinary RPC role, or worker launch specification.
+
+### Key decisions
+
+- Enforcement is explicitly enabled with `--mcp-presenter-enforcement`. Without it, existing RPC and terminal MCP UI behavior remains unchanged.
+
+### Why an extension could not handle it
+
+- The entry point owns process descriptors and the configuration handed to workers.
+
+### Expected merge conflict zones
+
+- LOW: RPC-host construction in `main.ts`.
+
 ## 2026-10-24 - Fresh standalone CLI sessions accept task ancestry (oh-my-openagent#10782)
 
 ### What changed

@@ -1,3 +1,44 @@
+## 2026-10-25 - Public host commands accept presenter enforcement (senpi#4247)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-command-args.ts` and `packages/coding-agent/src/cli/host-command.ts`: accept and forward `--mcp-presenter-enforcement` only for ensure and handoff, separately from the launch specification.
+
+### Why
+
+- The public deployment path could pass fd 4 but not the enforcement option required to enroll.
+
+### Why an extension could not handle it
+
+- Host launch arguments are parsed before any session or extension exists.
+
+### Expected merge conflict zones
+
+- The host argument parser, help text and request options.
+
+## 2026-10-25 - Private presenter bootstrap launch options (#4197)
+
+### What changed
+
+- `args.ts`, `host-command-args.ts`, and `host-command.ts`: accept the reserved presenter descriptor and carry its live stream through the host launch API.
+
+### Why
+
+- An inherited private channel, not an advertised UI capability or a serialized launch argument containing credentials, establishes the launch principal.
+
+### Key decisions
+
+- Descriptor 4 is reserved for presenter bootstrap. Descriptor 3 remains the owner-lifetime channel. No key, challenge, or grant is put in an environment variable or command-line argument.
+- An `ensure` call that reuses an existing host does not enroll its caller.
+
+### Why an extension could not handle it
+
+- Extensions run after launch and cannot establish an inherited launch-owner trust boundary.
+
+### Expected merge conflict zones
+
+- LOW: CLI option parsing and the host-command runner call.
+
 ## 2026-10-24 - Parse standalone child ancestry before startup (oh-my-openagent#10782)
 
 ### What changed

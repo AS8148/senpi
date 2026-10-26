@@ -86,14 +86,7 @@ async function privateElicitation(
 	timeoutMs: number,
 ) {
 	const operation = legacyMcpOperation(client);
-	if (operation === "ambiguous") {
-		const { ErrorCode, McpError } = await loadMcpSdkTypes();
-		throw new McpError(
-			ErrorCode.InternalError,
-			"Elicitation cannot be processed: ambiguous origin from concurrent legacy tools/call requests. Run these calls sequentially or use an MRTR server.",
-			{ reason: "ambiguous_legacy_origin" },
-		);
-	}
+	if (operation === "ambiguous") return rejectPrivateElicitation();
 	const presenter = operation?.origin.privateForm;
 	if (
 		!isRecord(params) ||

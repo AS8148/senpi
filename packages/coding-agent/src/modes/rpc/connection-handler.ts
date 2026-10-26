@@ -79,6 +79,7 @@ import {
 	DEFAULT_CUSTOM_EXTENSION_LABEL,
 	EVAL_CELLS_CAPABILITY,
 	EXTENSION_EVENTS_CAPABILITY,
+	ENTRIES_TAIL_CAPABILITY,
 	INTERACTIVE_USER_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	QUESTION_CAPABILITY,
@@ -100,14 +101,8 @@ import {
 import { EffectLedger } from "./effect-ledger.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
-import { settleExtensionUiResponse } from "./extension-ui-response.ts";
-import {
-	currentResponseByteBudget,
-	endEntryWalk,
-	entryPageBounds,
-	holdEntryWalk,
-	pageEntries,
-} from "./get-entries-page.ts";
+import { answeredUiRequestId, settleExtensionUiResponse } from "./extension-ui-response.ts";
+import { answerGetEntries } from "./get-entries-command.ts";
 import { runHoldInput } from "./held-input-commands.ts";
 import { HostSessionControl } from "./host-session-control.ts";
 import { createRpcLoginPromptCallbacks } from "./login-prompts.ts";
@@ -121,6 +116,9 @@ import {
 	sessionRetryFallbackError,
 } from "./rpc-input-validation.ts";
 import { buildRpcSessionState } from "./rpc-session-state.ts";
+import { getSnapshot } from "./get-snapshot.ts";
+import type { UiRequestChange } from "./snapshot-types.ts";
+import { sessionUiAnswerLedger } from "./ui-answer-ledger.ts";
 import type {
 	RpcAuthProvider,
 	RpcCommand,
@@ -135,14 +133,12 @@ import type {
 	RpcSessionReplacedEvent,
 } from "./rpc-types.ts";
 import {
-	RPC_ERROR_ENTRY_NOT_FOUND,
 	RPC_ERROR_EVAL_CELL_NOT_FOUND,
 	RPC_ERROR_EVAL_CELLS_UNAVAILABLE,
 	RPC_ERROR_INVALID_ARGUMENT,
 	RPC_ERROR_INVALID_EVAL_CELL_REQUEST,
 	RPC_ERROR_MEDIA_NOT_FOUND,
 	RPC_ERROR_MODEL_NOT_FOUND,
-	RPC_ERROR_RESPONSE_TOO_LARGE,
 	STEER_WHEN_IDLE_CAPABILITY,
 	USER_ACTIVITY_CAPABILITY,
 } from "./rpc-types.ts";
@@ -211,6 +207,8 @@ export interface RpcConnectionOptions {
  */
 export interface RpcConnectionSink {
 	writeRaw(chunk: string): void;
+	/** Shared bindings accept correlated records synchronously, before JSONL buffering. */
+	writeRecord?(record: object): void;
 	waitForBackpressure(): Promise<void>;
 	/** Tears the transport down once its event queue can no longer deliver (overflow, write failure). */
 	close?(): void;
@@ -385,7 +383,9 @@ export function createRpcConnectionHandler(
 	let loadedSurfacesDigest: string | undefined;
 	let rpcCommandsDigest: string | undefined;
 	let suppressLoadedSurfaceEvents = false;
-	const eventOutput = createRpcEventOutputBuffer(sink.writeRaw, options.eventFlushScheduler);
+	const eventOutput = sink.writeRecord
+		? undefined
+		: createRpcEventOutputBuffer(sink.writeRaw, options.eventFlushScheduler);
 
 	const effectContext = (): EffectCommandContext => ({
 		session,
@@ -397,11 +397,15 @@ export function createRpcConnectionHandler(
 		routingSessionId === undefined ? value : { ...value, sessionId: routingSessionId };
 
 	const output = (obj: RpcResponse | RpcExtensionUIRequest | object) => {
-		eventOutput.writeImmediate(tagSessionRecord(obj));
+		const record = tagSessionRecord(obj);
+		if (sink.writeRecord) sink.writeRecord(record);
+		else eventOutput?.writeImmediate(record);
 	};
 
 	const outputEvent = (event: object) => {
-		eventOutput.enqueueEvent(tagSessionRecord(event));
+		const record = tagSessionRecord(event);
+		if (sink.writeRecord) sink.writeRecord(record);
+		else eventOutput?.enqueueEvent(record);
 	};
 
 	const currentLoadedSurfaces = (): {
@@ -469,7 +473,7 @@ export function createRpcConnectionHandler(
 	});
 
 	const waitForRpcBackpressure = async (): Promise<void> => {
-		eventOutput.flushEvents();
+		eventOutput?.flushEvents();
 		await sink.waitForBackpressure();
 	};
 
@@ -503,10 +507,14 @@ export function createRpcConnectionHandler(
 	};
 
 	// Pending extension UI requests waiting for response
-	const pendingExtensionRequests = new SessionExtensionUiRequests(() => session.refreshLifecycle());
+	const uiRequestChanged = (change?: UiRequestChange): void => {
+		session.refreshLifecycle();
+		if (change && routingSessionId !== undefined) output(change);
+	};
+	const pendingExtensionRequests = new SessionExtensionUiRequests(uiRequestChanged);
 	const grantRequests = new Map<string, string | undefined>();
 	sessionDialogRequests.set(session, pendingExtensionRequests);
-	const questions = new ConnectionQuestionBridge(output, () => session.refreshLifecycle());
+	const questions = new ConnectionQuestionBridge(output, uiRequestChanged);
 
 	let shutdownRequested = false;
 
@@ -1140,6 +1148,8 @@ export function createRpcConnectionHandler(
 						capabilities: [
 							...new Set([
 								"multi_session",
+								"snapshot_cursor",
+								"ui_answer_ledger",
 								"session_lifecycle",
 								AUTO_TITLE_SESSIONS_CAPABILITY,
 								MEDIA_PLACEHOLDERS_CAPABILITY,
@@ -1153,6 +1163,7 @@ export function createRpcConnectionHandler(
 								TOOL_BARRIER_CAPABILITY,
 								USER_ACTIVITY_CAPABILITY,
 								RESUME_SESSION_CAPABILITY,
+								ENTRIES_TAIL_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
 								...(options.toolRuntime ? toolRuntimeCapabilities(options.toolRuntime) : []),
 								// Client flags cannot advertise a host guard this classic binding does not run, nor a tool runtime.
@@ -1404,6 +1415,18 @@ export function createRpcConnectionHandler(
 				}
 				if (wasGrantCapable !== (clientCapabilities?.includes("grant_select") === true)) refreshGrantPresentation();
 				return success(id, "set_client_info");
+			}
+
+			case "get_snapshot": {
+				const snapshot = getSnapshot(session, command, {
+					lastAbortSource,
+					enqueue: (markerId) => {
+						if (routingSessionId !== undefined) output({ type: "snapshot_marker", markerId });
+					},
+				});
+				return "error" in snapshot
+					? error(id, "get_snapshot", snapshot.error, RPC_ERROR_INVALID_ARGUMENT)
+					: success(id, "get_snapshot", snapshot.data);
 			}
 
 			case "get_state":
@@ -1853,51 +1876,8 @@ export function createRpcConnectionHandler(
 				return success(id, "get_fork_messages", { messages });
 			}
 
-			case "get_entries": {
-				const sessionManager = session.sessionManager;
-				let entries = sessionManager.getEntries();
-				if (command.since !== undefined) {
-					const sinceIndex = entries.findIndex((e) => e.id === command.since);
-					if (sinceIndex === -1) {
-						return error(id, "get_entries", `Entry not found: ${command.since}`, RPC_ERROR_ENTRY_NOT_FOUND);
-					}
-					entries = entries.slice(sinceIndex + 1);
-				}
-				const bounds = entryPageBounds(command);
-				if (!bounds.ok) return error(id, "get_entries", bounds.message, RPC_ERROR_INVALID_ARGUMENT);
-				const page = pageEntries(entries, describeUsageLimitEntry, bounds);
-				// A client walking pages asks again at once; holding the view until the last page spares each page a
-				// full re-read of the file. The hold expires on its own, so a walk the client abandons on an idle
-				// session does not pin the whole history; any other answer lets the view go now.
-				if (bounds.paged && page.hasMore) holdEntryWalk(session, () => session.releaseFullHistoryView());
-				else {
-					endEntryWalk(session);
-					session.releaseFullHistoryView();
-				}
-				const budget = currentResponseByteBudget();
-				if (page.firstEntryBytes > budget) {
-					return error(
-						id,
-						"get_entries",
-						`Entry ${entries[0]?.id ?? ""} alone is larger than one answer can carry (${budget} bytes), so it cannot be sent over RPC.`,
-						RPC_ERROR_RESPONSE_TOO_LARGE,
-					);
-				}
-				if (!bounds.paged && page.hasMore) {
-					return error(
-						id,
-						"get_entries",
-						`The session history is larger than one answer can carry (${budget} bytes). Read it in pages: pass limit or maxBytes, then since: nextSince until hasMore is false.`,
-						RPC_ERROR_RESPONSE_TOO_LARGE,
-					);
-				}
-				return success(id, "get_entries", {
-					entries: page.entries,
-					leafId: sessionManager.getLeafId(),
-					...(bounds.paged ? { hasMore: page.hasMore } : {}),
-					...(page.nextSince === undefined ? {} : { nextSince: page.nextSince }),
-				});
-			}
+			case "get_entries":
+				return answerGetEntries(session, command);
 
 			case "get_tree": {
 				const sessionManager = session.sessionManager;
@@ -2166,23 +2146,20 @@ export function createRpcConnectionHandler(
 			"type" in parsed &&
 			parsed.type === "extension_ui_response"
 		) {
-			if (
-				!options.workerSecurityBridge &&
-				"id" in parsed &&
-				typeof parsed.id === "string" &&
-				grantRequests.has(parsed.id)
-			) {
+			const requestId = answeredUiRequestId(parsed as RpcExtensionUIResponse);
+			if (!options.workerSecurityBridge && requestId !== undefined && grantRequests.has(requestId)) {
 				const sender = options.clientInfo?.connectionId();
 				const capable =
 					sender === undefined
 						? clientCapabilities?.includes("grant_select") === true
 						: options.clientInfo?.hasCapability?.(sender, "grant_select") === true;
-				if (grantRequests.get(parsed.id) !== sender || !capable) return;
+				if (grantRequests.get(requestId) !== sender || !capable) return;
 			}
 			const reply = settleExtensionUiResponse(parsed as RpcExtensionUIResponse, {
 				questions,
 				dialogs: pendingExtensionRequests,
 				routed: routingSessionId !== undefined,
+				ledger: sessionUiAnswerLedger(session),
 				// An answer is a person's input by its entry point, whatever the connection role.
 				beforeAnswer: () => session.admitHumanAnswer(),
 			});
@@ -2224,9 +2201,7 @@ export function createRpcConnectionHandler(
 	// session's handler (it has a routing `sessionId`) does not: the host broadcasts the record once.
 	const stopLimitEvents =
 		options.sessionId === undefined
-			? subscriptionLimits.subscribe((limits) =>
-					eventOutput.enqueueEvent({ type: "subscription_limits", ...limits }),
-				)
+			? subscriptionLimits.subscribe((limits) => outputEvent({ type: "subscription_limits", ...limits }))
 			: () => {};
 	const dispose = async (disposeOptions: { readonly processExit?: boolean } = {}): Promise<void> => {
 		unbindMcpForms?.();
