@@ -25,10 +25,13 @@ export class ServedCredentials {
 		this.now = now;
 	}
 
-	/** Reads the request's final message before any consumer does: the result promise settles them in order. */
-	observe(result: Promise<AssistantMessage | undefined>, credential: RequestCredential): void {
+	/**
+	 * Reads the request's final message before any consumer does: the result promise settles them in order.
+	 * Resolves once the observation is recorded; callers on the request path do not wait for it.
+	 */
+	observe(result: Promise<AssistantMessage | undefined>, credential: RequestCredential): Promise<void> {
 		const key = credentialKey(credential);
-		result.then((message) => this.settle(key, message), ignoreFailedRequest);
+		return result.then((message) => this.settle(key, message), ignoreFailedRequest);
 	}
 
 	private settle(key: string, message: AssistantMessage | undefined): void {

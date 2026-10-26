@@ -16,9 +16,7 @@ function failed(category: ProviderDiagnosticCategory = "auth"): AssistantMessage
 }
 
 async function observe(table: ServedCredentials, message: AssistantMessage, key = credential): Promise<void> {
-	const result = Promise.resolve(message);
-	table.observe(result, key);
-	await result;
+	await table.observe(Promise.resolve(message), key);
 }
 
 // senpi#2491: protect the inclusive freshness window, auth-only marking, and bounded storage.
@@ -56,9 +54,7 @@ describe("served credentials", () => {
 	it("ignores a stream that settles without a final message", async () => {
 		let now = 0;
 		const table = new ServedCredentials(() => now);
-		const result = Promise.resolve(undefined);
-		table.observe(result, credential);
-		await result;
+		await expect(table.observe(Promise.resolve(undefined), credential)).resolves.toBeUndefined();
 		now = 1;
 		const message = failed();
 		await observe(table, message);
