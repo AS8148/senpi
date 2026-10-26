@@ -6,7 +6,12 @@ export type AssistantProgress =
 	| {
 			type: "message_block_metadata";
 			contentIndex: number;
+			/** Appends to the signature; `thinkingSignature` and `textSignature` replace it. */
 			thinkingSignatureDelta?: string;
+			thinkingSignature?: string;
+			textSignature?: string;
+			redacted?: true;
+			name?: string;
 			startedAt?: number;
 			endedAt?: number;
 	  }
@@ -31,6 +36,8 @@ export interface AssistantCapture {
 	readonly coveredCodeUnits?: number;
 	readonly offset?: number;
 	readonly parsedThrough?: number;
+	/** The block's own index where the event's public `contentIndex` names another block; internal readers prefer it. */
+	readonly contentIndex?: number;
 }
 interface CaptureState {
 	positions: Map<number, CapturePosition>;
@@ -129,6 +136,27 @@ function freezeProgress(state: CaptureState, progress: AssistantProgress): Assis
 	return Object.freeze({ ...progress, block });
 }
 
+/** A text or thinking signature replaced without a public event; an unchanged or empty one records nothing. */
+export function pushAssistantSignature(
+	owner: object,
+	contentIndex: number,
+	block: Extract<PublicBlock, { type: "text" | "thinking" }>,
+	signature: string | undefined,
+): void {
+	if (!signature || signature === (block.type === "text" ? block.textSignature : block.thinkingSignature)) return;
+	pushAssistantProgress(owner, {
+		type: "message_block_metadata",
+		contentIndex,
+		...(block.type === "text" ? { textSignature: signature } : { thinkingSignature: signature }),
+	});
+}
+
+/** A block appended complete with no public event: its unchanged end reuses the insert's frozen copy. */
+export function pushAssistantCompleteBlock(owner: object, contentIndex: number, block: PublicBlock): void {
+	for (const phase of ["insert", "end"] as const)
+		pushAssistantProgress(owner, { type: "message_block_state", contentIndex, phase, block });
+}
+
 /** Internal consumption is explicit; ordinary iterators are the downgrade boundary. Attached before the first push, it turns capture on. */
 export function assistantRecords(source: AsyncIterable<AssistantMessageEvent>): AsyncIterable<AssistantRecord> {
 	demanded.add(source);
@@ -175,6 +203,8 @@ export interface CaptureHint {
 	readonly parsedThrough?: number;
 	/** Replay deltas may begin before the bytes already covered by a deferred start. */
 	readonly offset?: number;
+	/** The open block's own index when the adapter's public `contentIndex` has drifted from it. */
+	readonly contentIndex?: number;
 }
 export interface CapturePosition {
 	offset: number;
@@ -249,7 +279,7 @@ export function carryAssistantCapture<T extends object>(source: object, target: 
 export function captureAssistantEvent(owner: object, event: AssistantMessageEvent, hint: CaptureHint = {}): void {
 	const state = activeState(owner);
 	if (!state || captures.has(event)) return;
-	const contentIndex = "contentIndex" in event ? event.contentIndex : undefined;
+	const contentIndex = "contentIndex" in event ? (hint.contentIndex ?? event.contentIndex) : undefined;
 	if (contentIndex !== undefined && state.failedBlocks.has(contentIndex)) return;
 	try {
 		captures.set(event, buildCapture(state, event, hint));
@@ -261,32 +291,34 @@ export function captureAssistantEvent(owner: object, event: AssistantMessageEven
 function buildCapture(state: CaptureState, event: AssistantMessageEvent, hint: CaptureHint): AssistantCapture {
 	const message = event.type === "done" ? event.message : event.type === "error" ? event.error : event.partial;
 	const usage = usageCopy(state, message.usage);
+	if (!("contentIndex" in event)) {
+		return Object.freeze({
+			usage,
+			metadata: changedMetadata(state, message),
+			message: freezeCapture({ ...message, content: message.content.map(publicBlock) }),
+		});
+	}
+	const index = hint.contentIndex ?? event.contentIndex;
+	const own = index === event.contentIndex ? {} : { contentIndex: index };
 	if ("delta" in event) {
-		const position = state.positions.get(event.contentIndex) ?? { offset: 0, parsedThrough: 0 };
+		const position = state.positions.get(index) ?? { offset: 0, parsedThrough: 0 };
 		const offset = hint.offset ?? position.offset;
 		position.offset = offset + event.delta.length;
 		if (event.type === "toolcall_delta" && event.delta.length > 0) {
 			position.parsedThrough = hint.parsedThrough ?? Math.max(position.parsedThrough, position.offset);
 		}
-		state.positions.set(event.contentIndex, position);
+		state.positions.set(index, position);
 		return Object.freeze({
 			usage,
 			offset,
+			...own,
 			...(event.type === "toolcall_delta" ? { parsedThrough: position.parsedThrough } : {}),
 		});
 	}
 	const metadata = changedMetadata(state, message);
-	if (!("contentIndex" in event)) {
-		return Object.freeze({
-			usage,
-			metadata,
-			message: freezeCapture({ ...message, content: message.content.map(publicBlock) }),
-		});
-	}
-	const index = event.contentIndex;
 	const block = freezeCapture(publicBlock(event.type === "toolcall_end" ? event.toolCall : message.content[index]));
 	if (event.type !== "text_start" && event.type !== "thinking_start" && event.type !== "toolcall_start") {
-		return Object.freeze({ usage, metadata, block });
+		return Object.freeze({ usage, metadata, block, ...own });
 	}
 	const rawArgumentPrefix = hint.rawArgumentPrefix ?? "";
 	const coveredCodeUnits =
@@ -302,6 +334,7 @@ function buildCapture(state: CaptureState, event: AssistantMessageEvent, hint: C
 		metadata,
 		block,
 		coveredCodeUnits,
+		...own,
 		...(block.type === "toolCall" ? { rawArgumentPrefix, parsedThrough } : {}),
 	});
 }
