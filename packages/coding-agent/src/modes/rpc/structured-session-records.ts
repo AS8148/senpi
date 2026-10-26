@@ -23,8 +23,8 @@ const SEEDS = { blockSeeds: 1 } as const;
  * has no capture, or that has no accepted end when the message ends, is invalid: its later records are dropped and
  * the assistant `message_end` names it in `invalidatedBlocks`, so a reader rebuilds it from the terminal message.
  * A terminal that rewrote blocks from `rewrittenFrom` on invalidates every block at or above that index, and a
- * `message_end` with no terminal capture (cancel, idle timeout) invalidates every block of the message. Blocks are
- * addressed by the capture's own index (`capture.contentIndex ?? event.contentIndex`), never a drifted public one.
+ * `message_end` with no interpretable terminal capture (cancel, idle timeout) invalidates every block of the message.
+ * Blocks are addressed by the capture's own index (`capture.contentIndex ?? event.contentIndex`), never a drifted public one.
  */
 class SeededBlockGate {
 	private blocks: Map<number, BlockState> | undefined;
@@ -67,7 +67,7 @@ class SeededBlockGate {
 
 	private end(record: Extract<AgentSessionEvent, { type: "message_end" }>): object {
 		const capture = getAssistantCapture(record);
-		const rewrittenFrom = capture === undefined ? 0 : (capture.rewrittenFrom ?? Number.POSITIVE_INFINITY);
+		const rewrittenFrom = capture?.message === undefined ? 0 : (capture.rewrittenFrom ?? Number.POSITIVE_INFINITY);
 		const invalidatedBlocks = [...(this.blocks ?? [])].flatMap(([index, state]) =>
 			state === "ended" && index < rewrittenFrom ? [] : [index],
 		);

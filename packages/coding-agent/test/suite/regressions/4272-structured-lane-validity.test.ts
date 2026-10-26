@@ -165,9 +165,12 @@ describe("T6 structured lane block validity", () => {
 	it("T6 invalidates every block of a message that ends without a terminal capture", async () => {
 		const unterminated: Script = (stream, partial) => {
 			stream.push({ type: "start", partial });
-			partial.content.push({ type: "text", text: "a" });
-			stream.push({ type: "text_start", contentIndex: 0, partial });
-			stream.push({ type: "text_end", contentIndex: 0, content: "a", partial });
+			for (const text of ["a", "b"]) {
+				const contentIndex = partial.content.length;
+				partial.content.push({ type: "text", text });
+				stream.push({ type: "text_start", contentIndex, partial });
+				stream.push({ type: "text_end", contentIndex, content: text, partial });
+			}
 			stream.end(partial);
 		};
 		const turn = await laneTurn(unterminated);
@@ -175,8 +178,10 @@ describe("T6 structured lane block validity", () => {
 			"message_start",
 			"message_update:text_start",
 			"message_update:text_end",
+			"message_update:text_start",
+			"message_update:text_end",
 			"message_end",
 		]);
-		expect(turn.at(-1)?.invalidatedBlocks).toEqual([0]);
+		expect(turn.at(-1)?.invalidatedBlocks).toEqual([0, 1]);
 	});
 });
