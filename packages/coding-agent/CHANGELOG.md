@@ -12,6 +12,23 @@
 
 ### Removed
 
+## [2026.10.25-4] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+- RPC: `get_state` and `get_entries` accept `observe: true` and then never hold a host open (`observe_reads`); `get_entries` reads the newest entries first with `tail` and walks back with `before: next_before` (`entries_tail`) ([#4268](https://github.com/code-yeongyu/senpi/pull/4268))
+- RPC: a terminal control endpoint serves `get_entries`, `set_client_info`, `attach_session`, `release_attachment` and `abort` with the host's contract, answers input with admission receipts (`replayed` on a retry), advertises `tui_observer`, and registers on Windows over a named pipe ([#4268](https://github.com/code-yeongyu/senpi/pull/4268))
+
+### Changed
+
+### Fixed
+
+- Return the same fixed, body-free processing error for ambiguous legacy MCP form origins as for an unavailable presenter when presenter enforcement is enabled ([#4248](https://github.com/code-yeongyu/senpi/issues/4248)).
+
+### Removed
+
 ## [2026.10.25-3] - 2026-10-25
 
 ### Breaking Changes

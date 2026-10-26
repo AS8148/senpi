@@ -3,10 +3,11 @@ import {
 	getAssistantCapture,
 	isAssistantProgress,
 	normalizeContext,
+	subscribeAssistantCapture,
 	type AssistantMessage,
 	type Model,
 } from "@earendil-works/pi-ai";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { pushAssistantProgress } from "../../ai/src/utils/assistant-capture.ts";
 import { AssistantMessageEventStream } from "../../ai/src/utils/event-stream.ts";
 import { withEmptyAssistantRecovery } from "../src/empty-assistant-recovery.ts";
@@ -65,6 +66,12 @@ function attempt(text: string) {
 	stream.push({ type: "done", reason: "stop", message });
 	return { stream, start };
 }
+
+let releaseCapture = () => {};
+beforeEach(() => {
+	releaseCapture = subscribeAssistantCapture();
+});
+afterEach(() => releaseCapture());
 
 describe("discarded attempt capture isolation #4272", () => {
 	it("drops every carrier and control from discarded and forwarded attempts", async () => {

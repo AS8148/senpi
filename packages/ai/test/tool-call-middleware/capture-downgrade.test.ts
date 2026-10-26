@@ -1,11 +1,12 @@
 import { Type } from "typebox";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { wrapStreamWithInvokeRecovery } from "../../src/tool-call-middleware/recovery-stream-wrapper.ts";
 import {
 	assistantRecords,
 	getAssistantCapture,
 	isAssistantProgress,
 	pushAssistantProgress,
+	subscribeAssistantCapture,
 } from "../../src/utils/assistant-capture.ts";
 import { AssistantMessageEventStream } from "../../src/utils/event-stream.ts";
 import { createAssistantMessage } from "./invoke-recovery-stream-fixtures.ts";
@@ -13,6 +14,12 @@ import { createAssistantMessage } from "./invoke-recovery-stream-fixtures.ts";
 const tool = { name: "Bash", description: "fixture", parameters: Type.Object({ command: Type.String() }) };
 const invoke =
 	'<antml:invoke name="Bash"><antml:parameter name="command">echo recovered</antml:parameter></antml:invoke>';
+
+let releaseCapture = () => {};
+beforeEach(() => {
+	releaseCapture = subscribeAssistantCapture();
+});
+afterEach(() => releaseCapture());
 
 describe("unaware recovery capture boundary #4272", () => {
 	it("drops carriers and all controls when recovery remaps a native call", async () => {

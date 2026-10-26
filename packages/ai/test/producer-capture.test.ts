@@ -1,13 +1,18 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ResponseStreamEvent } from "openai/resources/responses/responses.js";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as anthropicStream } from "../src/api/anthropic-messages.ts";
 import { stream as completionsStream } from "../src/api/openai-completions.ts";
 import { processResponsesStream } from "../src/api/openai-responses-shared.ts";
 import { getModel } from "../src/compat.ts";
 import type { AssistantMessage, AssistantMessageEvent, Model } from "../src/types.ts";
-import { assistantRecords, getAssistantCapture, isAssistantProgress } from "../src/utils/assistant-capture.ts";
+import {
+	assistantRecords,
+	getAssistantCapture,
+	isAssistantProgress,
+	subscribeAssistantCapture,
+} from "../src/utils/assistant-capture.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
@@ -28,7 +33,14 @@ vi.mock("openai", () => ({
 		};
 	},
 }));
-afterEach(() => vi.restoreAllMocks());
+let releaseCapture = () => {};
+beforeEach(() => {
+	releaseCapture = subscribeAssistantCapture();
+});
+afterEach(() => {
+	vi.restoreAllMocks();
+	releaseCapture();
+});
 
 const raw = '{ "value": "\\uD83D\\uDE00", "quote": "\\\\\\"𝄞" }';
 const context = normalizeContext({ messages: [{ role: "user", content: "fixture", timestamp: 1 }] });

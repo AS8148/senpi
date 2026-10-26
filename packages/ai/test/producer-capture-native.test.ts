@@ -1,6 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ResponseStreamEvent } from "openai/resources/responses/responses.js";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as anthropicStream } from "../src/api/anthropic-messages.ts";
 import { processResponsesStream } from "../src/api/openai-responses-shared.ts";
 import { getModel } from "../src/compat.ts";
@@ -9,10 +9,17 @@ import {
 	assistantRecords,
 	getAssistantCapture,
 	isAssistantProgress,
+	subscribeAssistantCapture,
 	type AssistantRecord,
 } from "../src/utils/assistant-capture.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
+
+let releaseCapture = () => {};
+beforeEach(() => {
+	releaseCapture = subscribeAssistantCapture();
+});
+afterEach(() => releaseCapture());
 
 function message(): AssistantMessage {
 	return {
