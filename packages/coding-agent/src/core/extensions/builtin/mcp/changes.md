@@ -1,3 +1,23 @@
+## 2026-10-25 - MRTR review cleanup and startup diagnostics (#4226)
+
+### What changed
+
+- `modern/consent-queue.ts` pumps after removing an aborted queued job. This is structural cleanup: active jobs already pump on settlement and initially aborted jobs pump before returning.
+- `modern/request.ts` reads `DEFAULT_REQUEST_TIMEOUT_MSEC` through `sdk.lazy.ts` instead of duplicating the SDK default.
+- `transport-sdk.ts` releases complete and trailing buffered stderr before forwarding an unclassified child's close event, including project transports whose aggregate stderr stream does not end.
+
+### Why
+
+- Request budgets must follow SDK defaults, and a child that fails before negotiation must retain startup diagnostics. Classified modern diagnostics stay suppressed and enforced private forms retain redaction.
+
+### Why an extension could not handle it
+
+- These paths own consent scheduling, SDK request budgets, and transport diagnostics before extension delivery.
+
+### Expected merge conflict zones
+
+- `modern/consent-queue.ts`, `modern/request.ts`, `sdk.lazy.ts`, and `transport-sdk.ts`: abort cleanup, lazy SDK loading, and stdio close handling.
+
 ## 2026-10-25 - Parameter-header validation diagnostics (senpi#4246)
 
 ### What changed
