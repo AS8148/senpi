@@ -6,6 +6,13 @@ import {
 	type CompactStorageStatus,
 	type LeafId,
 } from "./compact-content-store.ts";
+import {
+	type BlockAddress,
+	type CompactBlockKind,
+	type CompactPersistence,
+	type CompactTransition,
+	CompactTransitionError,
+} from "./compact-transition.ts";
 
 /**
  * The in-memory current-state owner over compact storage (senpi#4272, R3.C6.4 first half).
@@ -16,48 +23,6 @@ import {
  * changes only through `message_status`, never through storage success or failure. `freeze` pins
  * an immutable cut synchronously, and `read` materializes it asynchronously from RAM or disk.
  */
-
-type CompactBlockKind = "text" | "thinking" | "tool_arguments";
-type CompactPersistence = "pending" | "appended" | "failed";
-
-interface BlockAddress {
-	readonly messageId: string;
-	readonly contentIndex: number;
-}
-
-export type CompactTransition =
-	| (BlockAddress & {
-			readonly type: "block_start";
-			readonly kind: CompactBlockKind;
-			readonly seed: string;
-			/**
-			 * The whole seed when later deltas replay it from offset 0, or 0 when they continue after it. Partial
-			 * coverage is refused: the uncovered seed tail would make every later delta overlap or leave a gap.
-			 */
-			readonly coveredCodeUnits: number;
-	  })
-	| (BlockAddress & { readonly type: "block_delta"; readonly offset: number; readonly text: string })
-	| (BlockAddress & { readonly type: "block_replace"; readonly text: string })
-	| { readonly type: "message_status"; readonly messageId: string; readonly persistence: CompactPersistence }
-	| { readonly type: "message_remove"; readonly messageId: string };
-
-type CompactRejection =
-	| "unknown_block"
-	| "duplicate_block"
-	| "invalid_coverage"
-	| "non_contiguous"
-	| "conflicting_overlap"
-	| "unknown_message";
-
-class CompactTransitionError extends Error {
-	readonly reason: CompactRejection;
-
-	constructor(reason: CompactRejection, detail: string) {
-		super(`compact transition rejected (${reason}): ${detail}`);
-		this.name = "CompactTransitionError";
-		this.reason = reason;
-	}
-}
 
 interface FrozenBlock {
 	readonly contentIndex: number;
