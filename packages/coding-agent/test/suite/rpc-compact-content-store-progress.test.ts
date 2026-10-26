@@ -106,7 +106,7 @@ describe("compact content store: failed writes and unlinks (L4, L5)", () => {
 		expect(state.storageStatus()).toMatchObject({ reclaimDebtBytes: 17 * 65_536, spillHalted: true });
 	});
 
-	it("labels a crashed storage job with its own operation and reports the halt", async () => {
+	it("labels a spill failure it cannot describe with its own operation and file, and reports the halt", async () => {
 		const cause = injected("EIO");
 		Object.defineProperty(cause, "message", {
 			get() {
@@ -119,7 +119,14 @@ describe("compact content store: failed writes and unlinks (L4, L5)", () => {
 		await state.idle();
 		expect(state.storageStatus()).toMatchObject({
 			spillHalted: true,
-			failures: [{ operation: "spill_write", path: dir, cause: "describe crashed" }],
+			failures: [
+				{
+					operation: "spill_write",
+					path: join(dir, "leaf-1.bin"),
+					cause: expect.any(String),
+					retainedInMemoryBytes: 65_536,
+				},
+			],
 		});
 	});
 });
