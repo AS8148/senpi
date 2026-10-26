@@ -1,3 +1,23 @@
+## 2026-10-25 - Observing state and history reads, history tail paging (senpi#4267)
+
+### What changed
+
+- `host-observe-request.ts`: `get_state` and `get_entries` join the observing set.
+- `get-entries-page.ts`, `get-entries-command.ts`: `get_entries { before?, tail? }` and `next_before`; one answer for host connections and terminal endpoints. `connection-handler.ts` uses it.
+- `custom-capability.ts`, `host-capabilities.ts`, `rpc-session-command-types.ts`, `rpc-read-response-types.ts`: `observe_reads`, `entries_tail`, `tui_observer` and the wire fields.
+
+### Why
+
+- A watcher reads state and the newest history without holding a host open or walking a long history from its start.
+
+### Why an extension could not handle it
+
+- Host occupancy and the `get_entries` wire contract live in the RPC host itself.
+
+### Expected merge conflict zones
+
+- LOW: the observing set in `host-observe-request.ts`; the `get_entries` case in `connection-handler.ts`.
+
 ## 2026-10-25 - Host-issued presenter grants and private form settlement (#4197)
 
 ### What changed
