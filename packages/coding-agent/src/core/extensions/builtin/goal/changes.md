@@ -1,3 +1,21 @@
+## 2026-10-25 - Report the todo backstop outcome to the lifecycle (senpi#3864)
+
+### What changed
+
+- `index.ts` and `lifecycle-facts.ts` pass the `TodoOwedOutcome` that `afterAgentEnd` returned through the shared lifecycle collector, so an exhausted reminder chain is reported as `todo_guard`/`cap`.
+
+### Why
+
+- The lifecycle needs the returned outcome; the reminder event fires only on the first capped turn and nothing may be inferred from `budgetSpent`.
+
+### Why an extension could not handle it
+
+- This builtin already owns the todo backstop and the lifecycle collector; no new hook is needed.
+
+### Expected merge conflict zones
+
+- `index.ts`: the `agent_end` handler's collector registration.
+
 ## 2026-10-24 - Distinguish interrupted recovery from goal Stop (senpi#4204)
 
 ### What changed
