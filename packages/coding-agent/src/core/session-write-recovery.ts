@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, fstatSync, ftruncateSync, openSync, readSync, rmSync } from "node:fs";
 import { type FileHandle, rm } from "node:fs/promises";
+import { shortenPath } from "../utils/paths.ts";
 import { replaceFileAtomically } from "./session-file-replace.ts";
 
 const NEWLINE = 0x0a;
@@ -30,13 +31,15 @@ export function sessionRecoveryCause(error: unknown): SessionRecoveryCause {
 }
 
 function recoveryNotice(cause: SessionRecoveryCause, backupPath: string): string {
+	const shortened = shortenPath(backupPath);
+	const backup = shortened.startsWith("~/") || shortened.startsWith("~\\") ? shortened : "a session recovery backup";
 	if (cause === "disk_full") {
-		return `The last message wasn't saved because the disk was full. Free disk space to keep saving this session; the incomplete record was kept in ${backupPath}.`;
+		return `The last message wasn't saved because the disk was full. Free disk space to keep saving this session; the incomplete record was kept in ${backup}.`;
 	}
 	if (cause === "write_failed") {
-		return `The last message wasn't saved because writing the session file failed. The incomplete record was kept in ${backupPath}.`;
+		return `The last message wasn't saved because writing the session file failed. The incomplete record was kept in ${backup}.`;
 	}
-	return `The last message of this session wasn't saved completely (an earlier save was interrupted, for example by a full disk). Everything before it was loaded; the incomplete record was kept in ${backupPath}.`;
+	return `The last message of this session wasn't saved completely (an earlier save was interrupted, for example by a full disk). Everything before it was loaded; the incomplete record was kept in ${backup}.`;
 }
 
 /**
@@ -45,7 +48,7 @@ function recoveryNotice(cause: SessionRecoveryCause, backupPath: string): string
  */
 export function backupTornBytes(path: string, bytes: Buffer, cause: SessionRecoveryCause): SessionRecovery {
 	const backupPath = `${path}.torn-${Date.now()}-${randomUUID().slice(0, 8)}`;
-	replaceFileAtomically(backupPath, [bytes.toString("utf8")]);
+	replaceFileAtomically(backupPath, [bytes]);
 	return { cause, backupPath, droppedBytes: bytes.length, notice: recoveryNotice(cause, backupPath) };
 }
 

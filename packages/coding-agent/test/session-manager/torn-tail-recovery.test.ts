@@ -1,10 +1,11 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type * as FsModule from "fs";
-import { appendFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { basename, dirname, join } from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type SessionRecovery, SessionManager } from "../../src/core/session-manager.ts";
+import { backupTornBytes } from "../../src/core/session-write-recovery.ts";
 
 const fault = vi.hoisted(() => ({
 	appendKeepBytes: undefined as number | undefined,
@@ -57,6 +58,7 @@ const assistant = (text: string): AssistantMessage => ({
 const tempDirs: string[] = [];
 
 afterEach(() => {
+	vi.unstubAllEnvs();
 	fault.appendKeepBytes = undefined;
 	fault.failWritesMatching = undefined;
 	for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -88,6 +90,79 @@ function recoveriesOf(session: SessionManager): SessionRecovery[] {
 const FRAGMENT = '{"type":"message","id":"torn","parentId":null,"message":{"role":"user","con';
 
 describe("SessionManager torn tail recovery", () => {
+	it.each(["disk_full", "write_failed", "unknown"] as const)(
+		"displays a home-relative backup path for the %s notice without exposing the absolute home (senpi#4295)",
+		(cause) => {
+			const dir = mkdtempSync(join(tmpdir(), "senpi-recovery-home-"));
+			tempDirs.push(dir);
+			const home = join(dir, "Users", "testuser");
+			vi.stubEnv("HOME", home);
+			vi.stubEnv("USERPROFILE", home);
+			for (const sessionDir of [
+				join(home, "sessions"),
+				join(dir, "Users", "testuser-other", "sessions"),
+				join(dir, "other", "sessions"),
+			]) {
+				mkdirSync(sessionDir, { recursive: true });
+				const recovery = backupTornBytes(join(sessionDir, "test.jsonl"), Buffer.from(FRAGMENT), cause);
+
+				expect(recovery.backupPath.startsWith(sessionDir)).toBe(true);
+				expect(recovery.notice).not.toContain(dir);
+				expect(recovery.notice).not.toContain("testuser");
+				if (sessionDir === join(home, "sessions")) {
+					expect(recovery.notice).toContain(`~/sessions/${basename(recovery.backupPath)}`);
+				} else {
+					expect(recovery.notice).not.toContain(recovery.backupPath);
+					expect(recovery.notice).not.toContain("~");
+				}
+			}
+		},
+	);
+
+	it("keeps an incomplete multibyte tail byte-exact when opening (senpi#4295)", () => {
+		const { file, prefix } = savedSession();
+		const fragment = Buffer.concat([Buffer.from(FRAGMENT), Buffer.from([0xed, 0x95])]);
+		appendFileSync(file, fragment);
+
+		const seen = recoveriesOf(SessionManager.open(file));
+
+		expect(seen).toHaveLength(1);
+		expect(readFileSync(seen[0]!.backupPath)).toEqual(fragment);
+		expect(seen[0]?.droppedBytes).toBe(fragment.length);
+		expect(readFileSync(file, "utf8")).toBe(prefix);
+	});
+
+	it.each([false, true])(
+		"keeps the disk-full cause when reloading after a failed append, deferred=%s (senpi#4295)",
+		(deferred) => {
+			const { file } = savedSession();
+			const session = SessionManager.open(file);
+			const seen = recoveriesOf(session);
+			fault.appendKeepBytes = 20;
+			expect(() => session.appendCustomEntry("torn", { n: 1 })).toThrow("ENOSPC");
+			if (deferred) fault.failWritesMatching = /\.torn-/;
+
+			session.reloadFromDisk();
+			session.appendCustomEntry("after", { n: 2 });
+
+			expect(seen.map((recovery) => recovery.cause)).toEqual(["disk_full"]);
+		},
+	);
+
+	it("does not carry a failed-write cause to a different session file (senpi#4295)", () => {
+		const { file } = savedSession();
+		const session = SessionManager.open(file);
+		const seen = recoveriesOf(session);
+		fault.appendKeepBytes = 20;
+		expect(() => session.appendCustomEntry("torn", { n: 1 })).toThrow("ENOSPC");
+		const other = savedSession();
+		appendFileSync(other.file, FRAGMENT);
+
+		session.setSessionFile(other.file);
+
+		expect(seen.map((recovery) => recovery.cause)).toEqual(["unknown"]);
+	});
+
 	it("sets a torn final line aside once when the session opens, and keeps the rest byte for byte", () => {
 		// Given a saved session whose last line was torn by an interrupted write
 		const { file, prefix } = savedSession();

@@ -12,7 +12,7 @@ import { StringDecoder } from "node:string_decoder";
 import { normalizePath } from "../utils/paths.ts";
 import { EventLoopSlicer } from "./event-loop-slicer.ts";
 import type { FileEntry } from "./session-manager.ts";
-import { backupTornBytes, type SessionRecovery } from "./session-write-recovery.ts";
+import { backupTornBytes, type SessionRecovery, type SessionRecoveryCause } from "./session-write-recovery.ts";
 
 export const SESSION_READ_BUFFER_SIZE = 1024 * 1024;
 
@@ -164,7 +164,10 @@ export type FinalLineRepair =
  * can tell from real corruption. Only the final segment is read, never the whole transcript; anything but a regular
  * file is left to the loader, as before.
  */
-export function terminateFinalSessionLine(filePath: string): FinalLineRepair | undefined {
+export function terminateFinalSessionLine(
+	filePath: string,
+	cause: SessionRecoveryCause = "unknown",
+): FinalLineRepair | undefined {
 	if (!existsSync(filePath) || !statSync(filePath).isFile()) return undefined;
 	const fd = openSync(filePath, "r+");
 	try {
@@ -179,7 +182,7 @@ export function terminateFinalSessionLine(filePath: string): FinalLineRepair | u
 		}
 		let recovery: SessionRecovery;
 		try {
-			recovery = backupTornBytes(filePath, segment, "unknown");
+			recovery = backupTornBytes(filePath, segment, cause);
 		} catch (error) {
 			// Deferred, not dropped: a full disk can refuse the copy, so the file is left as it is and the writer
 			// sets the tail aside before its first append, which fails with this error if the disk is still full.

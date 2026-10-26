@@ -1366,6 +1366,9 @@ export class SessionManager {
 			reserveSessionWrite(resolvedFile);
 			this.writeFence.opened(resolvedFile);
 		}
+		const recoveryCause = this.sessionFile === resolvedFile && this.tailMayBeTorn ? this.tornTailCause : "unknown";
+		this.tailMayBeTorn = false;
+		this.tornTailCause = "unknown";
 		this.sessionFile = resolvedFile;
 		this.mirrorTrimmed = false;
 		this.trimmedIds.clear();
@@ -1373,7 +1376,7 @@ export class SessionManager {
 		if (existsSync(resolvedFile)) {
 			// This process opens the session for append; a final line torn by an interrupted write is set aside now
 			// (senpi#4295: every open path, `-c` included), never from read-only loadEntriesFromFile callers.
-			if (this.persist) this._settleFinalLine(resolvedFile);
+			if (this.persist) this._settleFinalLine(resolvedFile, recoveryCause);
 			return resolvedFile;
 		}
 		// Same here: the explicit path from --session stays the only granted one.
@@ -1746,12 +1749,12 @@ export class SessionManager {
 		else this.recoveryListener(recovery);
 	}
 
-	private _settleFinalLine(sessionFile: string): void {
-		const repair = terminateFinalSessionLine(sessionFile);
+	private _settleFinalLine(sessionFile: string, cause: SessionRecoveryCause): void {
+		const repair = terminateFinalSessionLine(sessionFile, cause);
 		if (repair?.kind === "set_aside") this._reportRecovery(repair.recovery);
 		if (repair?.kind === "deferred") {
 			this.tailMayBeTorn = true;
-			this.tornTailCause = "unknown";
+			this.tornTailCause = cause;
 		}
 	}
 
