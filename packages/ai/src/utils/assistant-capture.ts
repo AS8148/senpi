@@ -39,8 +39,8 @@ export interface AssistantCapture {
 	/** The block's own index where the event's public `contentIndex` names another block; internal readers prefer it. */
 	readonly contentIndex?: number;
 	/**
-	 * Set on a terminal that removed or moved blocks the stream already announced: from this index on, records sent
-	 * before the terminal name another block or none, so a reader drops them (lack, never wrong).
+	 * First block index whose earlier records are no longer valid; readers MUST drop every block record at or above it
+	 * for that message; absent = no rewrite.
 	 */
 	readonly rewrittenFrom?: number;
 }
