@@ -185,6 +185,20 @@ describe("empty-assistant recovery relays capture records #4272", () => {
 		expect(terminal?.metadata?.diagnostics).toEqual(done.message.diagnostics);
 	});
 
+	it("drops both attempts' controls when the retry is empty too: the error terminal has no block they name", async () => {
+		let calls = 0;
+		const create = withEmptyAssistantRecovery(model, () => attempt(++calls === 1 ? "first" : "second", "").stream);
+		const wrapped = await create(model, normalizeContext({ messages: [] }), {});
+		const records = [];
+		for await (const record of assistantRecords(wrapped)) records.push(record);
+		expect(calls).toBe(2);
+		// Both controls named thinking block 0; the terminal's block 0 is the error text, so neither may cross.
+		expect(records.filter(isAssistantProgress)).toEqual([]);
+		const terminal = records.at(-1);
+		if (records.length !== 1 || terminal?.type !== "error") throw new Error("expected a lone error terminal");
+		expect(terminal.error.content.map((block) => block.type)).toEqual(["text"]);
+	});
+
 	it("delivers the kept attempt's controls and the agent's thinking timing to the internal channel", async () => {
 		let calls = 0;
 		const agent = new Agent({

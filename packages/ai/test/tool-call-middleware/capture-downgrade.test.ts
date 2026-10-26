@@ -1,8 +1,13 @@
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
+import { RecoveryNativeProjection } from "../../src/tool-call-middleware/recovery-native-projection.ts";
 import { wrapStreamWithInvokeRecovery } from "../../src/tool-call-middleware/recovery-stream-wrapper.ts";
 import type { ProviderNativeContent, TextContent, ThinkingContent, ToolCall } from "../../src/types.ts";
-import { getAssistantCapture, pushAssistantProgress } from "../../src/utils/assistant-capture.ts";
+import {
+	type AssistantProgress,
+	getAssistantCapture,
+	pushAssistantProgress,
+} from "../../src/utils/assistant-capture.ts";
 import { AssistantMessageEventStream } from "../../src/utils/event-stream.ts";
 import {
 	deltaCaptures,
@@ -192,5 +197,117 @@ describe("invoke recovery capture remap #4272", () => {
 			"done:true",
 		]);
 		expect(progressRecords(records)).toEqual([]);
+	});
+});
+
+type StrayControls = { beforeStart?: AssistantProgress; beforeProse?: AssistantProgress; afterProse?: AssistantProgress };
+
+/** Signed thinking at 0 and invoke prose at 1, plus stray controls; the source never has a block at 2. */
+function proseTurnWithStrays(strays: StrayControls): AssistantMessageEventStream {
+	const stream = new AssistantMessageEventStream({ captureBlocks: true });
+	const output = createAssistantMessage([], "pending");
+	if (strays.beforeStart) pushAssistantProgress(stream, strays.beforeStart);
+	stream.push({ type: "start", partial: output });
+	const thinking: ThinkingContent = { type: "thinking", thinking: "" };
+	output.content.push(thinking);
+	stream.push({ type: "thinking_start", contentIndex: 0, partial: output });
+	thinking.thinking = "plan";
+	stream.push({ type: "thinking_delta", contentIndex: 0, delta: "plan", partial: output });
+	pushAssistantProgress(stream, { type: "message_block_metadata", contentIndex: 0, thinkingSignatureDelta: "sig" });
+	stream.push({ type: "thinking_end", contentIndex: 0, content: "plan", partial: output });
+	if (strays.beforeProse) pushAssistantProgress(stream, strays.beforeProse);
+	const text: TextContent = { type: "text", text: "" };
+	output.content.push(text);
+	stream.push({ type: "text_start", contentIndex: 1, partial: output });
+	text.text = prose;
+	stream.push({ type: "text_delta", contentIndex: 1, delta: prose, partial: output });
+	if (strays.afterProse) pushAssistantProgress(stream, strays.afterProse);
+	stream.push({ type: "text_end", contentIndex: 1, content: prose, partial: output });
+	output.stopReason = "toolUse";
+	stream.push({ type: "done", reason: "toolUse", message: output });
+	stream.end(output);
+	return stream;
+}
+
+const keptThinkingSignature = { type: "message_block_metadata", contentIndex: 0, thinkingSignatureDelta: "sig" };
+
+describe("invoke recovery drops controls it cannot remap #4272", () => {
+	it("drops a control that arrives before start or names a source block that never exists", async () => {
+		const source = proseTurnWithStrays({
+			beforeStart: { type: "message_block_metadata", contentIndex: 0, thinkingSignatureDelta: "early" },
+			// Outer index 2 exists (the recovered call), but no source block 2 does: forwarding it would be a guess.
+			afterProse: {
+				type: "message_block_state",
+				contentIndex: 2,
+				phase: "insert",
+				block: { type: "providerNative", subtype: "web_search_call", raw: { status: "completed" } },
+			},
+		});
+		const records = await drainRecords(wrapStreamWithInvokeRecovery(source, [tool]));
+		expect(firstEvent(publicEvents(records), "done").message.content.map((block) => block.type)).toEqual([
+			"thinking",
+			"text",
+			"toolCall",
+			"text",
+		]);
+		expect(progressRecords(records)).toEqual([keptThinkingSignature]);
+	});
+
+	it("drops the prose block's controls, held or late, because outer blocks 1, 2 and 3 could each own them", async () => {
+		const source = proseTurnWithStrays({
+			beforeProse: { type: "message_block_metadata", contentIndex: 1, textSignature: "held" },
+			afterProse: { type: "message_block_metadata", contentIndex: 1, textSignature: "late" },
+		});
+		const records = await drainRecords(wrapStreamWithInvokeRecovery(source, [tool]));
+		expect(recordKinds(records)).toEqual([
+			"start",
+			"thinking_start:0",
+			"thinking_delta:0",
+			"message_block_metadata:0",
+			"thinking_end:0",
+			"text_start:1",
+			"text_delta:1",
+			"toolcall_start:2",
+			"toolcall_delta:2",
+			"toolcall_end:2",
+			"text_delta:3",
+			"text_end:3",
+			"done",
+		]);
+		expect(progressRecords(records)).toEqual([keptThinkingSignature]);
+	});
+});
+
+describe("recovery native projection remap #4272", () => {
+	it("relays a copied block's controls to its exact outer index and drops those it cannot place", async () => {
+		const stream = new AssistantMessageEventStream({ captureBlocks: true });
+		const message = createAssistantMessage([], "pending");
+		const projection = new RecoveryNativeProjection(stream, message);
+		const control = (contentIndex: number, thinkingSignatureDelta: string): AssistantProgress =>
+			Object.freeze({ type: "message_block_metadata", contentIndex, thinkingSignatureDelta });
+		// Declared layout: inner 0 copies to outer 0; inner 1 is prose rebuilt into outer 1..3; inner 2 copies to
+		// outer 1 + 3 = 4; inner 3 is never projected.
+		projection.relayProgress(control(2, "held"));
+		message.content.push({ type: "thinking", thinking: "a" });
+		expect(projection.recordProjectedBlock(0, 0)).toBe(true);
+		projection.relayProgress(control(0, "zero"));
+		expect(projection.startText(1, 1)).toBe(true);
+		message.content.push(
+			{ type: "text", text: "before " },
+			{ type: "toolCall", id: "recovered-antml-0", name: "Bash", arguments: {} },
+			{ type: "text", text: " after" },
+		);
+		projection.extendText(1);
+		projection.relayProgress(control(1, "prose"));
+		message.content.push({ type: "thinking", thinking: "b" });
+		expect(projection.recordProjectedBlock(2, 4)).toBe(true);
+		projection.relayProgress(control(2, "late"));
+		projection.relayProgress(control(3, "never"));
+		stream.end(message);
+		expect(progressRecords(await drainRecords(stream))).toEqual([
+			{ type: "message_block_metadata", contentIndex: 0, thinkingSignatureDelta: "zero" },
+			{ type: "message_block_metadata", contentIndex: 4, thinkingSignatureDelta: "held" },
+			{ type: "message_block_metadata", contentIndex: 4, thinkingSignatureDelta: "late" },
+		]);
 	});
 });

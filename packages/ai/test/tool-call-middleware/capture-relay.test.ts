@@ -120,6 +120,78 @@ describe("Kimi thinking recovery relays capture records #4272", () => {
 	});
 });
 
+/** Thinking at 0, then a signed text block at 1; strays add a control before `start` and one naming block 2. */
+function kimiThinkingThenSignedText(thinkingText: string, options: { endThinking?: boolean; strays?: boolean } = {}) {
+	const stream = new AssistantMessageEventStream({ captureBlocks: true });
+	const output = createAssistantMessage([], "pending");
+	if (options.strays)
+		pushAssistantProgress(stream, { type: "message_block_metadata", contentIndex: 0, thinkingSignatureDelta: "early" });
+	stream.push({ type: "start", partial: output });
+	const thinking: ThinkingContent = { type: "thinking", thinking: "" };
+	output.content.push(thinking);
+	stream.push({ type: "thinking_start", contentIndex: 0, partial: output });
+	thinking.thinking = thinkingText;
+	stream.push({ type: "thinking_delta", contentIndex: 0, delta: thinkingText, partial: output });
+	thinking.thinkingSignature = "sig";
+	pushAssistantProgress(stream, { type: "message_block_metadata", contentIndex: 0, thinkingSignatureDelta: "sig" });
+	if (options.endThinking !== false)
+		stream.push({ type: "thinking_end", contentIndex: 0, content: thinkingText, partial: output });
+	const text: TextContent = { type: "text", text: "" };
+	output.content.push(text);
+	stream.push({ type: "text_start", contentIndex: 1, partial: output });
+	text.text = "final";
+	stream.push({ type: "text_delta", contentIndex: 1, delta: "final", partial: output });
+	text.textSignature = "t1";
+	pushAssistantProgress(stream, { type: "message_block_metadata", contentIndex: 1, textSignature: "t1" });
+	if (options.strays)
+		pushAssistantProgress(stream, { type: "message_block_metadata", contentIndex: 2, textSignature: "nowhere" });
+	stream.push({ type: "text_end", contentIndex: 1, content: "final", partial: output });
+	output.stopReason = "stop";
+	stream.push({ type: "done", reason: "stop", message: output });
+	stream.end(output);
+	return stream;
+}
+
+const thinkingSignature = { type: "message_block_metadata", contentIndex: 0, thinkingSignatureDelta: "sig" };
+const textSignature = { type: "message_block_metadata", contentIndex: 1, textSignature: "t1" };
+
+// The live stream keeps source indices and only the terminal is rewritten, so a control crosses only while its
+// source index also names its block in the terminal.
+describe("Kimi thinking recovery drops controls it cannot place #4272", () => {
+	it("keeps a later block's control at its source index when no earlier thinking block splits", async () => {
+		const records = await drainRecords(wrapStreamWithKimiThinkingRecovery(kimiThinkingThenSignedText("plan")));
+		// Thinking 0 recovers to one block, so the signed text stays at index 1 of the terminal.
+		expect(firstEvent(publicEvents(records), "done").message.content.map((block) => block.type)).toEqual([
+			"thinking",
+			"text",
+		]);
+		expect(progressRecords(records)).toEqual([thinkingSignature, textSignature]);
+	});
+
+	it("drops a control that arrives before start or names a block the turn never has", async () => {
+		const stream = kimiThinkingThenSignedText("plan", { strays: true });
+		const records = await drainRecords(wrapStreamWithKimiThinkingRecovery(stream));
+		expect(progressRecords(records)).toEqual([thinkingSignature, textSignature]);
+	});
+
+	it("drops a later block's control when the thinking before it splits: index 1 live, index 2 in the terminal", async () => {
+		const records = await drainRecords(wrapStreamWithKimiThinkingRecovery(kimiThinkingThenSignedText(leakedThinking)));
+		const done = firstEvent(publicEvents(records), "done");
+		expect(done.message.content).toEqual([
+			{ type: "thinking", thinking: "plan", thinkingSignature: "sig" },
+			{ type: "text", text: " answer" },
+			{ type: "text", text: "final", textSignature: "t1" },
+		]);
+		expect(progressRecords(records)).toEqual([thinkingSignature]);
+	});
+
+	it("drops a later block's control while an earlier thinking block is still open", async () => {
+		const stream = kimiThinkingThenSignedText("plan", { endThinking: false });
+		const records = await drainRecords(wrapStreamWithKimiThinkingRecovery(stream));
+		expect(progressRecords(records)).toEqual([thinkingSignature]);
+	});
+});
+
 describe("legacy text tool middleware captures its own blocks #4272", () => {
 	it("keeps the public bytes recorded before capture", async () => {
 		const wrapped = wrapStreamWithToolCallMiddleware(
@@ -214,5 +286,60 @@ describe("recovery event stream keeps records #4272", () => {
 		});
 		await iterator.return?.();
 		expect(cancelled).toHaveBeenCalledTimes(1);
+	});
+
+	it("relays a clean source's facts to its copy and nothing from a source captured at a drifted index", async () => {
+		const source = new AssistantMessageEventStream({ captureBlocks: true });
+		const sourceMessage = createAssistantMessage(
+			[
+				{ type: "thinking", thinking: "" },
+				{ type: "thinking", thinking: "" },
+			],
+			"pending",
+		);
+		source.push({ type: "start", partial: sourceMessage });
+		const clean: AssistantMessageEvent = { type: "thinking_start", contentIndex: 0, partial: sourceMessage };
+		source.push(clean);
+		// Captured for block 0 while its public index names block 1: two blocks could own it.
+		const drifted: AssistantMessageEvent = { type: "thinking_start", contentIndex: 1, partial: sourceMessage };
+		source.push(drifted, { contentIndex: 0 });
+		expect(getAssistantCapture(drifted)?.contentIndex).toBe(0);
+		const outer = new RecoveryAssistantMessageEventStream();
+		const outerMessage = createAssistantMessage(
+			[
+				{ type: "thinking", thinking: "late" },
+				{ type: "thinking", thinking: "late" },
+			],
+			"pending",
+		);
+		outer.push({ type: "start", partial: outerMessage });
+		outer.relaying(clean, () => outer.push({ type: "thinking_start", contentIndex: 0, partial: outerMessage }));
+		outer.relaying(drifted, () => outer.push({ type: "thinking_start", contentIndex: 1, partial: outerMessage }));
+		outer.end(outerMessage);
+		const events = publicEvents(await drainRecords(outer));
+		expect(getAssistantCapture(firstEvent(events, "thinking_start", 0))?.block).toEqual({
+			type: "thinking",
+			thinking: "",
+		});
+		expect(getAssistantCapture(firstEvent(events, "thinking_start", 1))).toBeUndefined();
+	});
+
+	it("carries nothing from a relaying step that pushed no copy onto a later push", async () => {
+		const source = new AssistantMessageEventStream({ captureBlocks: true });
+		const sourceMessage = createAssistantMessage([{ type: "thinking", thinking: "" }], "pending");
+		source.push({ type: "start", partial: sourceMessage });
+		const sourceStart: AssistantMessageEvent = { type: "thinking_start", contentIndex: 0, partial: sourceMessage };
+		source.push(sourceStart);
+		const outer = new RecoveryAssistantMessageEventStream();
+		const outerMessage = createAssistantMessage([{ type: "thinking", thinking: "own" }], "pending");
+		outer.push({ type: "start", partial: outerMessage });
+		outer.relaying(sourceStart, () => undefined);
+		outer.push({ type: "thinking_start", contentIndex: 0, partial: outerMessage });
+		outer.end(outerMessage);
+		const events = publicEvents(await drainRecords(outer));
+		expect(getAssistantCapture(firstEvent(events, "thinking_start", 0))?.block).toEqual({
+			type: "thinking",
+			thinking: "own",
+		});
 	});
 });

@@ -51,6 +51,11 @@ describe("empty-assistant recovery and a real S02a-2 family #4272", () => {
 			`progress ${JSON.stringify({ type: "message_block_metadata", contentIndex: 0, thinkingSignature: "s1" })} `,
 		);
 		expect(unwrapped).toContain("message_update:thinking_start carrier=true");
-		expect(recordShapes(await channel("claude-sonnet-4-5"))).toEqual(unwrapped);
+		const wrapped = recordShapes(await channel("claude-sonnet-4-5"));
+		// The Devin fixture's first frame opens the thinking block, so its signature names block 0 behind the wrapper too.
+		expect(wrapped).toContain(
+			`progress ${JSON.stringify({ type: "message_block_metadata", contentIndex: 0, thinkingSignature: "s1" })} `,
+		);
+		expect(wrapped).toEqual(unwrapped);
 	});
 });
